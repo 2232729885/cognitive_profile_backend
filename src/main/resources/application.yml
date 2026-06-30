@@ -1,0 +1,63 @@
+spring:
+  application:
+    name: cognitive-profile-backend
+
+  # PostgreSQL，对应 docs/init_db.sql 建表脚本
+  datasource:
+    url: jdbc:postgresql://172.16.40.232:5432/postgres
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+
+  # Neo4j（spring-boot-starter-data-neo4j，Bolt协议直连）
+  neo4j:
+    uri: bolt://5432:7687
+    authentication:
+      username: neo4j
+      password: neo4jpasswd
+
+  # Redis（缓存层）
+  data:
+    redis:
+      host: 172.16.40.232
+      port: 6379
+
+  # Kafka（spring-kafka），topic命名见 infra.kafka.KafkaTopicConstants
+  kafka:
+    bootstrap-servers: 172.16.40.232:9092
+    consumer:
+      group-id: cognitive-profile-ingestion
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
+# MyBatis-Plus配置，下划线转驼峰是全局约定（见 docs/01-CODEGEN-CONTEXT.md 第0节）
+mybatis-plus:
+  type-handlers-package: com.idata.profile.infra.mybatis
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      id-type: assign_uuid
+
+# Milvus连接信息（io.milvus:milvus-sdk-java，需在 infra.milvus 包内补充客户端Bean配置）
+milvus:
+  host: 172.16.40.232
+  port: 19530
+
+# MinIO（io.minio:minio客户端）
+minio:
+  endpoint: http://172.16.40.232:9000
+  access-key: minioadmin
+  secret-key: minioadmin
+
+# Elasticsearch
+elasticsearch:
+  uris: http://172.16.40.232:9200
+
+server:
+  port: 8080
+
+logging:
+  level:
+    com.idata.cognitiveprofile: debug
