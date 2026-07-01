@@ -4,7 +4,6 @@ import com.idata.profile.common.constant.PipelineStatus;
 import com.idata.profile.common.constant.RecordType;
 import com.idata.profile.entity.raw.RawRecord;
 import com.idata.profile.infra.kafka.KafkaTopicConstants;
-import com.idata.profile.ingestion.dedup.DeduplicationChecker;
 import com.idata.profile.ingestion.normalizer.SocialAccountNormalizer;
 import com.idata.profile.mapper.account.SocialAccountMapper;
 import com.idata.profile.mapper.account.SocialAccountSnapshotMapper;
@@ -16,12 +15,13 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
 
+import java.util.UUID;
+
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class SocialAccountConsumer {
 
-    private final DeduplicationChecker deduplicationChecker;
     private final SocialAccountNormalizer normalizer;
     private final RawRecordMapper rawRecordMapper;
     private final SocialAccountMapper socialAccountMapper;
@@ -38,17 +38,27 @@ public class SocialAccountConsumer {
             log.error("Schema validation failed, sourceRecordId={}", sourceRecordId);
             return;
         }
-        if (deduplicationChecker.isDuplicate(sourceRecordId, payloadHash)) {
-            log.debug("Duplicate message skipped, sourceRecordId={}", sourceRecordId);
-            return;
+        RawRecord rawRecord = rawRecordMapper.selectBySourceRecordId(sourceRecordId);
+        if (rawRecord != null) {
+            if (PipelineStatus.NORMALIZED.name().equals(rawRecord.getPipelineStatus())) {
+                log.debug("Duplicate message skipped, sourceRecordId={}", sourceRecordId);
+                return;
+            }
+            log.warn("Reprocessing incomplete social_account raw record, sourceRecordId={}, status={}",
+                    sourceRecordId, rawRecord.getPipelineStatus());
+        } else {
+            if (rawRecordMapper.existsByPayloadHash(payloadHash)) {
+                log.debug("Duplicate payload skipped, sourceRecordId={}", sourceRecordId);
+                return;
+            }
+            rawRecord = buildRawRecord(kafkaMessage);
+            rawRecord.setPipelineStatus(PipelineStatus.RECEIVED.name());
+            rawRecordMapper.insert(rawRecord);
         }
 
-        RawRecord rawRecord = buildRawRecord(kafkaMessage);
-        rawRecord.setPipelineStatus(PipelineStatus.RECEIVED.name());
-        rawRecordMapper.insert(rawRecord);
-
         SocialAccountNormalizer.NormalizedAccount normalized = normalizer.normalize(kafkaMessage, rawRecord);
-        socialAccountMapper.upsertByPlatformAndUserId(normalized.getAccount());
+        UUID accountId = socialAccountMapper.upsertByPlatformAndUserId(normalized.getAccount());
+        normalized.getSnapshot().setAccountId(accountId);
         snapshotMapper.insert(normalized.getSnapshot());
         rawRecord.setPipelineStatus(PipelineStatus.NORMALIZED.name());
         rawRecordMapper.updateById(rawRecord);

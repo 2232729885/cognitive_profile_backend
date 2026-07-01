@@ -2,29 +2,34 @@ package com.idata.profile.ingestion.normalizer;
 
 import com.idata.profile.entity.account.AccountRelation;
 import com.idata.profile.entity.raw.RawRecord;
+import com.idata.profile.ingestion.consumer.IngestionMessageSupport;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.util.UUID;
 
-/**
- * account_relation 的Step3标准化映射逻辑。
- * 重要：fromAccountId/toAccountId故意留空，由独立批处理回填，
- * 见 docs/课题四_数据处理流程_v2.md 第四章 Step4回填机制详解。
- */
 @Component
 public class AccountRelationNormalizer {
 
     public AccountRelation normalize(Object kafkaMessage, RawRecord rawRecord) {
+        JsonNode root = IngestionMessageSupport.root(kafkaMessage);
+        JsonNode data = IngestionMessageSupport.data(kafkaMessage);
+
         AccountRelation relation = new AccountRelation();
         relation.setId(UUID.randomUUID());
         relation.setRawRecordId(rawRecord.getId());
-        relation.setFromAccountId(null);  // 故意留空
-        relation.setToAccountId(null);    // 故意留空
+        relation.setSourcePlatformUserId(IngestionMessageSupport.text(data, "source_platform_user_id"));
+        relation.setTargetPlatformUserId(IngestionMessageSupport.text(data, "target_platform_user_id"));
+        relation.setPlatform(IngestionMessageSupport.text(root, "platform"));
+        relation.setRelationType(IngestionMessageSupport.text(data, "relation_type"));
+        relation.setObservedAt(IngestionMessageSupport.parseOffsetDateTime(data.path("observed_at")));
+        relation.setOccurredAt(IngestionMessageSupport.parseOffsetDateTime(data.path("occurred_at")));
+        relation.setSource(IngestionMessageSupport.text(data, "source"));
+        relation.setFromAccountId(null);
+        relation.setToAccountId(null);
         relation.setSyncedToNeo4j(false);
         relation.setConfidence(BigDecimal.ONE);
-        // TODO: 从kafkaMessage.data提取：sourcePlatformUserId, targetPlatformUserId,
-        //   platform, relationType, observedAt, occurredAt, source
 
         return relation;
     }

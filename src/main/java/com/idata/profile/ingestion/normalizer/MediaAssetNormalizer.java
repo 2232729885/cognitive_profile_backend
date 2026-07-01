@@ -2,25 +2,73 @@ package com.idata.profile.ingestion.normalizer;
 
 import com.idata.profile.entity.content.MediaAsset;
 import com.idata.profile.entity.raw.RawRecord;
+import com.idata.profile.ingestion.consumer.IngestionMessageSupport;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
 
 import java.util.UUID;
 
-/**
- * media_asset 的Step3标准化映射逻辑。
- * sha256去重，见 mapper.content.MediaAssetMapper.insertIgnoreOnConflictSha256。
- */
 @Component
 public class MediaAssetNormalizer {
 
     public MediaAsset normalize(Object kafkaMessage, RawRecord rawRecord) {
+        JsonNode data = IngestionMessageSupport.data(kafkaMessage);
+
         MediaAsset asset = new MediaAsset();
         asset.setId(UUID.randomUUID());
         asset.setRawRecordId(rawRecord.getId());
-        // TODO: 从kafkaMessage.data提取：sourceAssetId, assetType, sourceUrl,
-        //   storageUri, mimeType, sha256, width, height, durationSeconds,
-        //   thumbnailUri, ocrText, asrText
+        asset.setSourceAssetId(IngestionMessageSupport.text(data, "source_asset_id"));
+        asset.setAssetType(IngestionMessageSupport.text(data, "asset_type"));
+        asset.setSourceUrl(IngestionMessageSupport.text(data, "source_url"));
+        asset.setStorageUri(IngestionMessageSupport.text(data, "storage_uri"));
+        asset.setMimeType(IngestionMessageSupport.text(data, "mime_type"));
+        asset.setSha256(IngestionMessageSupport.text(data, "sha256"));
+        asset.setFileSizeBytes(readLong(data, "file_size_bytes"));
+        asset.setWidth(readInteger(data, "width"));
+        asset.setHeight(readInteger(data, "height"));
+        asset.setDurationSeconds(readInteger(data, "duration_seconds"));
+        asset.setThumbnailUri(IngestionMessageSupport.text(data, "thumbnail_uri"));
+        asset.setOcrText(IngestionMessageSupport.text(data, "ocr_text"));
+        asset.setAsrText(IngestionMessageSupport.text(data, "asr_text"));
 
         return asset;
+    }
+
+    private Long readLong(JsonNode node, String fieldName) {
+        JsonNode value = node.path(fieldName);
+        if (value.isMissingNode() || value.isNull()) {
+            return null;
+        }
+        if (value.isNumber()) {
+            return value.asLong();
+        }
+        String text = value.asText();
+        if (!IngestionMessageSupport.hasText(text)) {
+            return null;
+        }
+        try {
+            return Long.parseLong(text.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private Integer readInteger(JsonNode node, String fieldName) {
+        JsonNode value = node.path(fieldName);
+        if (value.isMissingNode() || value.isNull()) {
+            return null;
+        }
+        if (value.isNumber()) {
+            return value.asInt();
+        }
+        String text = value.asText();
+        if (!IngestionMessageSupport.hasText(text)) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(text.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 }

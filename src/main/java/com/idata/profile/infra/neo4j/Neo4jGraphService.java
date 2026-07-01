@@ -64,6 +64,26 @@ public class Neo4jGraphService {
                 .run();
     }
 
+    public void mergeRelationWithNodes(String fromLabel, String fromId, Map<String, Object> fromProperties,
+                                       String toLabel, String toId, Map<String, Object> toProperties,
+                                       String relationType, Map<String, Object> relationProperties) {
+        String cypher = String.format("""
+                MERGE (a:%s {id: $fromId})
+                SET a += $fromProperties
+                MERGE (b:%s {id: $toId})
+                SET b += $toProperties
+                MERGE (a)-[r:%s]->(b)
+                SET r += $relationProperties
+                """, fromLabel, toLabel, relationType);
+        neo4jClient.query(cypher)
+                .bind(fromId).to("fromId")
+                .bind(fromProperties).to("fromProperties")
+                .bind(toId).to("toId")
+                .bind(toProperties).to("toProperties")
+                .bind(relationProperties).to("relationProperties")
+                .run();
+    }
+
     public List<UUID> findSocialAccountIdsByNarrative(UUID narrativeId) {
         String cypher = """
                 MATCH (a:SocialAccount)-[:PARTICIPATES_IN_NARRATIVE]->(n:Narrative {id: $narrativeId})

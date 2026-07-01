@@ -2,6 +2,7 @@ package com.idata.profile;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.kafka.annotation.EnableKafka;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.retry.annotation.EnableRetry;
 
@@ -16,6 +17,7 @@ import org.springframework.retry.annotation.EnableRetry;
  * @EnableRetry 支撑 pipeline.retry 包下 T1-T4 失败重试（指数退避）
  */
 @SpringBootApplication
+@EnableKafka
 @EnableScheduling
 @EnableRetry
 public class CognitiveProfileApplication {
