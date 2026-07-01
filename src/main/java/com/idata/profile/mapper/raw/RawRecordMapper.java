@@ -15,6 +15,9 @@ public interface RawRecordMapper extends BaseMapper<RawRecord> {
     @Select("SELECT EXISTS(SELECT 1 FROM raw_records WHERE source_record_id = #{sourceRecordId})")
     boolean existsBySourceRecordId(@Param("sourceRecordId") String sourceRecordId);
 
+    @Select("SELECT * FROM raw_records WHERE source_record_id = #{sourceRecordId}")
+    RawRecord selectBySourceRecordId(@Param("sourceRecordId") String sourceRecordId);
+
     /** Step1去重检查：按payloadHash判断内容是否重复 */
     @Select("SELECT EXISTS(SELECT 1 FROM raw_records WHERE payload_hash = #{payloadHash})")
     boolean existsByPayloadHash(@Param("payloadHash") String payloadHash);
