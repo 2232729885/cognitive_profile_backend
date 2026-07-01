@@ -43,6 +43,7 @@ mybatis-plus:
 
 # Milvus连接信息（io.milvus:milvus-sdk-java，需在 infra.milvus 包内补充客户端Bean配置）
 milvus:
+  uri: http://172.16.40.232:19530
   host: 172.16.40.232
   port: 19530
 
@@ -55,6 +56,8 @@ minio:
 # Elasticsearch
 elasticsearch:
   uris: http://172.16.40.232:9200
+  username: elastic
+  password: elastic
 
 server:
   port: 8080

@@ -17,8 +17,8 @@ public class MediaAssetNormalizer {
         MediaAsset asset = new MediaAsset();
         asset.setId(UUID.randomUUID());
         asset.setRawRecordId(rawRecord.getId());
-        asset.setSourceAssetId(IngestionMessageSupport.text(data, "source_asset_id"));
-        asset.setAssetType(IngestionMessageSupport.text(data, "asset_type"));
+        asset.setSourceAssetId(IngestionMessageSupport.text(data, "asset_id"));
+        asset.setAssetType(readAssetType(data));
         asset.setSourceUrl(IngestionMessageSupport.text(data, "source_url"));
         asset.setStorageUri(IngestionMessageSupport.text(data, "storage_uri"));
         asset.setMimeType(IngestionMessageSupport.text(data, "mime_type"));
@@ -30,8 +30,21 @@ public class MediaAssetNormalizer {
         asset.setThumbnailUri(IngestionMessageSupport.text(data, "thumbnail_uri"));
         asset.setOcrText(IngestionMessageSupport.text(data, "ocr_text"));
         asset.setAsrText(IngestionMessageSupport.text(data, "asr_text"));
+        asset.setMinioBucket(IngestionMessageSupport.text(data, "minio_bucket"));
+        asset.setMinioKey(IngestionMessageSupport.text(data, "minio_key"));
 
         return asset;
+    }
+
+    private String readAssetType(JsonNode data) {
+        String assetType = IngestionMessageSupport.text(data, "asset_type");
+        if (!IngestionMessageSupport.hasText(assetType)) {
+            return null;
+        }
+        return switch (assetType) {
+            case "image", "video", "audio", "thumbnail" -> assetType;
+            default -> throw new IllegalArgumentException("Unsupported media asset_type: " + assetType);
+        };
     }
 
     private Long readLong(JsonNode node, String fieldName) {
