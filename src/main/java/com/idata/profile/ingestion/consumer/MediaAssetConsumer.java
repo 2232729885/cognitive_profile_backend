@@ -1,5 +1,6 @@
 package com.idata.profile.ingestion.consumer;
 
+import com.idata.profile.batch.asset.ImageEmbeddingService;
 import com.idata.profile.common.constant.PipelineStatus;
 import com.idata.profile.common.constant.RecordType;
 import com.idata.profile.entity.content.MediaAsset;
@@ -25,6 +26,7 @@ public class MediaAssetConsumer {
     private final MediaAssetNormalizer normalizer;
     private final RawRecordMapper rawRecordMapper;
     private final MediaAssetMapper mediaAssetMapper;
+    private final ImageEmbeddingService imageEmbeddingService;
 
     @KafkaListener(topics = KafkaTopicConstants.MEDIA_ASSET, groupId = "cognitive-profile-ingestion")
     @Transactional
@@ -47,10 +49,15 @@ public class MediaAssetConsumer {
         rawRecordMapper.insert(rawRecord);
 
         MediaAsset asset = normalizer.normalize(kafkaMessage, rawRecord);
-        mediaAssetMapper.insertIgnoreOnConflictSha256(asset);
+        int inserted = mediaAssetMapper.insertIgnoreOnConflictSha256(asset);
+        MediaAsset indexedAsset = inserted > 0 ? asset : mediaAssetMapper.selectBySha256(asset.getSha256());
 
         rawRecord.setPipelineStatus(PipelineStatus.NORMALIZED.name());
         rawRecordMapper.updateById(rawRecord);
+
+        if (indexedAsset != null) {
+            imageEmbeddingService.submitAfterCommit(indexedAsset.getId());
+        }
     }
 
     private Object parseMessage(String rawMessage) {

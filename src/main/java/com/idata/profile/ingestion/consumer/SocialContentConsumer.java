@@ -2,12 +2,14 @@ package com.idata.profile.ingestion.consumer;
 
 import com.idata.profile.common.constant.PipelineStatus;
 import com.idata.profile.common.constant.RecordType;
+import com.idata.profile.entity.account.SocialAccount;
 import com.idata.profile.entity.content.MediaContent;
 import com.idata.profile.entity.raw.RawRecord;
 import com.idata.profile.entity.task.PipelineTask;
 import com.idata.profile.infra.kafka.KafkaTopicConstants;
 import com.idata.profile.ingestion.dedup.DeduplicationChecker;
 import com.idata.profile.ingestion.normalizer.SocialContentNormalizer;
+import com.idata.profile.mapper.account.SocialAccountMapper;
 import com.idata.profile.mapper.content.MediaContentMapper;
 import com.idata.profile.mapper.raw.RawRecordMapper;
 import com.idata.profile.mapper.task.PipelineTaskMapper;
@@ -19,6 +21,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
 
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
 /**
@@ -34,6 +37,7 @@ public class SocialContentConsumer {
 
     private final DeduplicationChecker deduplicationChecker;
     private final SocialContentNormalizer normalizer;
+    private final SocialAccountMapper socialAccountMapper;
     private final RawRecordMapper rawRecordMapper;
     private final MediaContentMapper mediaContentMapper;
     private final PipelineTaskMapper pipelineTaskMapper;
@@ -65,6 +69,7 @@ public class SocialContentConsumer {
         rawRecordMapper.insert(rawRecord);
 
         MediaContent mediaContent = normalizer.normalize(kafkaMessage, rawRecord);
+        upsertAuthorAccount(kafkaMessage, rawRecord, mediaContent);
         mediaContentMapper.insert(mediaContent);
 
         PipelineTask task = new PipelineTask();
@@ -79,6 +84,32 @@ public class SocialContentConsumer {
         rawRecordMapper.updateById(rawRecord);
 
         pipelineExecutor.submitAfterCommit(task.getId());
+    }
+
+    private void upsertAuthorAccount(Object kafkaMessage, RawRecord rawRecord, MediaContent mediaContent) {
+        if (!RecordType.SOCIAL_CONTENT.getCode().equals(rawRecord.getRecordType())
+                || !hasText(mediaContent.getAuthorPlatformUserId())) {
+            return;
+        }
+        SocialAccount account = buildMinimalAuthorAccount(kafkaMessage, rawRecord, mediaContent.getAuthorPlatformUserId());
+        UUID accountId = socialAccountMapper.upsertByPlatformAndUserId(account);
+        mediaContent.setAuthorAccountId(accountId);
+    }
+
+    private SocialAccount buildMinimalAuthorAccount(Object kafkaMessage, RawRecord rawRecord, String authorPlatformUserId) {
+        JsonNode data = IngestionMessageSupport.data(kafkaMessage);
+        SocialAccount account = new SocialAccount();
+        account.setId(UUID.randomUUID());
+        account.setPlatform(rawRecord.getPlatform());
+        account.setPlatformUserId(authorPlatformUserId);
+        account.setAccountEntityType(IngestionMessageSupport.firstText(data, "author_account_entity_type", "account_entity_type"));
+        account.setPlatformNativeType(IngestionMessageSupport.firstText(data, "author_platform_native_type", "platform_native_type"));
+        account.setHandle(IngestionMessageSupport.firstText(data, "author_handle", "author_username", "author_screen_name"));
+        account.setDisplayName(IngestionMessageSupport.firstText(data, "author_display_name", "author_name"));
+        account.setProfileUrl(IngestionMessageSupport.firstText(data, "author_profile_url", "profile_url"));
+        account.setLatestSnapshotAt(rawRecord.getCollectedAt());
+        account.setFirstSeenAt(OffsetDateTime.now());
+        return account;
     }
 
     private Object parseMessage(String rawMessage) {

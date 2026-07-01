@@ -1,28 +1,32 @@
 package com.idata.profile.infra.elasticsearch;
 
+import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.elasticsearch.core.IndexResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-/**
- * media_contents_index 全文检索封装。基于 co.elastic.clients:elasticsearch-java。
- * ES不是主存储，数据由PG同步，索引mapping见 docs/课题四_数据库设计_v3.md 第三章。
- *
- * T4 runT4 步骤调用 index() 方法同步内容到ES；
- * analysis线的多模态检索（F6）调用 search() 方法做全文检索，
- * 与 Neo4j图谱检索、Milvus向量检索三路融合排序。
- */
+import java.io.IOException;
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class MediaContentEsService {
 
-    // private final ElasticsearchClient esClient;  // 注入后取消注释
+    private static final String MEDIA_CONTENTS_INDEX = "media_contents_index";
+
+    private final ElasticsearchClient esClient;
 
     public void index(String contentId, Object document) {
-        // TODO: esClient.index(i -> i.index("media_contents_index").id(contentId).document(document))
-        throw new UnsupportedOperationException("待补充ES客户端具体调用");
+        try {
+            IndexResponse response = esClient.index(i -> i
+                    .index(MEDIA_CONTENTS_INDEX)
+                    .id(contentId)
+                    .document(document));
+            log.debug("Indexed media content to Elasticsearch, contentId={}, result={}",
+                    contentId, response.result());
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to index media content to Elasticsearch: " + contentId, e);
+        }
     }
-
-    // TODO: 补充全文检索方法，供analysis.orchestrator的T4检索调用使用
 }

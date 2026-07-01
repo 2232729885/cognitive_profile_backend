@@ -58,7 +58,9 @@ public class T3FusionStep {
 
         RawRecord rawRecord = rawRecordMapper.selectById(task.getRawRecordId());
         rawRecord.setT3Output(response.getRaw());
-        rawRecord.setPipelineStatus(PipelineStatus.T3_DONE.name());
+        if (!PipelineStatus.T4_INDEXED.name().equals(rawRecord.getPipelineStatus())) {
+            rawRecord.setPipelineStatus(PipelineStatus.T3_DONE.name());
+        }
         rawRecordMapper.updateById(rawRecord);
 
         task.setT3Status("done");

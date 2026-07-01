@@ -1,14 +1,15 @@
 package com.idata.profile.infra.minio;
 
+import io.minio.BucketExistsArgs;
+import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
+import io.minio.PutObjectArgs;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-/**
- * MinIO对象存储封装。用于课题三media_asset的storageUri本地镜像、
- * 批量导入文件存储、报告导出文件存储。
- */
+import java.io.ByteArrayInputStream;
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -17,12 +18,31 @@ public class MinioStorageService {
     private final MinioClient minioClient;
 
     public String upload(String bucket, String key, byte[] content, String contentType) {
-        // TODO: minioClient.putObject(...)
-        throw new UnsupportedOperationException("待补充MinIO客户端具体调用");
+        try {
+            boolean bucketExists = minioClient.bucketExists(BucketExistsArgs.builder()
+                    .bucket(bucket)
+                    .build());
+            if (!bucketExists) {
+                minioClient.makeBucket(MakeBucketArgs.builder()
+                        .bucket(bucket)
+                        .build());
+            }
+
+            try (ByteArrayInputStream inputStream = new ByteArrayInputStream(content)) {
+                minioClient.putObject(PutObjectArgs.builder()
+                        .bucket(bucket)
+                        .object(key)
+                        .stream(inputStream, (long) content.length, -1L)
+                        .contentType(contentType)
+                        .build());
+            }
+            return bucket + "/" + key;
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to upload object to MinIO: " + bucket + "/" + key, e);
+        }
     }
 
     public byte[] download(String bucket, String key) {
-        // TODO: minioClient.getObject(...)
-        throw new UnsupportedOperationException("待补充MinIO客户端具体调用");
+        throw new UnsupportedOperationException("MinIO download is not implemented yet");
     }
 }

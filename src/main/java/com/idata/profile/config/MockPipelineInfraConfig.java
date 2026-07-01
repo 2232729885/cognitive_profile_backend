@@ -12,13 +12,13 @@ import java.util.UUID;
 
 @Slf4j
 @Configuration
-@Profile("mock")
+@Profile("mock-infra")
 public class MockPipelineInfraConfig {
 
     @Bean
     @Primary
     public MilvusVectorService mockMilvusVectorService() {
-        return new MilvusVectorService() {
+        return new MilvusVectorService(null) {
             @Override
             public String insertTextEmbedding(String sourceId, String sourceType,
                                               String platform, String language,
@@ -43,7 +43,7 @@ public class MockPipelineInfraConfig {
     @Bean
     @Primary
     public MediaContentEsService mockMediaContentEsService() {
-        return new MediaContentEsService() {
+        return new MediaContentEsService(null) {
             @Override
             public void index(String contentId, Object document) {
                 log.info("Mock Elasticsearch indexed media content, contentId={}", contentId);

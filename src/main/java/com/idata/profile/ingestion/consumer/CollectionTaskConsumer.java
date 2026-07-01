@@ -46,7 +46,7 @@ public class CollectionTaskConsumer {
         rawRecordMapper.insert(rawRecord);
 
         CollectionTask task = normalizer.normalize(kafkaMessage, rawRecord);
-        collectionTaskMapper.insert(task);
+        collectionTaskMapper.upsertByCrawlTaskId(task);
 
         rawRecord.setPipelineStatus(PipelineStatus.NORMALIZED.name());
         rawRecordMapper.updateById(rawRecord);
