@@ -37,7 +37,7 @@ public class ProfileService {
 
     public List<PersonProfile> getProfileHistory(UUID personId) {
         return personProfileMapper.selectList(new QueryWrapper<PersonProfile>()
-                .select("id", "person_id", "portrait_version", "status")
+                .select("id", "person_id", "portrait_version", "status", "generated_at", "reviewed_at")
                 .eq("person_id", personId)
                 .orderByDesc("portrait_version"));
     }
