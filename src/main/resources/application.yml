@@ -3,6 +3,16 @@ jwt:
   expiration-ms: 86400000
 
 spring:
+  ai:
+    openai:
+      base-url: http://172.16.40.232:18012
+      api-key: idata@123456
+      chat:
+        options:
+          model: Qwen3-VL-32B
+          temperature: 0.7
+          max-tokens: 4096
+
   application:
     name: cognitive-profile-backend
 
