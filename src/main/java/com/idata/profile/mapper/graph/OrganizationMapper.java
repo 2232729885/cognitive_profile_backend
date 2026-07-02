@@ -15,18 +15,23 @@ import java.util.UUID;
 public interface OrganizationMapper extends BaseMapper<Organization> {
 
     @Insert("""
-            WITH updated AS (
+            WITH lock AS (
+                SELECT pg_advisory_xact_lock(hashtext('organization:' || #{canonicalName}))
+            ),
+            updated AS (
                 UPDATE organizations
                 SET content_count = content_count + 1,
                     importance_score = GREATEST(importance_score, #{importanceScore}),
                     updated_at = NOW()
                 WHERE canonical_name = #{canonicalName}
+                  AND EXISTS (SELECT 1 FROM lock)
                 RETURNING id
             )
             INSERT INTO organizations (
                 id, canonical_name, importance_score, is_high_value, content_count
             )
             SELECT gen_random_uuid(), #{canonicalName}, #{importanceScore}, FALSE, 1
+            FROM lock
             WHERE NOT EXISTS (SELECT 1 FROM updated)
             """)
     int upsertByCanonicalName(@Param("canonicalName") String canonicalName,
@@ -34,6 +39,9 @@ public interface OrganizationMapper extends BaseMapper<Organization> {
 
     @Select("SELECT EXISTS(SELECT 1 FROM organizations WHERE id = #{id})")
     boolean existsById(@Param("id") UUID id);
+
+    @Select("SELECT id FROM organizations WHERE canonical_name = #{canonicalName} LIMIT 1")
+    UUID selectIdByCanonicalName(@Param("canonicalName") String canonicalName);
 
     @Update("""
             UPDATE organizations

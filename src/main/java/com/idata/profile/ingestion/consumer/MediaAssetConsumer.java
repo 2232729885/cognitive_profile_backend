@@ -3,11 +3,13 @@ package com.idata.profile.ingestion.consumer;
 import com.idata.profile.batch.asset.ImageEmbeddingService;
 import com.idata.profile.common.constant.PipelineStatus;
 import com.idata.profile.common.constant.RecordType;
+import com.idata.profile.entity.content.MediaContent;
 import com.idata.profile.entity.content.MediaAsset;
 import com.idata.profile.entity.raw.RawRecord;
 import com.idata.profile.infra.kafka.KafkaTopicConstants;
 import com.idata.profile.ingestion.dedup.DeduplicationChecker;
 import com.idata.profile.ingestion.normalizer.MediaAssetNormalizer;
+import com.idata.profile.mapper.content.MediaContentMapper;
 import com.idata.profile.mapper.content.MediaAssetMapper;
 import com.idata.profile.mapper.raw.RawRecordMapper;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +28,7 @@ public class MediaAssetConsumer {
     private final MediaAssetNormalizer normalizer;
     private final RawRecordMapper rawRecordMapper;
     private final MediaAssetMapper mediaAssetMapper;
+    private final MediaContentMapper mediaContentMapper;
     private final ImageEmbeddingService imageEmbeddingService;
 
     @KafkaListener(topics = KafkaTopicConstants.MEDIA_ASSET, groupId = "cognitive-profile-ingestion")
@@ -49,6 +52,7 @@ public class MediaAssetConsumer {
         rawRecordMapper.insert(rawRecord);
 
         MediaAsset asset = normalizer.normalize(kafkaMessage, rawRecord);
+        linkContent(kafkaMessage, asset, rawRecord);
         int inserted = mediaAssetMapper.insertIgnoreOnConflictSha256(asset);
         MediaAsset indexedAsset = inserted > 0 ? asset : mediaAssetMapper.selectBySha256(asset.getSha256());
 
@@ -83,5 +87,18 @@ public class MediaAssetConsumer {
 
     private RawRecord buildRawRecord(Object kafkaMessage) {
         return IngestionMessageSupport.buildRawRecord(kafkaMessage, KafkaTopicConstants.MEDIA_ASSET);
+    }
+
+    private void linkContent(Object kafkaMessage, MediaAsset asset, RawRecord rawRecord) {
+        String platformContentId = IngestionMessageSupport.text(
+                IngestionMessageSupport.data(kafkaMessage), "platform_content_id");
+        if (!IngestionMessageSupport.hasText(platformContentId)) {
+            return;
+        }
+        MediaContent content = mediaContentMapper.selectByPlatformAndContentId(
+                rawRecord.getPlatform(), platformContentId);
+        if (content != null) {
+            asset.setContentId(content.getId());
+        }
     }
 }

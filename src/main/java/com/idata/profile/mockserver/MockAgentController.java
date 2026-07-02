@@ -69,8 +69,13 @@ public class MockAgentController {
         narrative.setCanonicalName("Mock election interference narrative");
         narrative.setImportanceScore(new BigDecimal("76.00"));
 
+        T2ExtractResponse.ExtractedEntity organization = new T2ExtractResponse.ExtractedEntity();
+        organization.setType("organization");
+        organization.setCanonicalName("Dataset Influence Research Center");
+        organization.setImportanceScore(new BigDecimal("81.00"));
+
         T2ExtractResponse resp = new T2ExtractResponse();
-        resp.setEntities(List.of(person, narrative));
+        resp.setEntities(List.of(person, organization, narrative));
         resp.setResolvedAuthorAccountId(null);
         resp.setRaw(toJson(resp));
         return resp;
@@ -81,41 +86,68 @@ public class MockAgentController {
         log.info("[MOCK-T3] fuse_entities, entityRefs={}",
                 request.getEntities() != null ? request.getEntities().size() : 0);
 
-        String personId = UUID.randomUUID().toString();
-        String narrativeId = UUID.randomUUID().toString();
+        T3FuseRequest.T2EntityRef personRef = findEntity(request, "person", "Mock Person");
+        T3FuseRequest.T2EntityRef organizationRef = findEntity(request, "organization", "Dataset Influence Research Center");
+        T3FuseRequest.T2EntityRef narrativeRef = findEntity(request, "narrative", "Mock election interference narrative");
+
+        String personId = entityId(personRef);
+        String organizationId = entityId(organizationRef);
+        String narrativeId = entityId(narrativeRef);
 
         T3FuseResponse.EntityMerge merge = new T3FuseResponse.EntityMerge();
         merge.setSurvivorId(personId);
-        merge.setMergedIds(List.of(UUID.randomUUID().toString()));
+        merge.setMergedIds(List.of(stableUuid(personId + ":merged-alias")));
 
         T3FuseResponse.Neo4jNode personNode = new T3FuseResponse.Neo4jNode();
         personNode.setLabel("Person");
         personNode.setId(personId);
         personNode.setProperties(Map.of(
-                "canonicalName", "Mock Person",
+                "canonicalName", personRef.getCanonicalName(),
                 "nationality", "US",
                 "importanceScore", 88.0
+        ));
+
+        T3FuseResponse.Neo4jNode organizationNode = new T3FuseResponse.Neo4jNode();
+        organizationNode.setLabel("Organization");
+        organizationNode.setId(organizationId);
+        organizationNode.setProperties(Map.of(
+                "canonicalName", organizationRef.getCanonicalName(),
+                "orgType", "ngo",
+                "country", "US",
+                "importanceScore", 81.0
         ));
 
         T3FuseResponse.Neo4jNode narrativeNode = new T3FuseResponse.Neo4jNode();
         narrativeNode.setLabel("Narrative");
         narrativeNode.setId(narrativeId);
         narrativeNode.setProperties(Map.of(
-                "canonicalLabel", "Mock election interference narrative",
+                "canonicalLabel", narrativeRef.getCanonicalName(),
                 "importanceScore", 76.0,
                 "source", "mock-t3"
         ));
 
-        T3FuseResponse.Neo4jRelation relation = new T3FuseResponse.Neo4jRelation();
-        relation.setFromId(personId);
-        relation.setToId(narrativeId);
-        relation.setRelationType("PARTICIPATES_IN_NARRATIVE");
-        relation.setProperties(Map.of("frequency", 12, "confidence", 0.85, "source", "mock-t3"));
+        T3FuseResponse.Neo4jRelation participates = new T3FuseResponse.Neo4jRelation();
+        participates.setFromId(personId);
+        participates.setToId(narrativeId);
+        participates.setRelationType("PARTICIPATES_IN_NARRATIVE");
+        participates.setProperties(Map.of("frequency", 12, "confidence", 0.85, "source", "mock-t3"));
+
+        T3FuseResponse.Neo4jRelation affiliated = new T3FuseResponse.Neo4jRelation();
+        affiliated.setFromId(personId);
+        affiliated.setToId(organizationId);
+        affiliated.setRelationType("AFFILIATED_WITH");
+        affiliated.setProperties(Map.of("confidence", 0.78, "source", "mock-t3"));
+
+        T3FuseResponse.Neo4jRelation promotes = new T3FuseResponse.Neo4jRelation();
+        promotes.setFromId(organizationId);
+        promotes.setToId(narrativeId);
+        promotes.setRelationType("PROMOTES_NARRATIVE");
+        promotes.setProperties(Map.of("confidence", 0.82, "source", "mock-t3"));
 
         T3FuseResponse resp = new T3FuseResponse();
         resp.setEntityMerges(List.of(merge));
-        resp.setNodes(List.of(personNode, narrativeNode));
-        resp.setRelations(List.of(relation));
+        resp.setNodes(List.of(personNode, organizationNode, narrativeNode));
+        resp.setRelations(List.of(participates, affiliated, promotes));
         resp.setRaw(toJson(resp));
         return resp;
     }
@@ -208,6 +240,32 @@ public class MockAgentController {
         resp.setEmbedding(embedding);
         resp.setModelVersion("mock-qwen3-vl-embedding-8b");
         return resp;
+    }
+
+    private T3FuseRequest.T2EntityRef findEntity(T3FuseRequest request, String type, String fallbackName) {
+        if (request.getEntities() != null) {
+            for (T3FuseRequest.T2EntityRef entity : request.getEntities()) {
+                if (type.equals(entity.getType())) {
+                    return entity;
+                }
+            }
+        }
+        T3FuseRequest.T2EntityRef fallback = new T3FuseRequest.T2EntityRef();
+        fallback.setType(type);
+        fallback.setCanonicalName(fallbackName);
+        fallback.setTempId(stableUuid(type + ":" + fallbackName));
+        return fallback;
+    }
+
+    private String entityId(T3FuseRequest.T2EntityRef entity) {
+        if (entity.getTempId() != null && !entity.getTempId().isBlank()) {
+            return entity.getTempId();
+        }
+        return stableUuid(entity.getType() + ":" + entity.getCanonicalName());
+    }
+
+    private String stableUuid(String value) {
+        return UUID.nameUUIDFromBytes(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
     }
 
     private String toJson(Object obj) {
