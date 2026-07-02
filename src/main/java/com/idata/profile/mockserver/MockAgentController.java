@@ -39,16 +39,20 @@ public class MockAgentController {
 
         T1AnnotateResponse resp = new T1AnnotateResponse();
         resp.setTopicCategory("politics");
-        resp.setTopicSubcategory("election");
+        resp.setTopicSubcategory("gulf_security");
         resp.setEventHeatScore(new BigDecimal("72.50"));
         resp.setSentimentLabel("negative");
         resp.setSentimentScore(new BigDecimal("-0.680"));
         resp.setStanceLabel("oppose");
-        resp.setStanceTarget("mock_government");
+        resp.setStanceTarget("gulf_escalation");
         resp.setAigcScore(new BigDecimal("0.150"));
         resp.setAigcType("human");
-        resp.setEntitiesHint(Map.of("hint", "mock entity hint"));
-        resp.setNarrativeHint("mock election interference narrative");
+        resp.setEntitiesHint(Map.of(
+                "person", "Leila Farzan",
+                "organization", "U.S. Central Command",
+                "narrative", "Hormuz Strait escalation narrative"
+        ));
+        resp.setNarrativeHint("Hormuz Strait escalation narrative");
         resp.setModelVersion("mock-t1-v1.0");
         resp.setRaw(toJson(resp));
         return resp;
@@ -60,19 +64,19 @@ public class MockAgentController {
 
         T2ExtractResponse.ExtractedEntity person = new T2ExtractResponse.ExtractedEntity();
         person.setType("person");
-        person.setCanonicalName("Mock Person");
+        person.setCanonicalName("Leila Farzan");
         person.setImportanceScore(new BigDecimal("88.00"));
         person.setMatchedAccountId(null);
 
         T2ExtractResponse.ExtractedEntity narrative = new T2ExtractResponse.ExtractedEntity();
         narrative.setType("narrative");
-        narrative.setCanonicalName("Mock election interference narrative");
+        narrative.setCanonicalName("Hormuz Strait escalation narrative");
         narrative.setImportanceScore(new BigDecimal("76.00"));
 
         T2ExtractResponse.ExtractedEntity organization = new T2ExtractResponse.ExtractedEntity();
         organization.setType("organization");
-        organization.setCanonicalName("Dataset Influence Research Center");
-        organization.setImportanceScore(new BigDecimal("81.00"));
+        organization.setCanonicalName("U.S. Central Command");
+        organization.setImportanceScore(new BigDecimal("84.00"));
 
         T2ExtractResponse resp = new T2ExtractResponse();
         resp.setEntities(List.of(person, organization, narrative));
@@ -86,9 +90,9 @@ public class MockAgentController {
         log.info("[MOCK-T3] fuse_entities, entityRefs={}",
                 request.getEntities() != null ? request.getEntities().size() : 0);
 
-        T3FuseRequest.T2EntityRef personRef = findEntity(request, "person", "Mock Person");
-        T3FuseRequest.T2EntityRef organizationRef = findEntity(request, "organization", "Dataset Influence Research Center");
-        T3FuseRequest.T2EntityRef narrativeRef = findEntity(request, "narrative", "Mock election interference narrative");
+        T3FuseRequest.T2EntityRef personRef = findEntity(request, "person", "Leila Farzan");
+        T3FuseRequest.T2EntityRef organizationRef = findEntity(request, "organization", "U.S. Central Command");
+        T3FuseRequest.T2EntityRef narrativeRef = findEntity(request, "narrative", "Hormuz Strait escalation narrative");
 
         String personId = entityId(personRef);
         String organizationId = entityId(organizationRef);
@@ -103,7 +107,8 @@ public class MockAgentController {
         personNode.setId(personId);
         personNode.setProperties(Map.of(
                 "canonicalName", personRef.getCanonicalName(),
-                "nationality", "US",
+                "nationality", "IR-US",
+                "profession", "security analyst",
                 "importanceScore", 88.0
         ));
 
@@ -112,9 +117,9 @@ public class MockAgentController {
         organizationNode.setId(organizationId);
         organizationNode.setProperties(Map.of(
                 "canonicalName", organizationRef.getCanonicalName(),
-                "orgType", "ngo",
+                "orgType", "military_command",
                 "country", "US",
-                "importanceScore", 81.0
+                "importanceScore", 84.0
         ));
 
         T3FuseResponse.Neo4jNode narrativeNode = new T3FuseResponse.Neo4jNode();
@@ -123,6 +128,8 @@ public class MockAgentController {
         narrativeNode.setProperties(Map.of(
                 "canonicalLabel", narrativeRef.getCanonicalName(),
                 "importanceScore", 76.0,
+                "frameType", "threat_escalation",
+                "region", "Persian Gulf",
                 "source", "mock-t3"
         ));
 
