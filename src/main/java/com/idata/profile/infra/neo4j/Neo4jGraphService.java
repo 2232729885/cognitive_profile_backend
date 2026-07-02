@@ -2,12 +2,20 @@ package com.idata.profile.infra.neo4j;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.neo4j.driver.types.Node;
+import org.neo4j.driver.types.Path;
+import org.neo4j.driver.types.Relationship;
 import org.springframework.data.neo4j.core.Neo4jClient;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 @Slf4j
@@ -82,6 +90,107 @@ public class Neo4jGraphService {
                 .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
     }
 
+    /**
+     * 查询节点的2跳关系图，用于前端知识图谱可视化
+     * 返回格式：{"nodes": [...], "relations": [...]}
+     * 每个 node：{"id": "...", "label": "...", "properties": {...}}
+     * 每个 relation：{"fromId": "...", "toId": "...", "type": "...", "properties": {...}}
+     */
+    public Map<String, Object> findTwoHopGraph(String nodeId, String nodeLabel) {
+        String cypher = """
+                MATCH (n {id: $nodeId})-[r1]-(m)-[r2]-(k)
+                WHERE labels(n)[0] = $nodeLabel
+                RETURN n, r1, m, r2, k LIMIT 100
+                """;
+        List<Map<String, Object>> rows = neo4jClient.query(cypher)
+                .bind(nodeId).to("nodeId")
+                .bind(nodeLabel).to("nodeLabel")
+                .fetch()
+                .all()
+                .stream()
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+
+        Map<String, Map<String, Object>> nodes = new LinkedHashMap<>();
+        List<Map<String, Object>> relations = new ArrayList<>();
+        Set<String> relationKeys = new LinkedHashSet<>();
+
+        for (Map<String, Object> row : rows) {
+            Node n = asNode(row.get("n"));
+            Node m = asNode(row.get("m"));
+            Node k = asNode(row.get("k"));
+            addNode(nodes, n);
+            addNode(nodes, m);
+            addNode(nodes, k);
+
+            addRelation(relations, relationKeys, asRelationship(row.get("r1")), nodes);
+            addRelation(relations, relationKeys, asRelationship(row.get("r2")), nodes);
+        }
+        return graphResult(nodes, relations);
+    }
+
+    /**
+     * 查两节点间的最短路径，用于发现隐性关联
+     * 返回路径上的节点和关系列表，最大深度5跳
+     * 找不到路径时返回空 Map
+     */
+    public Map<String, Object> findShortestPath(String fromNodeId, String toNodeId) {
+        String cypher = """
+                MATCH path = shortestPath(
+                  (a {id: $fromId})-[*..5]-(b {id: $toId})
+                )
+                RETURN path
+                """;
+        List<Map<String, Object>> rows = neo4jClient.query(cypher)
+                .bind(fromNodeId).to("fromId")
+                .bind(toNodeId).to("toId")
+                .fetch()
+                .all()
+                .stream()
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+        if (rows.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        Path path = asPath(rows.get(0).get("path"));
+        if (path == null) {
+            return Collections.emptyMap();
+        }
+
+        Map<String, Map<String, Object>> nodes = new LinkedHashMap<>();
+        for (Node node : path.nodes()) {
+            addNode(nodes, node);
+        }
+
+        List<Map<String, Object>> relations = new ArrayList<>();
+        Set<String> relationKeys = new LinkedHashSet<>();
+        for (Relationship relationship : path.relationships()) {
+            addRelation(relations, relationKeys, relationship, nodes);
+        }
+        return graphResult(nodes, relations);
+    }
+
+    /**
+     * 按实体名称模糊搜索 Neo4j 节点，支持 Person/Organization/Event/Narrative 四种标签
+     * 返回匹配的节点列表，每个元素含 id、label、canonicalName、importanceScore
+     */
+    public List<Map<String, Object>> searchNodesByName(String keyword, String label, int limit) {
+        if (!hasText(keyword) || limit <= 0) {
+            return List.of();
+        }
+
+        List<String> labels = resolveSearchLabels(label);
+        if (labels.isEmpty()) {
+            return List.of();
+        }
+
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (String currentLabel : labels) {
+            result.addAll(searchNodesBySingleLabel(keyword, currentLabel, limit));
+        }
+        result.sort(Comparator.comparingDouble(this::importanceScore).reversed());
+        return result.size() > limit ? new ArrayList<>(result.subList(0, limit)) : result;
+    }
+
     private void runWrite(String operation, Runnable write) {
         synchronized (graphWriteLock) {
             RuntimeException lastError = null;
@@ -102,6 +211,128 @@ public class Neo4jGraphService {
             }
             throw lastError;
         }
+    }
+
+    private List<Map<String, Object>> searchNodesBySingleLabel(String keyword, String label, int limit) {
+        String nameProperty = "Narrative".equals(label) ? "canonicalLabel" : "canonicalName";
+        String cypher = String.format("""
+                MATCH (n:%s) WHERE n.%s CONTAINS $keyword
+                RETURN n.id AS id, '%s' AS label, n.%s AS name,
+                       n.importanceScore AS importanceScore
+                ORDER BY importanceScore DESC LIMIT $limit
+                """, label, nameProperty, label, nameProperty);
+        return neo4jClient.query(cypher)
+                .bind(keyword).to("keyword")
+                .bind(limit).to("limit")
+                .fetch()
+                .all()
+                .stream()
+                .map(row -> {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("id", stringValue(row.get("id")));
+                    item.put("label", stringValue(row.get("label")));
+                    item.put("canonicalName", row.get("name"));
+                    item.put("importanceScore", row.get("importanceScore"));
+                    return item;
+                })
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+    }
+
+    private List<String> resolveSearchLabels(String label) {
+        List<String> allowed = List.of("Person", "Organization", "Event", "Narrative");
+        if (!hasText(label)) {
+            return allowed;
+        }
+        return allowed.contains(label) ? List.of(label) : List.of();
+    }
+
+    private Map<String, Object> graphResult(Map<String, Map<String, Object>> nodes,
+                                            List<Map<String, Object>> relations) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("nodes", new ArrayList<>(nodes.values()));
+        result.put("relations", relations);
+        return result;
+    }
+
+    private void addNode(Map<String, Map<String, Object>> nodes, Node node) {
+        if (node == null) {
+            return;
+        }
+        Map<String, Object> properties = new LinkedHashMap<>(node.asMap());
+        String id = stringValue(properties.get("id"));
+        if (!hasText(id)) {
+            id = node.elementId();
+        }
+
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("id", id);
+        item.put("label", firstLabel(node));
+        item.put("properties", properties);
+        nodes.put(node.elementId(), item);
+    }
+
+    private void addRelation(List<Map<String, Object>> relations, Set<String> relationKeys,
+                             Relationship relationship, Map<String, Map<String, Object>> nodes) {
+        if (relationship == null || !relationKeys.add(relationship.elementId())) {
+            return;
+        }
+        Map<String, Object> fromNode = nodes.get(relationship.startNodeElementId());
+        Map<String, Object> toNode = nodes.get(relationship.endNodeElementId());
+        if (fromNode == null || toNode == null) {
+            return;
+        }
+
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("fromId", fromNode.get("id"));
+        item.put("toId", toNode.get("id"));
+        item.put("type", relationship.type());
+        item.put("properties", new LinkedHashMap<>(relationship.asMap()));
+        relations.add(item);
+    }
+
+    private String firstLabel(Node node) {
+        if (node == null || node.labels() == null) {
+            return "";
+        }
+        for (String label : node.labels()) {
+            return label;
+        }
+        return "";
+    }
+
+    private Node asNode(Object value) {
+        return value instanceof Node node ? node : null;
+    }
+
+    private Relationship asRelationship(Object value) {
+        return value instanceof Relationship relationship ? relationship : null;
+    }
+
+    private Path asPath(Object value) {
+        return value instanceof Path path ? path : null;
+    }
+
+    private String stringValue(Object value) {
+        return value == null ? null : value.toString();
+    }
+
+    private double importanceScore(Map<String, Object> item) {
+        Object value = item.get("importanceScore");
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+        if (value == null) {
+            return 0D;
+        }
+        try {
+            return Double.parseDouble(value.toString());
+        } catch (NumberFormatException e) {
+            return 0D;
+        }
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
     }
 
     private boolean isTransientNeo4jError(Throwable error) {
