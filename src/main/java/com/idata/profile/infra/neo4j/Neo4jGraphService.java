@@ -254,13 +254,15 @@ public class Neo4jGraphService {
     }
 
     private List<Map<String, Object>> searchNodesBySingleLabel(String keyword, String label, int limit) {
-        String nameProperty = "Narrative".equals(label) ? "canonicalLabel" : "canonicalName";
+        String nameExpression = nameExpression(label);
         String cypher = String.format("""
-                MATCH (n:%s) WHERE n.%s CONTAINS $keyword
-                RETURN n.id AS id, '%s' AS label, n.%s AS name,
-                       n.importanceScore AS importanceScore
+                MATCH (n:%s)
+                WITH n, %s AS name
+                WHERE toLower(coalesce(toString(name), '')) CONTAINS toLower($keyword)
+                RETURN n.id AS id, '%s' AS label, name,
+                       coalesce(n.importanceScore, 0) AS importanceScore
                 ORDER BY importanceScore DESC LIMIT $limit
-                """, label, nameProperty, label, nameProperty);
+                """, label, nameExpression, label);
         return neo4jClient.query(cypher)
                 .bind(keyword).to("keyword")
                 .bind(limit).to("limit")
@@ -279,11 +281,22 @@ public class Neo4jGraphService {
     }
 
     private List<String> resolveSearchLabels(String label) {
-        List<String> allowed = List.of("Person", "Organization", "Event", "Narrative");
+        List<String> allowed = List.of(
+                "Person", "Organization", "Event", "Location",
+                "Narrative", "SocialAccount", "MediaContent");
         if (!hasText(label)) {
             return allowed;
         }
         return allowed.contains(label) ? List.of(label) : List.of();
+    }
+
+    private String nameExpression(String label) {
+        return switch (label) {
+            case "Narrative" -> "n.canonicalLabel";
+            case "SocialAccount" -> "coalesce(n.displayName, n.handle)";
+            case "MediaContent" -> "n.platformContentId";
+            default -> "n.canonicalName";
+        };
     }
 
     private Map<String, Object> graphResult(Map<String, Map<String, Object>> nodes,

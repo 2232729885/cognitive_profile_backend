@@ -18,9 +18,6 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import java.util.Map;
 
-/**
- * F6 检索与知识图谱分析。
- */
 @RestController
 @RequestMapping("/api/search")
 @RequiredArgsConstructor
@@ -29,10 +26,6 @@ public class SearchController {
     private final SearchService searchService;
     private final Neo4jGraphService neo4jGraphService;
 
-    /**
-     * 关键词全文检索，只查 ES。
-     * 示例：{"keyword":"选举干预","platform":"x","language":"zh","page":0,"size":20}
-     */
     @PostMapping("/text")
     public Result<SearchResult> searchByText(@RequestBody TextSearchRequest request) {
         return Result.ok(searchService.searchByText(
@@ -43,10 +36,6 @@ public class SearchController {
                 request.getSize()));
     }
 
-    /**
-     * 语义相似检索，调 T4 向量化后查 Milvus。
-     * 示例：{"queryText":"外部势力操纵舆论","platform":null,"language":null,"topK":20}
-     */
     @PostMapping("/semantic")
     public Result<SearchResult> searchBySemantic(@RequestBody SemanticSearchRequest request) {
         return Result.ok(searchService.searchBySemantic(
@@ -56,29 +45,17 @@ public class SearchController {
                 request.getTopK()));
     }
 
-    /**
-     * 三路融合检索，ES + Milvus + Neo4j。
-     * 示例：{"queryText":"外部势力操纵舆论","platform":"x","language":"zh","topK":20,"enableEs":true,"enableMilvus":true,"enableNeo4j":false}
-     */
     @PostMapping("/hybrid")
     public Result<SearchResult> searchHybrid(@RequestBody HybridSearchRequest request) {
         return Result.ok(searchService.searchHybrid(request));
     }
 
-    /**
-     * 2跳知识图谱查询。
-     * 示例：GET /api/search/graph/Person/00000000-0000-0000-0000-000000000000
-     */
     @GetMapping("/graph/{label}/{nodeId}")
     public Result<Map<String, Object>> findTwoHopGraph(@PathVariable String label,
                                                        @PathVariable String nodeId) {
         return Result.ok(neo4jGraphService.findTwoHopGraph(nodeId, label));
     }
 
-    /**
-     * 两节点最短路径查询。
-     * 示例：GET /api/search/path?fromId=00000000-0000-0000-0000-000000000000&toId=11111111-1111-1111-1111-111111111111
-     */
     @GetMapping("/path")
     public Result<Map<String, Object>> findShortestPath(@RequestParam String fromId,
                                                         @RequestParam String toId) {
@@ -86,8 +63,9 @@ public class SearchController {
     }
 
     /**
-     * 实体名称模糊搜索。
-     * 示例：GET /api/search/entities?keyword=张三&label=Person&limit=10
+     * Entity fuzzy search.
+     * Valid label values: Person/Organization/Event/Location/Narrative/SocialAccount/MediaContent.
+     * If label is empty, all seven node types are searched.
      */
     @GetMapping("/entities")
     public Result<List<Map<String, Object>>> searchEntities(@RequestParam String keyword,
