@@ -975,6 +975,23 @@ COMMENT ON COLUMN users.last_login_at IS '最后一次登录时间';
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_users_username ON users(username);
 
+INSERT INTO users (id, username, password_hash, display_name, role, is_active, created_at, updated_at)
+VALUES (
+    gen_random_uuid(),
+    'admin',
+    '$2a$10$S7w5YjbP11RdLhfX8t21tOIPszlMGA87vm/Wg4o7/z5GBYiYAlX7e',
+    '系统管理员',
+    'admin',
+    true,
+    NOW(),
+    NOW()
+) ON CONFLICT (username) DO UPDATE SET
+    password_hash = EXCLUDED.password_hash,
+    display_name = EXCLUDED.display_name,
+    role = EXCLUDED.role,
+    is_active = EXCLUDED.is_active,
+    updated_at = NOW();
+
 CREATE TRIGGER trg_users_updated_at
   BEFORE UPDATE ON users
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
