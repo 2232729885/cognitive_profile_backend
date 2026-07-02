@@ -191,6 +191,46 @@ public class Neo4jGraphService {
         return result.size() > limit ? new ArrayList<>(result.subList(0, limit)) : result;
     }
 
+    public Map<String, Object> getGraphStats() {
+        List<Map<String, Object>> nodeRows = neo4jClient.query(
+                        "MATCH (n) RETURN labels(n)[0] AS label, count(n) AS cnt")
+                .fetch()
+                .all()
+                .stream()
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+        List<Map<String, Object>> relationRows = neo4jClient.query(
+                        "MATCH ()-[r]->() RETURN type(r) AS relType, count(r) AS cnt")
+                .fetch()
+                .all()
+                .stream()
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+
+        Map<String, Object> nodesByLabel = new LinkedHashMap<>();
+        long nodeCount = 0L;
+        for (Map<String, Object> row : nodeRows) {
+            String label = stringValue(row.get("label"));
+            long count = longValue(row.get("cnt"));
+            nodesByLabel.put(label, count);
+            nodeCount += count;
+        }
+
+        Map<String, Object> relationsByType = new LinkedHashMap<>();
+        long relationCount = 0L;
+        for (Map<String, Object> row : relationRows) {
+            String relType = stringValue(row.get("relType"));
+            long count = longValue(row.get("cnt"));
+            relationsByType.put(relType, count);
+            relationCount += count;
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("nodeCount", nodeCount);
+        result.put("relationCount", relationCount);
+        result.put("nodesByLabel", nodesByLabel);
+        result.put("relationsByType", relationsByType);
+        return result;
+    }
+
     private void runWrite(String operation, Runnable write) {
         synchronized (graphWriteLock) {
             RuntimeException lastError = null;
@@ -328,6 +368,20 @@ public class Neo4jGraphService {
             return Double.parseDouble(value.toString());
         } catch (NumberFormatException e) {
             return 0D;
+        }
+    }
+
+    private long longValue(Object value) {
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        if (value == null) {
+            return 0L;
+        }
+        try {
+            return Long.parseLong(value.toString());
+        } catch (NumberFormatException e) {
+            return 0L;
         }
     }
 

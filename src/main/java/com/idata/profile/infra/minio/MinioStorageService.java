@@ -33,7 +33,8 @@ public class MinioStorageService {
                         .bucket(bucket)
                         .object(key)
                         .stream(inputStream, (long) content.length, -1L)
-                        .contentType(contentType)
+                        .contentType(contentType == null || contentType.isBlank()
+                                ? "application/octet-stream" : contentType)
                         .build());
             }
             return bucket + "/" + key;
