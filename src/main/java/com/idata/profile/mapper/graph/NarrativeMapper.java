@@ -15,7 +15,10 @@ import java.util.UUID;
 public interface NarrativeMapper extends BaseMapper<Narrative> {
 
     @Insert("""
-            WITH updated AS (
+            WITH lock AS (
+                SELECT pg_advisory_xact_lock(hashtext('narrative:' || #{canonicalLabel}))
+            ),
+            updated AS (
                 UPDATE narratives
                 SET content_count = content_count + 1,
                     importance_score = GREATEST(importance_score, #{importanceScore}),
@@ -25,6 +28,7 @@ public interface NarrativeMapper extends BaseMapper<Narrative> {
                     END,
                     updated_at = NOW()
                 WHERE canonical_label = #{canonicalLabel}
+                  AND EXISTS (SELECT 1 FROM lock)
                 RETURNING id
             )
             INSERT INTO narratives (
@@ -34,6 +38,7 @@ public interface NarrativeMapper extends BaseMapper<Narrative> {
             SELECT gen_random_uuid(), #{canonicalLabel}, 'emerging', 1,
                    0, #{importanceScore}, TRUE, NOW(),
                    COALESCE(NULLIF(#{claimAtoms}, '')::jsonb, '[]'::jsonb)
+            FROM lock
             WHERE NOT EXISTS (SELECT 1 FROM updated)
             """)
     int upsertByCanonicalLabel(@Param("canonicalLabel") String canonicalLabel,
@@ -42,6 +47,9 @@ public interface NarrativeMapper extends BaseMapper<Narrative> {
 
     @Select("SELECT EXISTS(SELECT 1 FROM narratives WHERE id = #{id})")
     boolean existsById(@Param("id") UUID id);
+
+    @Select("SELECT id FROM narratives WHERE canonical_label = #{canonicalLabel} LIMIT 1")
+    UUID selectIdByCanonicalLabel(@Param("canonicalLabel") String canonicalLabel);
 
     @Update("""
             UPDATE narratives

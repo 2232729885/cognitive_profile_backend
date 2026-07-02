@@ -18,6 +18,7 @@ public class SocialContentNormalizer {
     public MediaContent normalize(Object kafkaMessage, RawRecord rawRecord) {
         JsonNode root = IngestionMessageSupport.root(kafkaMessage);
         JsonNode data = IngestionMessageSupport.data(kafkaMessage);
+        JsonNode metrics = data.path("metrics");
 
         MediaContent mc = new MediaContent();
         mc.setId(UUID.randomUUID());
@@ -44,13 +45,13 @@ public class SocialContentNormalizer {
         mc.setHashtags(readStringArray(data.path("hashtags")));
         mc.setMentions(readStringArray(data.path("mentions")));
         mc.setExternalUrls(readStringArray(data.path("external_urls")));
-        mc.setLikeCount(readLong(data, "like_count"));
-        mc.setCommentCount(readLong(data, "comment_count"));
-        mc.setShareCount(readLong(data, "share_count"));
-        mc.setRepostCount(readLong(data, "repost_count"));
-        mc.setQuoteCount(readLong(data, "quote_count"));
-        mc.setViewCount(readLong(data, "view_count"));
-        mc.setReactionCount(readLong(data, "reaction_count"));
+        mc.setLikeCount(readLong(data, metrics, "like_count"));
+        mc.setCommentCount(readLong(data, metrics, "comment_count"));
+        mc.setShareCount(readLong(data, metrics, "share_count"));
+        mc.setRepostCount(readLong(data, metrics, "repost_count"));
+        mc.setQuoteCount(readLong(data, metrics, "quote_count"));
+        mc.setViewCount(readLong(data, metrics, "view_count"));
+        mc.setReactionCount(readLong(data, metrics, "reaction_count"));
 
         if (RecordType.NEWS_ARTICLE.getCode().equals(rawRecord.getRecordType())) {
             mc.setContentType("article");
@@ -86,6 +87,11 @@ public class SocialContentNormalizer {
         } catch (NumberFormatException e) {
             return null;
         }
+    }
+
+    private Long readLong(JsonNode primaryNode, JsonNode fallbackNode, String fieldName) {
+        Long value = readLong(primaryNode, fieldName);
+        return value != null ? value : readLong(fallbackNode, fieldName);
     }
 
     private String[] readStringArray(JsonNode node) {
