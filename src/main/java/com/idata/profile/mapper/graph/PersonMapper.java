@@ -26,26 +26,17 @@ public interface PersonMapper extends BaseMapper<Person> {
     List<Person> selectCandidatesForProfileGeneration(@Param("limit") int limit);
 
     @Insert("""
-            WITH lock AS (
-                SELECT pg_advisory_xact_lock(hashtext('person:' || #{canonicalName}))
-            ),
-            updated AS (
-                UPDATE persons
-                SET content_count = content_count + 1,
-                    last_seen_at = NOW(),
-                    importance_score = GREATEST(importance_score, #{importanceScore}),
-                    updated_at = NOW()
-                WHERE canonical_name = #{canonicalName}
-                  AND EXISTS (SELECT 1 FROM lock)
-                RETURNING id
-            )
             INSERT INTO persons (
                 id, canonical_name, importance_score, is_high_value,
                 content_count, first_seen_at, last_seen_at
             )
-            SELECT gen_random_uuid(), #{canonicalName}, #{importanceScore}, FALSE, 1, NOW(), NOW()
-            FROM lock
-            WHERE NOT EXISTS (SELECT 1 FROM updated)
+            VALUES (gen_random_uuid(), #{canonicalName}, #{importanceScore}, FALSE, 1, NOW(), NOW())
+            ON CONFLICT (canonical_name)
+            DO UPDATE SET
+                content_count = persons.content_count + 1,
+                last_seen_at = NOW(),
+                importance_score = GREATEST(persons.importance_score, #{importanceScore}),
+                updated_at = NOW()
             """)
     int upsertByCanonicalName(@Param("canonicalName") String canonicalName,
                               @Param("importanceScore") BigDecimal importanceScore);

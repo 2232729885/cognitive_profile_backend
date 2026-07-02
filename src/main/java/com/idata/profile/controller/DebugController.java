@@ -1,6 +1,8 @@
 package com.idata.profile.controller;
 
+import com.idata.profile.batch.profile.PersonProfileGenerationJob;
 import com.idata.profile.batch.relation.AccountRelationBackfillJob;
+import com.idata.profile.common.response.Result;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Profile;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -17,6 +19,7 @@ import java.util.Map;
 public class DebugController {
 
     private final AccountRelationBackfillJob accountRelationBackfillJob;
+    private final PersonProfileGenerationJob personProfileGenerationJob;
 
     @PostMapping("/trigger-relation-backfill")
     public Map<String, Object> triggerRelationBackfill() {
@@ -26,5 +29,11 @@ public class DebugController {
                 "job", "AccountRelationBackfillJob",
                 "triggeredAt", OffsetDateTime.now().toString()
         );
+    }
+
+    @PostMapping("/trigger-profile-generation")
+    public Result<String> triggerProfileGeneration() {
+        personProfileGenerationJob.run();
+        return Result.ok("triggered");
     }
 }

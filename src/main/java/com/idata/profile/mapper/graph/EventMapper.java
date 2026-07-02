@@ -15,24 +15,15 @@ import java.util.UUID;
 public interface EventMapper extends BaseMapper<Event> {
 
     @Insert("""
-            WITH lock AS (
-                SELECT pg_advisory_xact_lock(hashtext('event:' || #{canonicalName}))
-            ),
-            updated AS (
-                UPDATE events
-                SET content_count = content_count + 1,
-                    importance_score = GREATEST(importance_score, #{importanceScore}),
-                    updated_at = NOW()
-                WHERE canonical_name = #{canonicalName}
-                  AND EXISTS (SELECT 1 FROM lock)
-                RETURNING id
-            )
             INSERT INTO events (
                 id, canonical_name, importance_score, content_count
             )
-            SELECT gen_random_uuid(), #{canonicalName}, #{importanceScore}, 1
-            FROM lock
-            WHERE NOT EXISTS (SELECT 1 FROM updated)
+            VALUES (gen_random_uuid(), #{canonicalName}, #{importanceScore}, 1)
+            ON CONFLICT (canonical_name)
+            DO UPDATE SET
+                content_count = events.content_count + 1,
+                importance_score = GREATEST(events.importance_score, #{importanceScore}),
+                updated_at = NOW()
             """)
     int upsertByCanonicalName(@Param("canonicalName") String canonicalName,
                               @Param("importanceScore") BigDecimal importanceScore);

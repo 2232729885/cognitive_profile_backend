@@ -15,31 +15,24 @@ import java.util.UUID;
 public interface NarrativeMapper extends BaseMapper<Narrative> {
 
     @Insert("""
-            WITH lock AS (
-                SELECT pg_advisory_xact_lock(hashtext('narrative:' || #{canonicalLabel}))
-            ),
-            updated AS (
-                UPDATE narratives
-                SET content_count = content_count + 1,
-                    importance_score = GREATEST(importance_score, #{importanceScore}),
-                    claim_atoms = CASE
-                        WHEN #{claimAtoms} IS NULL OR #{claimAtoms} = '' THEN claim_atoms
-                        ELSE CAST(#{claimAtoms} AS jsonb)
-                    END,
-                    updated_at = NOW()
-                WHERE canonical_label = #{canonicalLabel}
-                  AND EXISTS (SELECT 1 FROM lock)
-                RETURNING id
-            )
             INSERT INTO narratives (
                 id, canonical_label, lifecycle_state, content_count,
                 account_count, importance_score, is_active, first_detected_at, claim_atoms
             )
-            SELECT gen_random_uuid(), #{canonicalLabel}, 'emerging', 1,
-                   0, #{importanceScore}, TRUE, NOW(),
-                   COALESCE(NULLIF(#{claimAtoms}, '')::jsonb, '[]'::jsonb)
-            FROM lock
-            WHERE NOT EXISTS (SELECT 1 FROM updated)
+            VALUES (
+                gen_random_uuid(), #{canonicalLabel}, 'emerging', 1,
+                0, #{importanceScore}, TRUE, NOW(),
+                COALESCE(NULLIF(#{claimAtoms}, '')::jsonb, '[]'::jsonb)
+            )
+            ON CONFLICT (canonical_label)
+            DO UPDATE SET
+                content_count = narratives.content_count + 1,
+                importance_score = GREATEST(narratives.importance_score, #{importanceScore}),
+                claim_atoms = CASE
+                    WHEN #{claimAtoms} IS NULL OR #{claimAtoms} = '' THEN narratives.claim_atoms
+                    ELSE CAST(#{claimAtoms} AS jsonb)
+                END,
+                updated_at = NOW()
             """)
     int upsertByCanonicalLabel(@Param("canonicalLabel") String canonicalLabel,
                                @Param("importanceScore") BigDecimal importanceScore,

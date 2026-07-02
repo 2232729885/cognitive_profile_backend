@@ -531,6 +531,7 @@ COMMENT ON COLUMN persons.first_seen_at    IS '首次被T2识别到的时间';
 COMMENT ON COLUMN persons.last_seen_at     IS '最近一次被T2识别到的时间';
 COMMENT ON COLUMN persons.merge_history    IS 'T3归一时记录被合并掉的旧实体UUID数组，用于ID追溯';
 
+CREATE UNIQUE INDEX IF NOT EXISTS uq_persons_canonical_name ON persons(canonical_name);
 CREATE INDEX IF NOT EXISTS idx_persons_name       ON persons(canonical_name);
 CREATE INDEX IF NOT EXISTS idx_persons_high_value ON persons(is_high_value) WHERE is_high_value = TRUE;
 CREATE INDEX IF NOT EXISTS idx_persons_importance ON persons(importance_score DESC);
@@ -562,6 +563,7 @@ COMMENT ON COLUMN organizations.is_high_value  IS '是否为高价值目标';
 COMMENT ON COLUMN organizations.content_count  IS '出现在多少条媒体内容中';
 COMMENT ON COLUMN organizations.merge_history  IS 'T3归一时被合并掉的旧实体UUID数组';
 
+CREATE UNIQUE INDEX IF NOT EXISTS uq_orgs_canonical_name ON organizations(canonical_name);
 CREATE INDEX IF NOT EXISTS idx_orgs_name       ON organizations(canonical_name);
 CREATE INDEX IF NOT EXISTS idx_orgs_type       ON organizations(org_type);
 CREATE INDEX IF NOT EXISTS idx_orgs_importance ON organizations(importance_score DESC);
@@ -595,6 +597,7 @@ COMMENT ON COLUMN events.importance_score IS '重要性评分0-100';
 COMMENT ON COLUMN events.content_count    IS '涉及该事件的内容数量';
 COMMENT ON COLUMN events.merge_history    IS 'T3归一时被合并掉的旧实体UUID数组';
 
+CREATE UNIQUE INDEX IF NOT EXISTS uq_events_canonical_name ON events(canonical_name);
 CREATE INDEX IF NOT EXISTS idx_events_name     ON events(canonical_name);
 CREATE INDEX IF NOT EXISTS idx_events_type     ON events(event_type);
 CREATE INDEX IF NOT EXISTS idx_events_occurred ON events(occurred_at_start DESC);
@@ -634,6 +637,7 @@ COMMENT ON COLUMN narratives.peak_at        IS '传播量达到峰值的时间';
 COMMENT ON COLUMN narratives.merge_history  IS 'T3聚类时被合并掉的旧叙事UUID数组';
 COMMENT ON COLUMN narratives.claim_atoms    IS '核心主张列表（JSONB），格式：[{"claim":"...","confidence":0.9}]，供T6入口查询使用';
 
+CREATE UNIQUE INDEX IF NOT EXISTS uq_narratives_canonical_label ON narratives(canonical_label);
 CREATE INDEX IF NOT EXISTS idx_narratives_label     ON narratives(canonical_label);
 CREATE INDEX IF NOT EXISTS idx_narratives_lifecycle ON narratives(lifecycle_state);
 CREATE INDEX IF NOT EXISTS idx_narratives_active    ON narratives(is_active, importance_score DESC);
@@ -1087,4 +1091,3 @@ FROM pg_tables t
 JOIN pg_class c ON c.relname = t.tablename
 WHERE t.schemaname = 'public'
 ORDER BY t.tablename;
-
