@@ -9,7 +9,10 @@ import io.milvus.v2.service.collection.request.CreateCollectionReq;
 import io.milvus.v2.service.collection.request.HasCollectionReq;
 import io.milvus.v2.service.collection.request.LoadCollectionReq;
 import io.milvus.v2.service.vector.request.InsertReq;
+import io.milvus.v2.service.vector.request.SearchReq;
+import io.milvus.v2.service.vector.request.data.FloatVec;
 import io.milvus.v2.service.vector.response.InsertResp;
+import io.milvus.v2.service.vector.response.SearchResp;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -53,6 +56,23 @@ public class MilvusVectorService {
         row.addProperty("aigc_score", aigcScore);
         insert(IMAGE_COLLECTION, row);
         return vectorId;
+    }
+
+    /**
+     * 文本向量检索，返回最相似的 topK 个 source_id（对应 media_contents.id）
+     * 支持按 platform 和 language 过滤（传 null 表示不过滤）
+     */
+    public List<String> searchTextEmbeddings(float[] queryEmbedding, int topK,
+                                             String platform, String language) {
+        return searchEmbeddings(TEXT_COLLECTION, queryEmbedding, topK,
+                buildFilter(platform, language), "source_id");
+    }
+
+    /**
+     * 图像向量检索，返回最相似的 topK 个 asset_id（对应 media_assets.id）
+     */
+    public List<String> searchImageEmbeddings(float[] queryEmbedding, int topK) {
+        return searchEmbeddings(IMAGE_COLLECTION, queryEmbedding, topK, null, "source_id");
     }
 
     private JsonObject baseRow(String id, String sourceId, String sourceType, String platform, float[] embedding) {
@@ -100,6 +120,78 @@ public class MilvusVectorService {
                 .build());
     }
 
+    private List<String> searchEmbeddings(String collectionName, float[] queryEmbedding, int topK,
+                                          String filter, String outputField) {
+        if (milvusClient == null || topK <= 0) {
+            return List.of();
+        }
+        validateEmbedding(queryEmbedding);
+
+        try {
+            Boolean exists = milvusClient.hasCollection(HasCollectionReq.builder()
+                    .collectionName(collectionName)
+                    .build());
+            if (!Boolean.TRUE.equals(exists)) {
+                return List.of();
+            }
+
+            SearchReq.SearchReqBuilder builder = SearchReq.builder()
+                    .collectionName(collectionName)
+                    .annsField(VECTOR_FIELD)
+                    .metricType(IndexParam.MetricType.COSINE)
+                    .topK(topK)
+                    .data(List.of(new FloatVec(queryEmbedding)))
+                    .outputFields(List.of(outputField));
+            if (hasText(filter)) {
+                builder.filter(filter);
+            }
+
+            SearchResp response = milvusClient.search(builder.build());
+            return extractSearchField(response, outputField);
+        } catch (RuntimeException e) {
+            log.warn("Milvus vector search failed, collection={}, topK={}", collectionName, topK, e);
+            return List.of();
+        }
+    }
+
+    private List<String> extractSearchField(SearchResp response, String fieldName) {
+        if (response == null || response.getSearchResults() == null || response.getSearchResults().isEmpty()) {
+            return List.of();
+        }
+
+        List<String> ids = new ArrayList<>();
+        for (List<SearchResp.SearchResult> results : response.getSearchResults()) {
+            if (results == null) {
+                continue;
+            }
+            for (SearchResp.SearchResult result : results) {
+                if (result == null || result.getEntity() == null) {
+                    continue;
+                }
+                Object value = result.getEntity().get(fieldName);
+                if (value != null) {
+                    ids.add(value.toString());
+                }
+            }
+        }
+        return ids;
+    }
+
+    private String buildFilter(String platform, String language) {
+        List<String> filters = new ArrayList<>();
+        if (hasText(platform)) {
+            filters.add("platform == \"" + escapeFilterValue(platform) + "\"");
+        }
+        if (hasText(language)) {
+            filters.add("language == \"" + escapeFilterValue(language) + "\"");
+        }
+        return String.join(" && ", filters);
+    }
+
+    private String escapeFilterValue(String value) {
+        return value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
     private void validateEmbedding(float[] embedding) {
         if (embedding == null) {
             throw new IllegalArgumentException("Embedding is null");
@@ -120,5 +212,9 @@ public class MilvusVectorService {
 
     public String newVectorId() {
         return UUID.randomUUID().toString();
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
     }
 }
