@@ -28,6 +28,10 @@ public interface EventMapper extends BaseMapper<Event> {
     @Select("SELECT COUNT(*) FROM events WHERE dedup_status = #{dedupStatus}")
     long countByDedupStatus(@Param("dedupStatus") String dedupStatus);
 
+    @Select("SELECT * FROM events WHERE dedup_status = #{status} " +
+            "ORDER BY created_at ASC LIMIT #{limit}")
+    List<Event> selectByDedupStatus(@Param("status") String status, @Param("limit") int limit);
+
     @Select("SELECT * FROM events WHERE canonical_name = #{canonicalName} " +
             "AND dedup_status = 'pending' ORDER BY created_at ASC")
     List<Event> selectPendingByCanonicalName(@Param("canonicalName") String canonicalName);

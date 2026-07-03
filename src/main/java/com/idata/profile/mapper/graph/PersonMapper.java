@@ -42,6 +42,10 @@ public interface PersonMapper extends BaseMapper<Person> {
     @Select("SELECT COUNT(*) FROM persons WHERE dedup_status = #{dedupStatus}")
     long countByDedupStatus(@Param("dedupStatus") String dedupStatus);
 
+    @Select("SELECT * FROM persons WHERE dedup_status = #{status} " +
+            "ORDER BY created_at ASC LIMIT #{limit}")
+    List<Person> selectByDedupStatus(@Param("status") String status, @Param("limit") int limit);
+
     @Select("SELECT * FROM persons WHERE canonical_name = #{canonicalName} " +
             "AND dedup_status = 'pending' ORDER BY created_at ASC")
     List<Person> selectPendingByCanonicalName(@Param("canonicalName") String canonicalName);

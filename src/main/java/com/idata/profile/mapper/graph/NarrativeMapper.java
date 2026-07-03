@@ -34,6 +34,10 @@ public interface NarrativeMapper extends BaseMapper<Narrative> {
     @Select("SELECT COUNT(*) FROM narratives WHERE dedup_status = #{dedupStatus}")
     long countByDedupStatus(@Param("dedupStatus") String dedupStatus);
 
+    @Select("SELECT * FROM narratives WHERE dedup_status = #{status} " +
+            "ORDER BY created_at ASC LIMIT #{limit}")
+    List<Narrative> selectByDedupStatus(@Param("status") String status, @Param("limit") int limit);
+
     @Select("SELECT * FROM narratives WHERE canonical_label = #{canonicalLabel} " +
             "AND dedup_status = 'pending' ORDER BY created_at ASC")
     List<Narrative> selectPendingByCanonicalName(@Param("canonicalLabel") String canonicalLabel);

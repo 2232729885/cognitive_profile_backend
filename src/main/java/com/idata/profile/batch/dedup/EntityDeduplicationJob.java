@@ -1,6 +1,9 @@
 package com.idata.profile.batch.dedup;
 
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
+import com.idata.profile.agentproxy.AgentProxyClient;
+import com.idata.profile.agentproxy.dto.t3.T3ResolveRequest;
+import com.idata.profile.agentproxy.dto.t3.T3ResolveResponse;
 import com.idata.profile.common.util.StableUuidUtil;
 import com.idata.profile.entity.dedup.EntityFusionRecord;
 import com.idata.profile.entity.graph.Event;
@@ -20,6 +23,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -40,6 +44,7 @@ public class EntityDeduplicationJob {
     private final NarrativeMapper narrativeMapper;
     private final EntityFusionRecordMapper entityFusionRecordMapper;
     private final Neo4jGraphService neo4jGraphService;
+    private final AgentProxyClient agentProxyClient;
     private final ApplicationContext applicationContext;
     private final AtomicBoolean running = new AtomicBoolean(false);
 
@@ -81,13 +86,17 @@ public class EntityDeduplicationJob {
     private void runInternal(UUID jobRunId) {
         log.info("[EntityDeduplicationJob] start, jobRunId={}", jobRunId);
 
-        int totalMerged = 0;
-        totalMerged += deduplicateEntities("person", jobRunId);
-        totalMerged += deduplicateEntities("organization", jobRunId);
-        totalMerged += deduplicateEntities("event", jobRunId);
-        totalMerged += deduplicateEntities("narrative", jobRunId);
+        int exactMerged = 0;
+        exactMerged += deduplicateEntities("person", jobRunId);
+        exactMerged += deduplicateEntities("organization", jobRunId);
+        exactMerged += deduplicateEntities("event", jobRunId);
+        exactMerged += deduplicateEntities("narrative", jobRunId);
+        log.info("[EntityDeduplicationJob] exact-name stage done, merged={}", exactMerged);
 
-        log.info("[EntityDeduplicationJob] done, jobRunId={}, totalMerged={}", jobRunId, totalMerged);
+        int t3Merged = deduplicateWithT3(jobRunId);
+        log.info("[EntityDeduplicationJob] T3-assisted stage done, merged={}", t3Merged);
+
+        log.info("[EntityDeduplicationJob] done, jobRunId={}, totalMerged={}", jobRunId, exactMerged + t3Merged);
         logPendingStats();
     }
 
@@ -124,7 +133,7 @@ public class EntityDeduplicationJob {
                 boolean neo4jMerged = mergeNeo4jNodes(mergedIds, survivor.getId(), "Person",
                         personProperties(survivor), survivor.getCanonicalName(), "person");
                 insertRecord("person", survivor.getId(), survivor.getCanonicalName(), mergedIds, mergedNames,
-                        survivor.getContentCount(), totalContentCount, neo4jMerged, jobRunId);
+                        survivor.getContentCount(), totalContentCount, neo4jMerged, jobRunId, "exact_name");
                 merged += mergedList.size();
             } catch (Exception e) {
                 log.warn("[EntityDeduplicationJob] person group failed, canonicalName={}", name, e);
@@ -156,7 +165,7 @@ public class EntityDeduplicationJob {
                 boolean neo4jMerged = mergeNeo4jNodes(mergedIds, survivor.getId(), "Organization",
                         organizationProperties(survivor), survivor.getCanonicalName(), "organization");
                 insertRecord("organization", survivor.getId(), survivor.getCanonicalName(), mergedIds, mergedNames,
-                        survivor.getContentCount(), totalContentCount, neo4jMerged, jobRunId);
+                        survivor.getContentCount(), totalContentCount, neo4jMerged, jobRunId, "exact_name");
                 merged += mergedList.size();
             } catch (Exception e) {
                 log.warn("[EntityDeduplicationJob] organization group failed, canonicalName={}", name, e);
@@ -188,7 +197,7 @@ public class EntityDeduplicationJob {
                 boolean neo4jMerged = mergeNeo4jNodes(mergedIds, survivor.getId(), "Event",
                         eventProperties(survivor), survivor.getCanonicalName(), "event");
                 insertRecord("event", survivor.getId(), survivor.getCanonicalName(), mergedIds, mergedNames,
-                        survivor.getContentCount(), totalContentCount, neo4jMerged, jobRunId);
+                        survivor.getContentCount(), totalContentCount, neo4jMerged, jobRunId, "exact_name");
                 merged += mergedList.size();
             } catch (Exception e) {
                 log.warn("[EntityDeduplicationJob] event group failed, canonicalName={}", name, e);
@@ -220,13 +229,222 @@ public class EntityDeduplicationJob {
                 boolean neo4jMerged = mergeNeo4jNodes(mergedIds, survivor.getId(), "Narrative",
                         narrativeProperties(survivor), survivor.getCanonicalLabel(), "narrative");
                 insertRecord("narrative", survivor.getId(), survivor.getCanonicalLabel(), mergedIds, mergedNames,
-                        survivor.getContentCount(), totalContentCount, neo4jMerged, jobRunId);
+                        survivor.getContentCount(), totalContentCount, neo4jMerged, jobRunId, "exact_name");
                 merged += mergedList.size();
             } catch (Exception e) {
                 log.warn("[EntityDeduplicationJob] narrative group failed, canonicalLabel={}", name, e);
             }
         }
         return merged;
+    }
+
+    private int deduplicateWithT3(UUID jobRunId) {
+        int merged = 0;
+        for (String entityType : List.of("person", "organization", "event", "narrative")) {
+            merged += resolveEntityTypeWithT3(entityType, jobRunId);
+        }
+        return merged;
+    }
+
+    private int resolveEntityTypeWithT3(String entityType, UUID jobRunId) {
+        List<?> pendingEntities = selectPendingEntities(entityType, BATCH_LIMIT);
+        if (pendingEntities.size() < 2) {
+            return 0;
+        }
+
+        List<T3ResolveRequest.EntityCandidate> candidates = pendingEntities.stream()
+                .map(entity -> toCandidate(entity, entityType))
+                .filter(candidate -> candidate.getId() != null && candidate.getCanonicalName() != null)
+                .toList();
+        if (candidates.size() < 2) {
+            return 0;
+        }
+
+        T3ResolveRequest request = new T3ResolveRequest();
+        request.setEntities(candidates);
+
+        T3ResolveResponse response;
+        try {
+            response = agentProxyClient.call("T3", "resolve_entities", request, T3ResolveResponse.class);
+        } catch (Exception e) {
+            log.warn("[EntityDeduplicationJob] T3 resolve_entities failed, entityType={}", entityType, e);
+            return 0;
+        }
+
+        if (response == null || response.getMergeGroups() == null || response.getMergeGroups().isEmpty()) {
+            return 0;
+        }
+
+        int merged = 0;
+        for (T3ResolveResponse.MergeGroup group : response.getMergeGroups()) {
+            if (group == null || group.getConfidence() == null || group.getConfidence() < 0.8D
+                    || group.getMergedIds() == null || group.getMergedIds().isEmpty()) {
+                continue;
+            }
+            try {
+                merged += executeMergeGroup(group, entityType, jobRunId);
+            } catch (Exception e) {
+                log.warn("[EntityDeduplicationJob] T3 merge group failed, survivorId={}",
+                        group.getSurvivorId(), e);
+            }
+        }
+        return merged;
+    }
+
+    private List<?> selectPendingEntities(String entityType, int limit) {
+        return switch (entityType) {
+            case "person" -> personMapper.selectByDedupStatus("pending", limit);
+            case "organization" -> organizationMapper.selectByDedupStatus("pending", limit);
+            case "event" -> eventMapper.selectByDedupStatus("pending", limit);
+            case "narrative" -> narrativeMapper.selectByDedupStatus("pending", limit);
+            default -> List.of();
+        };
+    }
+
+    private T3ResolveRequest.EntityCandidate toCandidate(Object entity, String entityType) {
+        T3ResolveRequest.EntityCandidate candidate = new T3ResolveRequest.EntityCandidate();
+        candidate.setEntityType(entityType);
+        candidate.setAliases(List.of());
+        if (entity instanceof Person person) {
+            candidate.setId(person.getId().toString());
+            candidate.setCanonicalName(person.getCanonicalName());
+            candidate.setImportanceScore(score(person.getImportanceScore()));
+        } else if (entity instanceof Organization organization) {
+            candidate.setId(organization.getId().toString());
+            candidate.setCanonicalName(organization.getCanonicalName());
+            candidate.setImportanceScore(score(organization.getImportanceScore()));
+        } else if (entity instanceof Event event) {
+            candidate.setId(event.getId().toString());
+            candidate.setCanonicalName(event.getCanonicalName());
+            candidate.setImportanceScore(score(event.getImportanceScore()));
+        } else if (entity instanceof Narrative narrative) {
+            candidate.setId(narrative.getId().toString());
+            candidate.setCanonicalName(narrative.getCanonicalLabel());
+            candidate.setImportanceScore(score(narrative.getImportanceScore()));
+        }
+        return candidate;
+    }
+
+    private int executeMergeGroup(T3ResolveResponse.MergeGroup group, String entityType, UUID jobRunId) {
+        return switch (entityType) {
+            case "person" -> executePersonMergeGroup(group, jobRunId);
+            case "organization" -> executeOrganizationMergeGroup(group, jobRunId);
+            case "event" -> executeEventMergeGroup(group, jobRunId);
+            case "narrative" -> executeNarrativeMergeGroup(group, jobRunId);
+            default -> 0;
+        };
+    }
+
+    private int executePersonMergeGroup(T3ResolveResponse.MergeGroup group, UUID jobRunId) {
+        UUID survivorId = parseUuid(group.getSurvivorId());
+        List<UUID> mergedUuidIds = mergedUuidIds(group, survivorId);
+        if (survivorId == null || mergedUuidIds.isEmpty()) {
+            return 0;
+        }
+        Person survivor = personMapper.selectById(survivorId);
+        List<Person> mergedList = personMapper.selectBatchIds(mergedUuidIds);
+        if (survivor == null || mergedList.isEmpty()) {
+            return 0;
+        }
+        UUID[] mergedIds = mergedList.stream().map(Person::getId).toArray(UUID[]::new);
+        String[] mergedNames = mergedList.stream().map(Person::getCanonicalName).toArray(String[]::new);
+        int totalContentCount = contentCount(survivor.getContentCount())
+                + mergedList.stream().mapToInt(item -> contentCount(item.getContentCount())).sum();
+
+        personMapper.updateSurvivorAfterMerge(survivorId, totalContentCount, mergedIds);
+        personMapper.update(null, new UpdateWrapper<Person>()
+                .in("id", Arrays.asList(mergedIds))
+                .set("dedup_status", "deduplicated")
+                .setSql("updated_at = NOW()"));
+        boolean neo4jMerged = mergeNeo4jNodes(mergedIds, survivorId, "Person",
+                personProperties(survivor), survivor.getCanonicalName(), "person");
+        insertRecord("person", survivorId, survivor.getCanonicalName(), mergedIds, mergedNames,
+                survivor.getContentCount(), totalContentCount, neo4jMerged, jobRunId, fusionMethod(group));
+        return mergedList.size();
+    }
+
+    private int executeOrganizationMergeGroup(T3ResolveResponse.MergeGroup group, UUID jobRunId) {
+        UUID survivorId = parseUuid(group.getSurvivorId());
+        List<UUID> mergedUuidIds = mergedUuidIds(group, survivorId);
+        if (survivorId == null || mergedUuidIds.isEmpty()) {
+            return 0;
+        }
+        Organization survivor = organizationMapper.selectById(survivorId);
+        List<Organization> mergedList = organizationMapper.selectBatchIds(mergedUuidIds);
+        if (survivor == null || mergedList.isEmpty()) {
+            return 0;
+        }
+        UUID[] mergedIds = mergedList.stream().map(Organization::getId).toArray(UUID[]::new);
+        String[] mergedNames = mergedList.stream().map(Organization::getCanonicalName).toArray(String[]::new);
+        int totalContentCount = contentCount(survivor.getContentCount())
+                + mergedList.stream().mapToInt(item -> contentCount(item.getContentCount())).sum();
+
+        organizationMapper.updateSurvivorAfterMerge(survivorId, totalContentCount, mergedIds);
+        organizationMapper.update(null, new UpdateWrapper<Organization>()
+                .in("id", Arrays.asList(mergedIds))
+                .set("dedup_status", "deduplicated")
+                .setSql("updated_at = NOW()"));
+        boolean neo4jMerged = mergeNeo4jNodes(mergedIds, survivorId, "Organization",
+                organizationProperties(survivor), survivor.getCanonicalName(), "organization");
+        insertRecord("organization", survivorId, survivor.getCanonicalName(), mergedIds, mergedNames,
+                survivor.getContentCount(), totalContentCount, neo4jMerged, jobRunId, fusionMethod(group));
+        return mergedList.size();
+    }
+
+    private int executeEventMergeGroup(T3ResolveResponse.MergeGroup group, UUID jobRunId) {
+        UUID survivorId = parseUuid(group.getSurvivorId());
+        List<UUID> mergedUuidIds = mergedUuidIds(group, survivorId);
+        if (survivorId == null || mergedUuidIds.isEmpty()) {
+            return 0;
+        }
+        Event survivor = eventMapper.selectById(survivorId);
+        List<Event> mergedList = eventMapper.selectBatchIds(mergedUuidIds);
+        if (survivor == null || mergedList.isEmpty()) {
+            return 0;
+        }
+        UUID[] mergedIds = mergedList.stream().map(Event::getId).toArray(UUID[]::new);
+        String[] mergedNames = mergedList.stream().map(Event::getCanonicalName).toArray(String[]::new);
+        int totalContentCount = contentCount(survivor.getContentCount())
+                + mergedList.stream().mapToInt(item -> contentCount(item.getContentCount())).sum();
+
+        eventMapper.updateSurvivorAfterMerge(survivorId, totalContentCount, mergedIds);
+        eventMapper.update(null, new UpdateWrapper<Event>()
+                .in("id", Arrays.asList(mergedIds))
+                .set("dedup_status", "deduplicated")
+                .setSql("updated_at = NOW()"));
+        boolean neo4jMerged = mergeNeo4jNodes(mergedIds, survivorId, "Event",
+                eventProperties(survivor), survivor.getCanonicalName(), "event");
+        insertRecord("event", survivorId, survivor.getCanonicalName(), mergedIds, mergedNames,
+                survivor.getContentCount(), totalContentCount, neo4jMerged, jobRunId, fusionMethod(group));
+        return mergedList.size();
+    }
+
+    private int executeNarrativeMergeGroup(T3ResolveResponse.MergeGroup group, UUID jobRunId) {
+        UUID survivorId = parseUuid(group.getSurvivorId());
+        List<UUID> mergedUuidIds = mergedUuidIds(group, survivorId);
+        if (survivorId == null || mergedUuidIds.isEmpty()) {
+            return 0;
+        }
+        Narrative survivor = narrativeMapper.selectById(survivorId);
+        List<Narrative> mergedList = narrativeMapper.selectBatchIds(mergedUuidIds);
+        if (survivor == null || mergedList.isEmpty()) {
+            return 0;
+        }
+        UUID[] mergedIds = mergedList.stream().map(Narrative::getId).toArray(UUID[]::new);
+        String[] mergedNames = mergedList.stream().map(Narrative::getCanonicalLabel).toArray(String[]::new);
+        int totalContentCount = contentCount(survivor.getContentCount())
+                + mergedList.stream().mapToInt(item -> contentCount(item.getContentCount())).sum();
+
+        narrativeMapper.updateSurvivorAfterMerge(survivorId, totalContentCount, mergedIds);
+        narrativeMapper.update(null, new UpdateWrapper<Narrative>()
+                .in("id", Arrays.asList(mergedIds))
+                .set("dedup_status", "deduplicated")
+                .setSql("updated_at = NOW()"));
+        boolean neo4jMerged = mergeNeo4jNodes(mergedIds, survivorId, "Narrative",
+                narrativeProperties(survivor), survivor.getCanonicalLabel(), "narrative");
+        insertRecord("narrative", survivorId, survivor.getCanonicalLabel(), mergedIds, mergedNames,
+                survivor.getContentCount(), totalContentCount, neo4jMerged, jobRunId, fusionMethod(group));
+        return mergedList.size();
     }
 
     private boolean mergeNeo4jNodes(UUID[] mergedIds, UUID survivorId, String label,
@@ -245,6 +463,39 @@ public class EntityDeduplicationJob {
 
     private String stableUuid(String seed) {
         return StableUuidUtil.fromSeed(seed);
+    }
+
+    private List<UUID> mergedUuidIds(T3ResolveResponse.MergeGroup group, UUID survivorId) {
+        List<UUID> result = new ArrayList<>();
+        if (group.getMergedIds() == null) {
+            return result;
+        }
+        for (String id : group.getMergedIds()) {
+            UUID uuid = parseUuid(id);
+            if (uuid != null && !uuid.equals(survivorId)) {
+                result.add(uuid);
+            }
+        }
+        return result;
+    }
+
+    private UUID parseUuid(String value) {
+        if (!hasText(value)) {
+            return null;
+        }
+        try {
+            return UUID.fromString(value.trim());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    private String fusionMethod(T3ResolveResponse.MergeGroup group) {
+        return hasText(group.getMatchMethod()) ? group.getMatchMethod() : "t3_resolve";
+    }
+
+    private double score(java.math.BigDecimal value) {
+        return value == null ? 0D : value.doubleValue();
     }
 
     private Map<String, Object> personProperties(Person person) {
@@ -303,7 +554,7 @@ public class EntityDeduplicationJob {
     private void insertRecord(String entityType, UUID survivorId, String survivorName,
                               UUID[] mergedIds, String[] mergedNames,
                               Integer contentCountBefore, int contentCountAfter,
-                              boolean neo4jMerged, UUID jobRunId) {
+                              boolean neo4jMerged, UUID jobRunId, String fusionMethod) {
         EntityFusionRecord record = new EntityFusionRecord();
         record.setId(UUID.randomUUID());
         record.setEntityType(entityType);
@@ -312,7 +563,7 @@ public class EntityDeduplicationJob {
         record.setMergedIds(mergedIds);
         record.setMergedNames(mergedNames);
         record.setMergedCount(mergedIds.length);
-        record.setFusionMethod("exact_name");
+        record.setFusionMethod(fusionMethod);
         record.setContentCountBefore(contentCountBefore);
         record.setContentCountAfter(contentCountAfter);
         record.setNeo4jMerged(neo4jMerged);
@@ -331,5 +582,9 @@ public class EntityDeduplicationJob {
 
     private int contentCount(Integer value) {
         return value == null ? 0 : value;
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
     }
 }

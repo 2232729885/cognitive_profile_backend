@@ -6,6 +6,8 @@ import com.idata.profile.agentproxy.dto.t2.T2ExtractRequest;
 import com.idata.profile.agentproxy.dto.t2.T2ExtractResponse;
 import com.idata.profile.agentproxy.dto.t3.T3FuseRequest;
 import com.idata.profile.agentproxy.dto.t3.T3FuseResponse;
+import com.idata.profile.agentproxy.dto.t3.T3ResolveRequest;
+import com.idata.profile.agentproxy.dto.t3.T3ResolveResponse;
 import com.idata.profile.agentproxy.dto.t4.T4EmbeddingRequest;
 import com.idata.profile.agentproxy.dto.t4.T4EmbeddingResponse;
 import com.idata.profile.agentproxy.dto.t5.T5GenerateProfileRequest;
@@ -30,6 +32,7 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Slf4j
 @RestController
@@ -283,6 +286,21 @@ public class MockAgentController {
         resp.setRelations(List.of(participates, affiliated, promotes,
                 eventAtLocation, eventInvolvesOrg, narrativeAboutEvent, orgLocatedIn));
         resp.setRaw(toJson(resp));
+        return resp;
+    }
+
+    @PostMapping("/mock/t3/resolve_entities")
+    public T3ResolveResponse resolveEntities(@RequestBody T3ResolveRequest request) {
+        log.info("[MOCK-T3] resolve_entities, candidateCount={}",
+                request.getEntities() != null ? request.getEntities().size() : 0);
+
+        T3ResolveResponse resp = new T3ResolveResponse();
+        resp.setMergeGroups(List.of());
+        resp.setDisjointPairs(List.of());
+        resp.setUncertain(request.getEntities() == null ? List.of() :
+                request.getEntities().stream()
+                        .map(T3ResolveRequest.EntityCandidate::getId)
+                        .collect(Collectors.toList()));
         return resp;
     }
 

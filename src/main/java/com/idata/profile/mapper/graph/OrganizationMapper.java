@@ -28,6 +28,10 @@ public interface OrganizationMapper extends BaseMapper<Organization> {
     @Select("SELECT COUNT(*) FROM organizations WHERE dedup_status = #{dedupStatus}")
     long countByDedupStatus(@Param("dedupStatus") String dedupStatus);
 
+    @Select("SELECT * FROM organizations WHERE dedup_status = #{status} " +
+            "ORDER BY created_at ASC LIMIT #{limit}")
+    List<Organization> selectByDedupStatus(@Param("status") String status, @Param("limit") int limit);
+
     @Select("SELECT * FROM organizations WHERE canonical_name = #{canonicalName} " +
             "AND dedup_status = 'pending' ORDER BY created_at ASC")
     List<Organization> selectPendingByCanonicalName(@Param("canonicalName") String canonicalName);

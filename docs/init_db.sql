@@ -1138,7 +1138,7 @@ INSERT INTO sub_agent_registry (agent_code, agent_name, description, active_url_
  '从内容和传播链字段中抽取人物/组织/事件/叙事等实体及10类实体、6种关系类型，支持多语言抽取',
  'mock'),
 ('T3', 'T3信息融合Agent',
- '写入本次识别的Neo4j节点和关系；跨源实体归一由后台EntityDeduplicationJob处理',
+ '跨语言实体归一和关系融合；跨批次归一由后台EntityDeduplicationJob处理',
  'mock'),
 ('T4', 'T4多模态检索Agent',
  '生成文本/图像Embedding写入Milvus向量库，同步全文索引到Elasticsearch，支持三路融合语义检索',
@@ -1150,6 +1150,16 @@ INSERT INTO sub_agent_registry (agent_code, agent_name, description, active_url_
  'BEND手法分类、协同群体检测、T00-T10目标类型识别，以叙事ID或账号列表为输入',
  'mock')
 ON CONFLICT (agent_code) DO NOTHING;
+
+UPDATE sub_agent_registry
+SET agent_name = 'T3 信息融合',
+    description = '跨语言实体归一和关系融合',
+    mock_url = COALESCE(mock_url, 'http://localhost:8080/mock/t3'),
+    active_url_type = COALESCE(active_url_type, 'mock'),
+    timeout_seconds = 60,
+    max_retries = 2,
+    is_active = TRUE
+WHERE agent_code = 'T3';
 
 -- ============================================================
 -- 验证建表结果
