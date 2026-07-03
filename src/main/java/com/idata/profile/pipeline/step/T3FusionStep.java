@@ -76,6 +76,8 @@ public class T3FusionStep {
         T3FuseRequest request = new T3FuseRequest();
         if (rawRecord == null || !hasText(rawRecord.getT2Output())) {
             request.setEntities(Collections.emptyList());
+            request.setRelationships(Collections.emptyList());
+            request.setEvents(Collections.emptyList());
             return request;
         }
 
@@ -87,13 +89,57 @@ public class T3FusionStep {
                     T3FuseRequest.T2EntityRef ref = new T3FuseRequest.T2EntityRef();
                     ref.setType(entity.getType());
                     ref.setCanonicalName(entity.getCanonicalName());
+                    ref.setAliases(entity.getAliases());
                     refs.add(ref);
                 }
             }
             request.setEntities(refs);
+
+            List<T3FuseRequest.T2RelationRef> relationRefs = new ArrayList<>();
+            if (t2Output.getRelationships() != null) {
+                for (T2ExtractResponse.ExtractedRelation relation : t2Output.getRelationships()) {
+                    T3FuseRequest.T2RelationRef ref = new T3FuseRequest.T2RelationRef();
+                    ref.setSourceName(relation.getSourceName());
+                    ref.setSourceType(relation.getSourceType());
+                    ref.setTargetName(relation.getTargetName());
+                    ref.setTargetType(relation.getTargetType());
+                    ref.setRelationType(relation.getRelationType());
+                    ref.setRole(relation.getRole());
+                    ref.setConfidence(relation.getConfidence());
+                    relationRefs.add(ref);
+                }
+            }
+            request.setRelationships(relationRefs);
+
+            List<T3FuseRequest.T2EventRef> eventRefs = new ArrayList<>();
+            if (t2Output.getEvents() != null) {
+                for (T2ExtractResponse.ExtractedEvent event : t2Output.getEvents()) {
+                    T3FuseRequest.T2EventRef ref = new T3FuseRequest.T2EventRef();
+                    ref.setEventType(event.getEventType());
+                    ref.setCanonicalName(event.getCanonicalName());
+                    ref.setEventTimeStart(event.getEventTimeStart());
+                    ref.setConfidence(event.getConfidence());
+                    if (event.getParticipants() != null) {
+                        List<T3FuseRequest.T2EntityRef> participants = new ArrayList<>();
+                        for (T2ExtractResponse.ExtractedEvent.EventParticipant participant : event.getParticipants()) {
+                            T3FuseRequest.T2EntityRef participantRef = new T3FuseRequest.T2EntityRef();
+                            participantRef.setCanonicalName(participant.getName());
+                            participantRef.setTempId(participant.getRole());
+                            participants.add(participantRef);
+                        }
+                        ref.setParticipants(participants);
+                    } else {
+                        ref.setParticipants(Collections.emptyList());
+                    }
+                    eventRefs.add(ref);
+                }
+            }
+            request.setEvents(eventRefs);
         } catch (JacksonException e) {
             log.warn("Failed to parse T2 output for T3 request, rawRecordId={}", rawRecord.getId(), e);
             request.setEntities(Collections.emptyList());
+            request.setRelationships(Collections.emptyList());
+            request.setEvents(Collections.emptyList());
         }
         return request;
     }

@@ -98,8 +98,61 @@ public class MockAgentController {
         event.setCanonicalName("2026 Persian Gulf Military Standoff");
         event.setImportanceScore(new BigDecimal("90.00"));
 
+        T2ExtractResponse.ExtractedRelation rel1 = new T2ExtractResponse.ExtractedRelation();
+        rel1.setSourceName("Leila Farzan");
+        rel1.setSourceType("person");
+        rel1.setTargetName("U.S. Central Command");
+        rel1.setTargetType("organization");
+        rel1.setRelationType("AFFILIATED_WITH");
+        rel1.setRole("analyst");
+        rel1.setConfidence(0.78);
+
+        T2ExtractResponse.ExtractedRelation rel2 = new T2ExtractResponse.ExtractedRelation();
+        rel2.setSourceName("U.S. Central Command");
+        rel2.setSourceType("organization");
+        rel2.setTargetName("Strait of Hormuz");
+        rel2.setTargetType("location");
+        rel2.setRelationType("LOCATED_IN");
+        rel2.setConfidence(0.90);
+
+        T2ExtractResponse.ExtractedRelation rel3 = new T2ExtractResponse.ExtractedRelation();
+        rel3.setSourceName("2026 Persian Gulf Military Standoff");
+        rel3.setSourceType("event");
+        rel3.setTargetName("Strait of Hormuz");
+        rel3.setTargetType("location");
+        rel3.setRelationType("EVENT_OCCURRED_AT");
+        rel3.setConfidence(0.95);
+
+        T2ExtractResponse.ExtractedRelation rel4 = new T2ExtractResponse.ExtractedRelation();
+        rel4.setSourceName("Hormuz Strait escalation narrative");
+        rel4.setSourceType("narrative");
+        rel4.setTargetName("2026 Persian Gulf Military Standoff");
+        rel4.setTargetType("event");
+        rel4.setRelationType("NARRATIVE_ABOUT_EVENT");
+        rel4.setConfidence(0.85);
+
+        T2ExtractResponse.ExtractedEvent extractedEvent = new T2ExtractResponse.ExtractedEvent();
+        extractedEvent.setEventType("military");
+        extractedEvent.setCanonicalName("2026 Persian Gulf Military Standoff");
+        extractedEvent.setEventTimeStart("2026-06-01T00:00:00Z");
+        extractedEvent.setConfidence(0.90);
+
+        T2ExtractResponse.ExtractedEvent.EventParticipant p1 =
+                new T2ExtractResponse.ExtractedEvent.EventParticipant();
+        p1.setName("U.S. Central Command");
+        p1.setRole("actor");
+
+        T2ExtractResponse.ExtractedEvent.EventParticipant p2 =
+                new T2ExtractResponse.ExtractedEvent.EventParticipant();
+        p2.setName("Strait of Hormuz");
+        p2.setRole("location");
+
+        extractedEvent.setParticipants(List.of(p1, p2));
+
         T2ExtractResponse resp = new T2ExtractResponse();
         resp.setEntities(List.of(person, organization, narrative, location, event));
+        resp.setRelationships(List.of(rel1, rel2, rel3, rel4));
+        resp.setEvents(List.of(extractedEvent));
         resp.setResolvedAuthorAccountId(null);
         resp.setRaw(toJson(resp));
         return resp;

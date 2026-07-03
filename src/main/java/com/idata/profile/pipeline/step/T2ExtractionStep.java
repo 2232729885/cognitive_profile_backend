@@ -65,6 +65,11 @@ public class T2ExtractionStep {
                 insertEntity(entity);
             }
         }
+        if (response.getEvents() != null) {
+            for (T2ExtractResponse.ExtractedEvent event : response.getEvents()) {
+                insertEvent(event);
+            }
+        }
 
         if (mc.getAuthorAccountId() == null && response.getResolvedAuthorAccountId() != null) {
             mc.setAuthorAccountId(java.util.UUID.fromString(response.getResolvedAuthorAccountId()));
@@ -100,6 +105,16 @@ public class T2ExtractionStep {
                     canonicalName, importanceScore, buildClaimAtoms(canonicalName, importanceScore));
             default -> log.warn("Unknown extracted entity type: {}", entity.getType());
         }
+    }
+
+    private void insertEvent(T2ExtractResponse.ExtractedEvent event) {
+        if (event == null || !hasText(event.getCanonicalName())) {
+            return;
+        }
+
+        double confidence = event.getConfidence() != null ? event.getConfidence() : 0.5D;
+        BigDecimal importanceScore = BigDecimal.valueOf(confidence * 100D);
+        eventMapper.insertEntity(event.getCanonicalName().trim(), importanceScore);
     }
 
     private String buildClaimAtoms(String canonicalName, BigDecimal importanceScore) {
