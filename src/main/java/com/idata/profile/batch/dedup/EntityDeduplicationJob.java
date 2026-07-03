@@ -40,8 +40,8 @@ public class EntityDeduplicationJob {
     private final ApplicationContext applicationContext;
     private final AtomicBoolean running = new AtomicBoolean(false);
 
-//    @Scheduled(fixedDelay = 60 * 60 * 1000)
-    @Scheduled(fixedDelay = 2 * 60 * 1000)
+    @Scheduled(fixedDelay = 60 * 60 * 1000)
+//    @Scheduled(fixedDelay = 2 * 60 * 1000)
     public void run() {
         UUID jobRunId = UUID.randomUUID();
         if (!running.compareAndSet(false, true)) {
