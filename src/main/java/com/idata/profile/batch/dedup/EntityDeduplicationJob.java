@@ -242,6 +242,7 @@ public class EntityDeduplicationJob {
                               Integer contentCountBefore, int contentCountAfter,
                               boolean neo4jMerged, UUID jobRunId) {
         EntityFusionRecord record = new EntityFusionRecord();
+        record.setId(UUID.randomUUID());
         record.setEntityType(entityType);
         record.setSurvivorId(survivorId);
         record.setSurvivorName(survivorName);

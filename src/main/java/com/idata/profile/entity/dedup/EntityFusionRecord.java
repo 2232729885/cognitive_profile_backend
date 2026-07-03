@@ -15,7 +15,7 @@ import java.util.UUID;
 @TableName(value = "entity_fusion_records", autoResultMap = true)
 public class EntityFusionRecord {
 
-    @TableId(type = IdType.ASSIGN_UUID)
+    @TableId(type = IdType.INPUT)
     private UUID id;
     private String entityType;
     private UUID survivorId;
