@@ -83,8 +83,6 @@ public class Neo4jGraphService {
             return;
         }
 
-        mergeNode(label, targetId, Collections.emptyMap());
-
         String outCypher = """
                 MATCH (s {id: $sourceId})-[r]->(t)
                 RETURN type(r) AS relType, properties(r) AS props,
