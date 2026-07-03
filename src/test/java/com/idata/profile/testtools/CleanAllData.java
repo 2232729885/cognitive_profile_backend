@@ -45,6 +45,7 @@ import java.util.concurrent.TimeUnit;
 public class CleanAllData {
 
     private static final List<String> PG_TABLES = List.of(
+            "entity_fusion_records",
             "identification_results",
             "identification_tasks",
             "session_messages",
