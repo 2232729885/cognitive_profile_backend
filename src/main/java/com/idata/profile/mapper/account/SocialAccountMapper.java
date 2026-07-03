@@ -7,6 +7,7 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
+import java.util.List;
 import java.util.UUID;
 
 @Mapper
@@ -15,6 +16,9 @@ public interface SocialAccountMapper extends BaseMapper<SocialAccount> {
     @Select("SELECT * FROM social_accounts WHERE platform = #{platform} AND platform_user_id = #{platformUserId}")
     SocialAccount selectByPlatformAndUserId(@Param("platform") String platform,
                                             @Param("platformUserId") String platformUserId);
+
+    @Select("SELECT * FROM social_accounts WHERE entity_person_id = #{personId}")
+    List<SocialAccount> selectByEntityPersonId(@Param("personId") UUID personId);
 
     @Select(value = """
             INSERT INTO social_accounts (

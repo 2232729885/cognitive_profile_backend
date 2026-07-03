@@ -294,12 +294,33 @@ public class MockAgentController {
         log.info("[MOCK-T3] resolve_entities, candidateCount={}",
                 request.getEntities() != null ? request.getEntities().size() : 0);
 
+        /*
+         * 算法组实现 resolve_entities 时，输出格式约定（选项B：直接输出聚合好的分组）：
+         *
+         * mergeGroups：T3 认为应该合并的实体分组列表。
+         *   每组 survivorId 是归一后保留的实体 ID（应选 importanceScore 最高的那个），
+         *   mergedIds 是被合并的实体 ID 列表，confidence 是归一置信度（后端只执行 >= 0.8 的）,
+         *   matchMethod 标注归一依据：
+         *     - exact_name：精确名称匹配（后端精确匹配已覆盖，T3 通常不需要再返回这类）
+         *     - alias_match：别名匹配（如 "Biden" 匹配到 aliases 里有 "Biden" 的实体）
+         *     - cross_language：跨语言归一（如 "拜登" 和 "Biden" 归一）
+         *     - semantic_similarity：语义相似度归一（向量余弦，用于叙事/事件等长文本实体）
+         *     - identifier_match：平台标识符匹配（如 twitter uid 相同，置信度最高）
+         *
+         * disjointPairs：T3 明确判断不是同一实体的 ID 对（否定证据，后端记录备用，暂不处理）。
+         *
+         * uncertain：T3 无法判断的实体 ID 列表（置信度低于阈值或证据不足）。
+         *
+         * Mock 实现：全部标记为 uncertain，mergeGroups 为空。
+         * 接入真实 T3 后，mergeGroups 里应包含跨语言归一的结果。
+         */
         T3ResolveResponse resp = new T3ResolveResponse();
         resp.setMergeGroups(List.of());
         resp.setDisjointPairs(List.of());
         resp.setUncertain(request.getEntities() == null ? List.of() :
                 request.getEntities().stream()
                         .map(T3ResolveRequest.EntityCandidate::getId)
+                        .filter(java.util.Objects::nonNull)
                         .collect(Collectors.toList()));
         return resp;
     }

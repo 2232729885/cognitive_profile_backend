@@ -5,12 +5,14 @@ import com.idata.profile.agentproxy.AgentProxyClient;
 import com.idata.profile.agentproxy.dto.t3.T3ResolveRequest;
 import com.idata.profile.agentproxy.dto.t3.T3ResolveResponse;
 import com.idata.profile.common.util.StableUuidUtil;
+import com.idata.profile.entity.account.SocialAccount;
 import com.idata.profile.entity.dedup.EntityFusionRecord;
 import com.idata.profile.entity.graph.Event;
 import com.idata.profile.entity.graph.Narrative;
 import com.idata.profile.entity.graph.Organization;
 import com.idata.profile.entity.graph.Person;
 import com.idata.profile.infra.neo4j.Neo4jGraphService;
+import com.idata.profile.mapper.account.SocialAccountMapper;
 import com.idata.profile.mapper.dedup.EntityFusionRecordMapper;
 import com.idata.profile.mapper.graph.EventMapper;
 import com.idata.profile.mapper.graph.NarrativeMapper;
@@ -26,6 +28,7 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -42,6 +45,7 @@ public class EntityDeduplicationJob {
     private final OrganizationMapper organizationMapper;
     private final EventMapper eventMapper;
     private final NarrativeMapper narrativeMapper;
+    private final SocialAccountMapper socialAccountMapper;
     private final EntityFusionRecordMapper entityFusionRecordMapper;
     private final Neo4jGraphService neo4jGraphService;
     private final AgentProxyClient agentProxyClient;
@@ -309,6 +313,7 @@ public class EntityDeduplicationJob {
             candidate.setId(person.getId().toString());
             candidate.setCanonicalName(person.getCanonicalName());
             candidate.setImportanceScore(score(person.getImportanceScore()));
+            fillSourceIdentifiers(candidate, person);
         } else if (entity instanceof Organization organization) {
             candidate.setId(organization.getId().toString());
             candidate.setCanonicalName(organization.getCanonicalName());
@@ -323,6 +328,26 @@ public class EntityDeduplicationJob {
             candidate.setImportanceScore(score(narrative.getImportanceScore()));
         }
         return candidate;
+    }
+
+    private void fillSourceIdentifiers(T3ResolveRequest.EntityCandidate candidate, Person person) {
+        try {
+            List<SocialAccount> accounts = socialAccountMapper.selectByEntityPersonId(person.getId());
+            if (accounts == null || accounts.isEmpty()) {
+                return;
+            }
+            Map<String, String> sourceIds = new LinkedHashMap<>();
+            for (SocialAccount account : accounts) {
+                if (account != null && hasText(account.getPlatform()) && hasText(account.getPlatformUserId())) {
+                    sourceIds.put(account.getPlatform(), account.getPlatformUserId());
+                }
+            }
+            if (!sourceIds.isEmpty()) {
+                candidate.setSourceIdentifiers(sourceIds);
+            }
+        } catch (Exception e) {
+            log.warn("[EntityDeduplicationJob] load source identifiers failed, personId={}", person.getId(), e);
+        }
     }
 
     private int executeMergeGroup(T3ResolveResponse.MergeGroup group, String entityType, UUID jobRunId) {
