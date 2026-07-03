@@ -17,8 +17,10 @@ import org.apache.http.message.BasicHeader;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.AlterConsumerGroupOffsetsResult;
+import org.apache.kafka.clients.admin.DeleteRecordsResult;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.OffsetSpec;
+import org.apache.kafka.clients.admin.RecordsToDelete;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.elasticsearch.client.Request;
@@ -96,7 +98,7 @@ public class CleanAllData {
         results.put("Neo4j", runSafely("Neo4j", CleanAllData::cleanNeo4j));
         results.put("Milvus", runSafely("Milvus", CleanAllData::cleanMilvus));
         results.put("Elasticsearch", runSafely("Elasticsearch", CleanAllData::cleanElasticsearch));
-        results.put("Kafka", runSafely("Kafka", CleanAllData::resetKafkaOffsets));
+        results.put("Kafka", runSafely("Kafka", CleanAllData::cleanKafkaTopics));
         results.put("MinIO", runSafely("MinIO", CleanAllData::cleanMinio));
 
         System.out.println();
@@ -214,7 +216,7 @@ public class CleanAllData {
         }
     }
 
-    private static void resetKafkaOffsets() throws Exception {
+    private static void cleanKafkaTopics() throws Exception {
         System.out.println("[5/6] Kafka 开始重置 offset...");
         Properties adminProps = new Properties();
         adminProps.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, "172.16.40.232:9092");
@@ -233,11 +235,18 @@ public class CleanAllData {
 
             ListOffsetsResult offsetsResult = adminClient.listOffsets(latestRequests);
             Map<TopicPartition, OffsetAndMetadata> offsets = new LinkedHashMap<>();
+            Map<TopicPartition, RecordsToDelete> deleteRequests = new LinkedHashMap<>();
             for (TopicPartition topicPartition : latestRequests.keySet()) {
                 long latestOffset = offsetsResult.partitionResult(topicPartition)
                         .get(30, TimeUnit.SECONDS)
                         .offset();
+                deleteRequests.put(topicPartition, RecordsToDelete.beforeOffset(latestOffset));
                 offsets.put(topicPartition, new OffsetAndMetadata(latestOffset));
+            }
+
+            if (!deleteRequests.isEmpty()) {
+                DeleteRecordsResult deleteResult = adminClient.deleteRecords(deleteRequests);
+                deleteResult.all().get(30, TimeUnit.SECONDS);
             }
 
             AlterConsumerGroupOffsetsResult result = adminClient.alterConsumerGroupOffsets(
