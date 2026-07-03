@@ -12,6 +12,7 @@ import com.idata.profile.agentproxy.dto.t5.T5GenerateProfileRequest;
 import com.idata.profile.agentproxy.dto.t5.T5GenerateProfileResponse;
 import com.idata.profile.agentproxy.dto.t6.T6IdentifyRequest;
 import com.idata.profile.agentproxy.dto.t6.T6IdentifyResponse;
+import com.idata.profile.common.util.StableUuidUtil;
 import com.idata.profile.mapper.graph.EventMapper;
 import com.idata.profile.mapper.graph.NarrativeMapper;
 import com.idata.profile.mapper.graph.OrganizationMapper;
@@ -412,7 +413,7 @@ public class MockAgentController {
     }
 
     private String stableUuid(String value) {
-        return UUID.nameUUIDFromBytes(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
+        return StableUuidUtil.fromSeed(value);
     }
 
     private String toJson(Object obj) {

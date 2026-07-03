@@ -1,6 +1,7 @@
 package com.idata.profile.batch.dedup;
 
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
+import com.idata.profile.common.util.StableUuidUtil;
 import com.idata.profile.entity.dedup.EntityFusionRecord;
 import com.idata.profile.entity.graph.Event;
 import com.idata.profile.entity.graph.Narrative;
@@ -43,11 +44,10 @@ public class EntityDeduplicationJob {
     private final AtomicBoolean running = new AtomicBoolean(false);
 
     @Scheduled(fixedDelay = 60 * 60 * 1000)
-//    @Scheduled(fixedDelay = 2 * 60 * 1000)
     public void run() {
         UUID jobRunId = UUID.randomUUID();
         if (!running.compareAndSet(false, true)) {
-            log.info("[EntityDeduplicationJob] 上一次融合仍在运行，跳过本轮定时任务, jobRunId={}", jobRunId);
+            log.info("[EntityDeduplicationJob] previous run is still active, skip scheduled run, jobRunId={}", jobRunId);
             return;
         }
         try {
@@ -79,7 +79,7 @@ public class EntityDeduplicationJob {
     }
 
     private void runInternal(UUID jobRunId) {
-        log.info("[EntityDeduplicationJob] 开始融合, jobRunId={}", jobRunId);
+        log.info("[EntityDeduplicationJob] start, jobRunId={}", jobRunId);
 
         int totalMerged = 0;
         totalMerged += deduplicateEntities("person", jobRunId);
@@ -87,7 +87,7 @@ public class EntityDeduplicationJob {
         totalMerged += deduplicateEntities("event", jobRunId);
         totalMerged += deduplicateEntities("narrative", jobRunId);
 
-        log.info("[EntityDeduplicationJob] 融合完成, jobRunId={}, totalMerged={}", jobRunId, totalMerged);
+        log.info("[EntityDeduplicationJob] done, jobRunId={}, totalMerged={}", jobRunId, totalMerged);
         logPendingStats();
     }
 
@@ -121,12 +121,13 @@ public class EntityDeduplicationJob {
                         .set("dedup_status", "deduplicated")
                         .setSql("updated_at = NOW()"));
 
-                boolean neo4jMerged = mergeNeo4jNodes(mergedIds, survivor.getId(), "Person", personProperties(survivor));
+                boolean neo4jMerged = mergeNeo4jNodes(mergedIds, survivor.getId(), "Person",
+                        personProperties(survivor), survivor.getCanonicalName(), "person");
                 insertRecord("person", survivor.getId(), survivor.getCanonicalName(), mergedIds, mergedNames,
                         survivor.getContentCount(), totalContentCount, neo4jMerged, jobRunId);
                 merged += mergedList.size();
             } catch (Exception e) {
-                log.warn("[EntityDeduplicationJob] person融合分组失败, canonicalName={}", name, e);
+                log.warn("[EntityDeduplicationJob] person group failed, canonicalName={}", name, e);
             }
         }
         return merged;
@@ -152,13 +153,13 @@ public class EntityDeduplicationJob {
                         .set("dedup_status", "deduplicated")
                         .setSql("updated_at = NOW()"));
 
-                boolean neo4jMerged = mergeNeo4jNodes(
-                        mergedIds, survivor.getId(), "Organization", organizationProperties(survivor));
+                boolean neo4jMerged = mergeNeo4jNodes(mergedIds, survivor.getId(), "Organization",
+                        organizationProperties(survivor), survivor.getCanonicalName(), "organization");
                 insertRecord("organization", survivor.getId(), survivor.getCanonicalName(), mergedIds, mergedNames,
                         survivor.getContentCount(), totalContentCount, neo4jMerged, jobRunId);
                 merged += mergedList.size();
             } catch (Exception e) {
-                log.warn("[EntityDeduplicationJob] organization融合分组失败, canonicalName={}", name, e);
+                log.warn("[EntityDeduplicationJob] organization group failed, canonicalName={}", name, e);
             }
         }
         return merged;
@@ -184,12 +185,13 @@ public class EntityDeduplicationJob {
                         .set("dedup_status", "deduplicated")
                         .setSql("updated_at = NOW()"));
 
-                boolean neo4jMerged = mergeNeo4jNodes(mergedIds, survivor.getId(), "Event", eventProperties(survivor));
+                boolean neo4jMerged = mergeNeo4jNodes(mergedIds, survivor.getId(), "Event",
+                        eventProperties(survivor), survivor.getCanonicalName(), "event");
                 insertRecord("event", survivor.getId(), survivor.getCanonicalName(), mergedIds, mergedNames,
                         survivor.getContentCount(), totalContentCount, neo4jMerged, jobRunId);
                 merged += mergedList.size();
             } catch (Exception e) {
-                log.warn("[EntityDeduplicationJob] event融合分组失败, canonicalName={}", name, e);
+                log.warn("[EntityDeduplicationJob] event group failed, canonicalName={}", name, e);
             }
         }
         return merged;
@@ -215,37 +217,34 @@ public class EntityDeduplicationJob {
                         .set("dedup_status", "deduplicated")
                         .setSql("updated_at = NOW()"));
 
-                boolean neo4jMerged = mergeNeo4jNodes(
-                        mergedIds, survivor.getId(), "Narrative", narrativeProperties(survivor));
+                boolean neo4jMerged = mergeNeo4jNodes(mergedIds, survivor.getId(), "Narrative",
+                        narrativeProperties(survivor), survivor.getCanonicalLabel(), "narrative");
                 insertRecord("narrative", survivor.getId(), survivor.getCanonicalLabel(), mergedIds, mergedNames,
                         survivor.getContentCount(), totalContentCount, neo4jMerged, jobRunId);
                 merged += mergedList.size();
             } catch (Exception e) {
-                log.warn("[EntityDeduplicationJob] narrative融合分组失败, canonicalLabel={}", name, e);
+                log.warn("[EntityDeduplicationJob] narrative group failed, canonicalLabel={}", name, e);
             }
         }
         return merged;
     }
 
     private boolean mergeNeo4jNodes(UUID[] mergedIds, UUID survivorId, String label,
-                                    Map<String, Object> survivorProperties) {
-        boolean allMerged = true;
+                                    Map<String, Object> survivorProperties,
+                                    String canonicalName, String entityType) {
         try {
-            neo4jGraphService.mergeNode(label, survivorId.toString(), survivorProperties);
+            String stableId = stableUuid(entityType + ":" + canonicalName);
+            survivorProperties.put("pgSurvivorId", survivorId.toString());
+            neo4jGraphService.mergeNode(label, stableId, survivorProperties);
+            return true;
         } catch (Exception e) {
-            allMerged = false;
-            log.warn("Neo4j survivor节点写入失败, targetId={}, label={}", survivorId, label, e);
+            log.warn("Neo4j node property update failed, label={}, canonicalName={}", label, canonicalName, e);
+            return false;
         }
-        for (UUID mergedId : mergedIds) {
-            try {
-                neo4jGraphService.mergeNodes(mergedId.toString(), survivorId.toString(), label);
-            } catch (Exception e) {
-                allMerged = false;
-                log.warn("Neo4j节点合并失败, sourceId={}, targetId={}, label={}",
-                        mergedId, survivorId, label, e);
-            }
-        }
-        return allMerged;
+    }
+
+    private String stableUuid(String seed) {
+        return StableUuidUtil.fromSeed(seed);
     }
 
     private Map<String, Object> personProperties(Person person) {
