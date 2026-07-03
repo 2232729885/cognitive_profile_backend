@@ -58,6 +58,11 @@ public interface EventMapper extends BaseMapper<Event> {
     @Select("SELECT id FROM events WHERE canonical_name = #{canonicalName} LIMIT 1")
     UUID selectIdByCanonicalName(@Param("canonicalName") String canonicalName);
 
+    @Select("SELECT id FROM events WHERE canonical_name = #{name} " +
+            "ORDER BY CASE dedup_status WHEN 'canonical' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END, " +
+            "created_at ASC LIMIT 1")
+    UUID selectCanonicalIdByName(@Param("name") String name);
+
     @Update("""
             UPDATE events
             SET merge_history = COALESCE(merge_history, ARRAY[]::uuid[])

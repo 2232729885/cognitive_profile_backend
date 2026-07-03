@@ -69,6 +69,11 @@ public interface PersonMapper extends BaseMapper<Person> {
     @Select("SELECT id FROM persons WHERE canonical_name = #{canonicalName} LIMIT 1")
     UUID selectIdByCanonicalName(@Param("canonicalName") String canonicalName);
 
+    @Select("SELECT id FROM persons WHERE canonical_name = #{name} " +
+            "ORDER BY CASE dedup_status WHEN 'canonical' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END, " +
+            "created_at ASC LIMIT 1")
+    UUID selectCanonicalIdByName(@Param("name") String name);
+
     @Select("SELECT EXISTS(SELECT 1 FROM persons WHERE id = #{id})")
     boolean existsById(@Param("id") UUID id);
 

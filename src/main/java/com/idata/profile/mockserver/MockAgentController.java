@@ -12,6 +12,11 @@ import com.idata.profile.agentproxy.dto.t5.T5GenerateProfileRequest;
 import com.idata.profile.agentproxy.dto.t5.T5GenerateProfileResponse;
 import com.idata.profile.agentproxy.dto.t6.T6IdentifyRequest;
 import com.idata.profile.agentproxy.dto.t6.T6IdentifyResponse;
+import com.idata.profile.mapper.graph.EventMapper;
+import com.idata.profile.mapper.graph.NarrativeMapper;
+import com.idata.profile.mapper.graph.OrganizationMapper;
+import com.idata.profile.mapper.graph.PersonMapper;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Profile;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -28,9 +33,14 @@ import java.util.UUID;
 @Slf4j
 @RestController
 @Profile("mock")
+@RequiredArgsConstructor
 public class MockAgentController {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private final PersonMapper personMapper;
+    private final OrganizationMapper organizationMapper;
+    private final EventMapper eventMapper;
+    private final NarrativeMapper narrativeMapper;
 
     @PostMapping("/mock/t1/annotate_text")
     public T1AnnotateResponse annotateText(@RequestBody T1AnnotateRequest request) {
@@ -327,11 +337,25 @@ public class MockAgentController {
         return fallback;
     }
 
-    private String entityId(T3FuseRequest.T2EntityRef entity) {
-        if (entity.getTempId() != null && !entity.getTempId().isBlank()) {
-            return entity.getTempId();
+    private String entityId(T3FuseRequest.T2EntityRef ref) {
+        if (ref == null) {
+            return stableUuid("unknown:unknown");
         }
-        return stableUuid(entity.getType() + ":" + entity.getCanonicalName());
+
+        String canonicalName = ref.getCanonicalName();
+        String type = ref.getType();
+        UUID realId = switch (type != null ? type : "") {
+            case "person" -> personMapper.selectCanonicalIdByName(canonicalName);
+            case "organization" -> organizationMapper.selectCanonicalIdByName(canonicalName);
+            case "event" -> eventMapper.selectCanonicalIdByName(canonicalName);
+            case "narrative" -> narrativeMapper.selectCanonicalIdByLabel(canonicalName);
+            default -> null;
+        };
+        if (realId != null) {
+            return realId.toString();
+        }
+
+        return stableUuid((type != null ? type : "unknown") + ":" + canonicalName);
     }
 
     private String stableUuid(String value) {
