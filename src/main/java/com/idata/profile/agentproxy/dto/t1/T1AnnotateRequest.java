@@ -2,15 +2,21 @@ package com.idata.profile.agentproxy.dto.t1;
 
 import lombok.Data;
 
-/**
- * T1自动标注请求。
- * 输入: media_contents.bodyText + rawPayload（供T1参考完整上下文）。
- * 见 docs/01-CODEGEN-CONTEXT.md 3.1节 runT1 伪代码。
- */
+import java.util.List;
+
 @Data
 public class T1AnnotateRequest {
-    private String bodyText;
-    private String rawPayload;   // JSONB原文，按需传递平台特定字段
+    /** 待标注文本（RZDK字段名为 text，不是 bodyText）*/
+    private String text;
+
+    /** 语言代码，默认 zh */
     private String language;
-    private String platform;
+
+    /**
+     * 标注类型，控制T1返回哪些维度。
+     * 可选值：topics/keywords/summary/language_style/sentiment/
+     *         event_type/content_purpose/aigc_suspicion/entities_hint
+     * 不传则默认全部9项。
+     */
+    private List<String> annotationTypes;
 }

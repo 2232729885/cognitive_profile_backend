@@ -2,20 +2,31 @@ package com.idata.profile.agentproxy.dto.t2;
 
 import lombok.Data;
 
-/**
- * T2信息抽取请求。
- * 输入：bodyText + T1的entitiesHint/narrativeHint + 传播链字段。
- * 传播链字段（parentContentId/repostOfContentId/quotedContentId/mentions）
- * 用于T2推导内容间关系，不依赖单独的interaction明细数据。
- */
 @Data
 public class T2ExtractRequest {
-    private String bodyText;
-    private Object entitiesHint;
-    private String narrativeHint;
+    /** 原始文本（RZDK字段名为 text）*/
+    private String text;
+
+    /**
+     * T1 的完整标注结果（RZDK字段名为 annotation）。
+     * 直接传 T1AnnotateResponse 对应的 annotations 对象（含 entities_hint、sentiment 等）。
+     */
+    private Object annotation;
+
+    /** 来源信息 */
+    private SourceInfo sourceInfo;
+
     private String[] hashtags;
     private String[] mentions;
     private String parentContentId;
     private String repostOfContentId;
     private String quotedContentId;
+
+    @Data
+    public static class SourceInfo {
+        private String platformId;
+        private String contentUrl;
+        private String publishTime;
+        private String authorHandle;
+    }
 }

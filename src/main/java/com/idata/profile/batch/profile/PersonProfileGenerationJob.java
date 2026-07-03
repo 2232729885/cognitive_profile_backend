@@ -51,10 +51,11 @@ public class PersonProfileGenerationJob {
 
     private void generateForPerson(Person person) {
         T5GenerateProfileRequest request = new T5GenerateProfileRequest();
-        request.setPersonId(person.getId());
+        request.setTargetId(person.getId().toString());
+        request.setTargetType("person");
 
         T5GenerateProfileResponse response = agentProxyClient.call(
-                "T5", "generate_full_profile", request, T5GenerateProfileResponse.class);
+                "T5", "complete_profile", request, T5GenerateProfileResponse.class);
 
         PersonProfile oldActive = personProfileMapper.selectActiveByPersonId(person.getId());
         int newVersion = (oldActive != null ? oldActive.getPortraitVersion() : 0) + 1;

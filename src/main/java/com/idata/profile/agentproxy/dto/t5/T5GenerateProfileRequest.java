@@ -2,16 +2,17 @@ package com.idata.profile.agentproxy.dto.t5;
 
 import lombok.Data;
 
-import java.util.UUID;
-
-/**
- * T5画像补全Agent：全量画像生成请求。
- * 重要：T5是定时任务批量调用（batch.profile.PersonProfileGenerationJob），
- * 一次性生成全部15维度，不做差量补全，不存在"传入已有画像让T5补充缺失字段"这种用法。
- */
 @Data
 public class T5GenerateProfileRequest {
-    private UUID personId;
-    // T5内部自行从Neo4j查询该人物的完整属性、关联内容、关系网络，
-    // 这里不需要把这些数据打包传过去，只传personId让T5自己查
+    /**
+     * 目标实体 ID（RZDK字段名为 target_id，类型为 String）。
+     * 目前只支持 person 类型，传 persons.id 的 UUID 字符串。
+     * T5 自行连接 PG 和 Neo4j 查询完整数据，不需要后端传入。
+     */
+    private String targetId;
+
+    /**
+     * 目标实体类型（RZDK字段，当前固定为 "person"）
+     */
+    private String targetType = "person";
 }

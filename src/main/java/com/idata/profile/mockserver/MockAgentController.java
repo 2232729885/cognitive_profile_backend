@@ -48,33 +48,65 @@ public class MockAgentController {
 
     @PostMapping("/mock/t1/annotate_text")
     public T1AnnotateResponse annotateText(@RequestBody T1AnnotateRequest request) {
-        log.info("[MOCK-T1] annotate_text, bodyTextLength={}",
-                request.getBodyText() != null ? request.getBodyText().length() : 0);
+        log.info("[MOCK-T1] annotate_text, textLength={}",
+                request.getText() != null ? request.getText().length() : 0);
+
+        T1AnnotateResponse.Annotations.Sentiment sentiment =
+                new T1AnnotateResponse.Annotations.Sentiment();
+        sentiment.setLabel("negative");
+        sentiment.setScore(-0.680);
+
+        T1AnnotateResponse.Annotations.LanguageStyle languageStyle =
+                new T1AnnotateResponse.Annotations.LanguageStyle();
+        languageStyle.setFormality("formal");
+        languageStyle.setEmotionalIntensity("medium");
+
+        T1AnnotateResponse.Annotations.EntityHint.Span span =
+                new T1AnnotateResponse.Annotations.EntityHint.Span();
+        span.setStart(0);
+        span.setEnd(12);
+
+        T1AnnotateResponse.Annotations.EntityHint entityHint =
+                new T1AnnotateResponse.Annotations.EntityHint();
+        entityHint.setText("Leila Farzan");
+        entityHint.setTypeHint("person");
+        entityHint.setSpan(span);
+        entityHint.setStance("oppose");
+        entityHint.setEvidenceIds(List.of("ev_001"));
+
+        T1AnnotateResponse.Annotations annotations = new T1AnnotateResponse.Annotations();
+        annotations.setTopics(List.of("politics", "gulf_security"));
+        annotations.setKeywords(List.of("霍尔木兹海峡", "军事对峙", "叙事操控"));
+        annotations.setSummary("该内容围绕霍尔木兹海峡军事对峙议题，对外部势力行为表达质疑和反对。");
+        annotations.setEventType("military_confrontation");
+        annotations.setContentPurpose("criticism");
+        annotations.setAigcSuspicion("low");
+        annotations.setSentiment(sentiment);
+        annotations.setLanguageStyle(languageStyle);
+        annotations.setEntitiesHint(List.of(entityHint));
+
+        T1AnnotateResponse.QualityControl qualityControl = new T1AnnotateResponse.QualityControl();
+        qualityControl.setAutoLabelStatus("success");
+        qualityControl.setNeedHumanReview(false);
+        qualityControl.setSchemaVersion("t1_annotation_v0.3");
+        qualityControl.setModelVersion("mock-t1-v1.0");
 
         T1AnnotateResponse resp = new T1AnnotateResponse();
-        resp.setTopicCategory("politics");
-        resp.setTopicSubcategory("gulf_security");
-        resp.setEventHeatScore(new BigDecimal("72.50"));
-        resp.setSentimentLabel("negative");
-        resp.setSentimentScore(new BigDecimal("-0.680"));
-        resp.setStanceLabel("oppose");
-        resp.setStanceTarget("gulf_escalation");
-        resp.setAigcScore(new BigDecimal("0.150"));
-        resp.setAigcType("human");
-        resp.setEntitiesHint(Map.of(
-                "person", "Leila Farzan",
-                "organization", "U.S. Central Command",
-                "narrative", "Hormuz Strait escalation narrative"
-        ));
-        resp.setNarrativeHint("Hormuz Strait escalation narrative");
-        resp.setModelVersion("mock-t1-v1.0");
+        resp.setLanguage(request.getLanguage() != null ? request.getLanguage() : "zh");
+        resp.setAnnotations(annotations);
+        resp.setEvidenceClues(List.of());
+        resp.setQualityControl(qualityControl);
+        resp.setConfidence(0.82);
+        resp.setProcessedAt(java.time.OffsetDateTime.now().toString());
         resp.setRaw(toJson(resp));
         return resp;
     }
 
     @PostMapping("/mock/t2/extract_entities")
     public T2ExtractResponse extractEntities(@RequestBody T2ExtractRequest request) {
-        log.info("[MOCK-T2] extract_entities, hashtags={}", (Object) request.getHashtags());
+        log.info("[MOCK-T2] extract_entities, textLength={}, hasAnnotation={}",
+                request.getText() != null ? request.getText().length() : 0,
+                request.getAnnotation() != null);
 
         T2ExtractResponse.ExtractedEntity person = new T2ExtractResponse.ExtractedEntity();
         person.setType("person");
@@ -338,9 +370,10 @@ public class MockAgentController {
         return buildEmbeddingResponse(request.getImageUrl());
     }
 
-    @PostMapping("/mock/t5/generate_full_profile")
+    @PostMapping("/mock/t5/complete_profile")
     public T5GenerateProfileResponse generateFullProfile(@RequestBody T5GenerateProfileRequest request) {
-        log.info("[MOCK-T5] generate_full_profile, personId={}", request.getPersonId());
+        log.info("[MOCK-T5] complete_profile, targetId={}, targetType={}",
+                request.getTargetId(), request.getTargetType());
 
         T5GenerateProfileResponse resp = new T5GenerateProfileResponse();
         resp.setPoliticalOrientation("anti_west");

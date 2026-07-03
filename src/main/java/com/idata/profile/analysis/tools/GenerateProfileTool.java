@@ -47,9 +47,10 @@ public class GenerateProfileTool implements Function<GenerateProfileTool.Request
 
         try {
             T5GenerateProfileRequest profileRequest = new T5GenerateProfileRequest();
-            profileRequest.setPersonId(UUID.fromString(request.personId()));
+            profileRequest.setTargetId(request.personId());
+            profileRequest.setTargetType("person");
             T5GenerateProfileResponse profile = agentProxyClient.call(
-                    "T5", "generate_full_profile", profileRequest, T5GenerateProfileResponse.class);
+                    "T5", "complete_profile", profileRequest, T5GenerateProfileResponse.class);
             Response response = new Response(
                     true,
                     request.personId(),

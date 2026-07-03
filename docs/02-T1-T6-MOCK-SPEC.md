@@ -202,8 +202,8 @@ T4有两个action，分别对应文本和图像向量化。
 
 ## 5. T5 画像补全
 
-**Action**: `generate_full_profile`
-**完整路径**: `POST /mock/t5/generate_full_profile`
+**Action**: `complete_profile`
+**完整路径**: `POST /mock/t5/complete_profile`
 **对应DTO**: `agentproxy.dto.t5.T5GenerateProfileRequest` / `T5GenerateProfileResponse`
 **调用方**: `batch.profile.PersonProfileGenerationJob.generateForPerson()`
 
@@ -301,6 +301,6 @@ T4有两个action，分别对应文本和图像向量化。
 | T3 | fuse_entities | POST | /mock/t3/fuse_entities |
 | T4 | generate_text_embedding | POST | /mock/t4/generate_text_embedding |
 | T4 | generate_image_embedding | POST | /mock/t4/generate_image_embedding |
-| T5 | generate_full_profile | POST | /mock/t5/generate_full_profile |
+| T5 | complete_profile | POST | /mock/t5/complete_profile |
 | T6 | identify_targets | POST | /mock/t6/identify_targets |
 

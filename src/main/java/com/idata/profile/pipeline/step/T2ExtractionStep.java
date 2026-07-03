@@ -68,8 +68,20 @@ public class T2ExtractionStep {
         MediaContent mc = mediaContentMapper.selectById(task.getContentId());
 
         T2ExtractRequest request = new T2ExtractRequest();
-        request.setBodyText(mc.getBodyText());
-        request.setNarrativeHint(mc.getNarrativeHint());
+        request.setText(mc.getBodyText());
+        if (hasText(mc.getNarrativeHint())) {
+            try {
+                request.setAnnotation(OBJECT_MAPPER.readValue(mc.getNarrativeHint(), Object.class));
+            } catch (Exception e) {
+                log.warn("Failed to parse T1 entities hint for T2, contentId={}", mc.getId(), e);
+            }
+        }
+        T2ExtractRequest.SourceInfo sourceInfo = new T2ExtractRequest.SourceInfo();
+        sourceInfo.setPlatformId(mc.getPlatform());
+        sourceInfo.setContentUrl(mc.getUrl());
+        sourceInfo.setPublishTime(mc.getPublishedAt() != null ? mc.getPublishedAt().toString() : null);
+        sourceInfo.setAuthorHandle(mc.getAuthorPlatformUserId());
+        request.setSourceInfo(sourceInfo);
         request.setHashtags(mc.getHashtags());
         request.setMentions(mc.getMentions());
         request.setParentContentId(mc.getParentContentId());
