@@ -18,6 +18,23 @@ public interface MediaContentMapper extends BaseMapper<MediaContent> {
                                               @Param("platformContentId") String platformContentId);
 
     /**
+     * 按 author_account_id 批量查帖子，供 T6 识别时使用。
+     * limit 限制最多返回条数，避免请求体过大。
+     */
+    @Select("<script>" +
+            "SELECT * FROM media_contents " +
+            "WHERE author_account_id IN " +
+            "<foreach collection='accountIds' item='id' open='(' separator=',' close=')'>" +
+            "#{id}" +
+            "</foreach>" +
+            " ORDER BY published_at DESC" +
+            " LIMIT #{limit}" +
+            "</script>")
+    List<MediaContent> selectByAuthorAccountIds(
+            @Param("accountIds") List<UUID> accountIds,
+            @Param("limit") int limit);
+
+    /**
      * 查找传播链尚未同步到Neo4j的记录。
      *
      * PostgreSQL migration:

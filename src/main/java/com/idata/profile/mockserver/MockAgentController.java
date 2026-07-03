@@ -382,22 +382,47 @@ public class MockAgentController {
 
     @PostMapping("/mock/t6/identify_targets")
     public T6IdentifyResponse identifyTargets(@RequestBody T6IdentifyRequest request) {
-        log.info("[MOCK-T6] identify_targets, triggerType={}, narrativeId={}",
-                request.getTriggerType(), request.getNarrativeId());
+        log.info("[MOCK-T6] identify_targets, narrativeId={}, accountCount={}, contentCount={}",
+                request.getNarrativeId(),
+                request.getSocialAccounts() != null ? request.getSocialAccounts().size() : 0,
+                request.getMediaContents() != null ? request.getMediaContents().size() : 0);
 
-        T6IdentifyResponse.IdentifiedTarget target = new T6IdentifyResponse.IdentifiedTarget();
-        target.setTargetType("T08");
-        target.setTargetEntityType("social_account");
-        target.setTargetEntityId(UUID.randomUUID().toString());
-        target.setConfidence(new BigDecimal("0.870"));
-        target.setBendDistribution(Map.of("Distort", 0.41, "Dismiss", 0.28, "Amplify", 0.19));
-        target.setEvidenceText("mock evidence");
-        target.setEvidenceContentIds(List.of(UUID.randomUUID().toString(), UUID.randomUUID().toString()));
+        String firstAccountId = request.getSocialAccounts() != null && !request.getSocialAccounts().isEmpty()
+                ? request.getSocialAccounts().get(0).getAccountId()
+                : UUID.randomUUID().toString();
+
+        T6IdentifyResponse.AccountIdentifyResult accountResult =
+                new T6IdentifyResponse.AccountIdentifyResult();
+        accountResult.setAccountId(firstAccountId);
+        accountResult.setTargetType("T08");
+        accountResult.setTargetTypeName("协调网络核心节点");
+        accountResult.setConfidence(new BigDecimal("0.87"));
+        accountResult.setCsiScore(new BigDecimal("0.72"));
+
+        T6IdentifyResponse.MatchEvidence evidence = new T6IdentifyResponse.MatchEvidence();
+        evidence.setMatchedTacticId("T08");
+        evidence.setDistributionSimilarity(0.91);
+        evidence.setSequenceSimilarity(0.83);
+        evidence.setCombinedScore(0.87);
+        evidence.setEvidence("mock evidence");
+        accountResult.setEvidence(evidence);
+
+        int accountCount = request.getSocialAccounts() != null ? request.getSocialAccounts().size() : 0;
+        T6IdentifyResponse.Summary summary = new T6IdentifyResponse.Summary();
+        summary.setNarrativeId(request.getNarrativeId());
+        summary.setTotalAccounts(accountCount);
+        summary.setT00Count(Math.max(0, accountCount - 1));
+        summary.setSuspectCount(0);
+        summary.setIdentifiedCount(Math.min(1, accountCount));
+        summary.setUnknownCount(0);
+        summary.setGroupCount(0);
+        summary.setProcessingTimeMs(453L);
 
         T6IdentifyResponse resp = new T6IdentifyResponse();
-        resp.setTargets(List.of(target));
-        resp.setAccountsAnalyzed(47);
-        resp.setGroupsDetected(1);
+        resp.setAccountIdentifyResult(List.of(accountResult));
+        resp.setEntityIdentifyResult(List.of());
+        resp.setGroupIdentifyResult(List.of());
+        resp.setSummary(summary);
         return resp;
     }
 
