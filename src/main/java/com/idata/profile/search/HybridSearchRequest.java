@@ -11,4 +11,6 @@ public class HybridSearchRequest {
     private boolean enableEs = true;
     private boolean enableMilvus = true;
     private boolean enableNeo4j = false;
+    private String imageUrl;
+    private String targetModalities = "all";
 }

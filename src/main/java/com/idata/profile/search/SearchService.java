@@ -4,10 +4,12 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.idata.profile.agentproxy.AgentProxyClient;
 import com.idata.profile.agentproxy.dto.t4.T4EmbeddingRequest;
 import com.idata.profile.agentproxy.dto.t4.T4EmbeddingResponse;
+import com.idata.profile.entity.content.MediaAsset;
 import com.idata.profile.entity.content.MediaContent;
 import com.idata.profile.infra.elasticsearch.MediaContentEsService;
 import com.idata.profile.infra.milvus.MilvusVectorService;
 import com.idata.profile.infra.neo4j.Neo4jGraphService;
+import com.idata.profile.mapper.content.MediaAssetMapper;
 import com.idata.profile.mapper.content.MediaContentMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,6 +40,7 @@ public class SearchService {
     private final MediaContentEsService esService;
     private final Neo4jGraphService neo4jGraphService;
     private final MediaContentMapper mediaContentMapper;
+    private final MediaAssetMapper mediaAssetMapper;
 
     public SearchResult searchByText(String keyword, String platform,
                                      String language, int page, int size) {
@@ -69,6 +72,7 @@ public class SearchService {
         String queryText = request == null ? null : request.getQueryText();
         String platform = request == null ? null : request.getPlatform();
         String language = request == null ? null : request.getLanguage();
+        boolean hasImage = request != null && hasText(request.getImageUrl()) && request.isEnableMilvus();
 
         CompletableFuture<List<String>> esFuture = isEnabled(request, "es")
                 ? safeRoute("es", () -> esService.searchByKeyword(queryText, platform, language, topK))
@@ -79,13 +83,27 @@ public class SearchService {
         CompletableFuture<List<String>> neo4jFuture = request != null && request.isEnableNeo4j()
                 ? safeRoute("neo4j", () -> searchNeo4jContentIds(queryText, platform, language, topK))
                 : CompletableFuture.completedFuture(List.of());
+        CompletableFuture<List<String>> imageFuture = hasImage
+                ? safeRoute("image", () -> vectorizeAndSearchByImage(
+                request.getImageUrl(), request.getTargetModalities(), topK))
+                : CompletableFuture.completedFuture(List.of());
 
-        CompletableFuture.allOf(esFuture, milvusFuture, neo4jFuture).join();
+        CompletableFuture.allOf(esFuture, milvusFuture, neo4jFuture, imageFuture).join();
 
-        List<String> fusedIds = fuseByRrf(List.of(esFuture.join(), milvusFuture.join(), neo4jFuture.join()));
+        List<String> fusedIds = fuseByRrf(List.of(
+                esFuture.join(), milvusFuture.join(), neo4jFuture.join(), imageFuture.join()));
         List<String> topIds = fusedIds.size() > topK ? fusedIds.subList(0, topK) : fusedIds;
         List<MediaContent> items = fetchContentsInOrder(topIds);
         return buildResult(items, fusedIds.size(), "hybrid", startedAt);
+    }
+
+    public SearchResult searchByImage(String imageUrl, String targetModalities, int topK) {
+        long startedAt = System.currentTimeMillis();
+        int safeTopK = normalizeSize(topK);
+        List<String> ids = vectorizeAndSearchByImage(
+                imageUrl, targetModalities != null ? targetModalities : "all", safeTopK);
+        List<MediaContent> items = fetchContentsInOrder(ids);
+        return buildResult(items, ids.size(), "image", startedAt);
     }
 
     private CompletableFuture<List<String>> safeRoute(String routeName, SearchRoute route) {
@@ -118,6 +136,76 @@ public class SearchService {
             return List.of();
         }
         return milvusService.searchTextEmbeddings(embedding, topK, platform, language);
+    }
+
+    /**
+     * 把图片向量化后查 Milvus，返回 content_id 列表。
+     * 同时支持 text_embeddings（以图搜文）和 image_embeddings（以图搜图）。
+     */
+    private List<String> vectorizeAndSearchByImage(String imageUrl, String targetModalities, int topK) {
+        if (!hasText(imageUrl) || topK <= 0) {
+            return List.of();
+        }
+
+        float[] embedding;
+        try {
+            T4EmbeddingRequest request = new T4EmbeddingRequest();
+            request.setImageUrl(imageUrl);
+            T4EmbeddingResponse response = agentProxyClient.call(
+                    "T4", "generate_image_embedding", request, T4EmbeddingResponse.class);
+            embedding = response == null ? null : response.getEmbedding();
+        } catch (Exception e) {
+            log.warn("Image vectorization failed, imageUrl={}", imageUrl, e);
+            return List.of();
+        }
+        if (embedding == null) {
+            return List.of();
+        }
+
+        try {
+            String modality = hasText(targetModalities) ? targetModalities.trim().toLowerCase() : "all";
+            if ("text".equals(modality)) {
+                return milvusService.searchTextEmbeddings(embedding, topK, null, null);
+            }
+            if ("image".equals(modality)) {
+                return imageAssetIdsToContentIds(milvusService.searchImageEmbeddings(embedding, topK));
+            }
+
+            CompletableFuture<List<String>> textFuture = safeRoute("image-text",
+                    () -> milvusService.searchTextEmbeddings(embedding, topK, null, null));
+            CompletableFuture<List<String>> imageFuture = safeRoute("image-image",
+                    () -> imageAssetIdsToContentIds(milvusService.searchImageEmbeddings(embedding, topK)));
+            CompletableFuture.allOf(textFuture, imageFuture).join();
+            List<String> fused = fuseByRrf(List.of(textFuture.join(), imageFuture.join()));
+            return fused.size() > topK ? fused.subList(0, topK) : fused;
+        } catch (Exception e) {
+            log.warn("Image vector search failed, imageUrl={}, targetModalities={}", imageUrl, targetModalities, e);
+            return List.of();
+        }
+    }
+
+    private List<String> imageAssetIdsToContentIds(List<String> assetIds) {
+        List<UUID> uuidIds = assetIds.stream()
+                .map(this::parseUuid)
+                .filter(java.util.Objects::nonNull)
+                .toList();
+        if (uuidIds.isEmpty()) {
+            return List.of();
+        }
+
+        Map<UUID, MediaAsset> assetsById = new LinkedHashMap<>();
+        for (MediaAsset asset : mediaAssetMapper.selectByIds(uuidIds)) {
+            assetsById.put(asset.getId(), asset);
+        }
+
+        List<String> contentIds = new ArrayList<>();
+        for (UUID assetId : uuidIds) {
+            MediaAsset asset = assetsById.get(assetId);
+            if (asset != null && asset.getContentId() != null) {
+                contentIds.add(asset.getContentId().toString());
+            }
+        }
+        return contentIds;
     }
 
     private List<String> searchNeo4jContentIds(String queryText, String platform, String language, int topK) {

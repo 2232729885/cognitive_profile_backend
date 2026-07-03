@@ -8,6 +8,7 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
+import java.util.UUID;
 
 @Mapper
 public interface MediaAssetMapper extends BaseMapper<MediaAsset> {
@@ -35,4 +36,14 @@ public interface MediaAssetMapper extends BaseMapper<MediaAsset> {
     @Select("SELECT * FROM media_assets WHERE embedding_id IS NULL " +
             "AND asset_type IN ('image','video') LIMIT #{limit}")
     List<MediaAsset> selectPendingEmbedding(@Param("limit") int limit);
+
+    @Select("""
+            <script>
+            SELECT * FROM media_assets WHERE id IN
+            <foreach collection='ids' item='id' open='(' separator=',' close=')'>
+                #{id,typeHandler=org.apache.ibatis.type.UUIDTypeHandler}
+            </foreach>
+            </script>
+            """)
+    List<MediaAsset> selectByIds(@Param("ids") List<UUID> ids);
 }
