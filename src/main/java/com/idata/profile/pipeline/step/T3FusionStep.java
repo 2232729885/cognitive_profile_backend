@@ -29,9 +29,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+/**
+ * @deprecated T3 Agent 调用已移除（2026-07）。
+ * Neo4j 写入逻辑已迁移到 T2ExtractionStep.writeToNeo4j()。
+ * 跨批次实体归一由 EntityDeduplicationJob 后台定时处理。
+ * 本类保留仅作历史参考，不再被 PipelineExecutor 调用。
+ */
 @Slf4j
 @Component
 @RequiredArgsConstructor
+@Deprecated
 public class T3FusionStep {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
