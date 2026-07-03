@@ -74,6 +74,67 @@ public class Neo4jGraphService {
                         .run());
     }
 
+    /**
+     * 把 sourceId 节点的所有关系重新指向 targetId 节点，然后删除 sourceId 节点。
+     * 用于 EntityDeduplicationJob 做实体融合；全程使用普通 Cypher + Java 层重建关系，不依赖 APOC。
+     */
+    public void mergeNodes(String sourceId, String targetId, String label) {
+        if (!hasText(sourceId) || !hasText(targetId) || !hasText(label) || sourceId.equals(targetId)) {
+            return;
+        }
+
+        mergeNode(label, targetId, Collections.emptyMap());
+
+        String outCypher = """
+                MATCH (s {id: $sourceId})-[r]->(t)
+                RETURN type(r) AS relType, properties(r) AS props,
+                       t.id AS targetNodeId, labels(t)[0] AS targetLabel
+                """;
+        List<Map<String, Object>> outgoing = neo4jClient.query(outCypher)
+                .bind(sourceId).to("sourceId")
+                .fetch()
+                .all()
+                .stream()
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+
+        String inCypher = """
+                MATCH (s)-[r]->(t {id: $sourceId})
+                RETURN type(r) AS relType, properties(r) AS props,
+                       s.id AS sourceNodeId, labels(s)[0] AS sourceLabel
+                """;
+        List<Map<String, Object>> incoming = neo4jClient.query(inCypher)
+                .bind(sourceId).to("sourceId")
+                .fetch()
+                .all()
+                .stream()
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+
+        for (Map<String, Object> row : outgoing) {
+            String relType = stringValue(row.get("relType"));
+            String targetNodeId = stringValue(row.get("targetNodeId"));
+            String targetLabel = stringValue(row.get("targetLabel"));
+            if (!hasText(relType) || !hasText(targetNodeId) || !hasText(targetLabel) || targetId.equals(targetNodeId)) {
+                continue;
+            }
+            mergeRelation(label, targetId, targetLabel, targetNodeId, relType, relationProperties(row.get("props")));
+        }
+
+        for (Map<String, Object> row : incoming) {
+            String relType = stringValue(row.get("relType"));
+            String sourceNodeId = stringValue(row.get("sourceNodeId"));
+            String sourceLabel = stringValue(row.get("sourceLabel"));
+            if (!hasText(relType) || !hasText(sourceNodeId) || !hasText(sourceLabel) || targetId.equals(sourceNodeId)) {
+                continue;
+            }
+            mergeRelation(sourceLabel, sourceNodeId, label, targetId, relType, relationProperties(row.get("props")));
+        }
+
+        runWrite("delete merged node " + label + "/" + sourceId, () ->
+                neo4jClient.query("MATCH (n {id: $sourceId}) DETACH DELETE n")
+                        .bind(sourceId).to("sourceId")
+                        .run());
+    }
+
     public List<UUID> findSocialAccountIdsByNarrative(UUID narrativeId) {
         String cypher = """
                 MATCH (a:SocialAccount)-[:AMPLIFIES]->(n:Narrative {id: $narrativeId})
@@ -382,6 +443,20 @@ public class Neo4jGraphService {
         } catch (NumberFormatException e) {
             return 0D;
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> relationProperties(Object value) {
+        if (value instanceof Map<?, ?> map) {
+            Map<String, Object> result = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                if (entry.getKey() != null && entry.getValue() != null) {
+                    result.put(entry.getKey().toString(), entry.getValue());
+                }
+            }
+            return result;
+        }
+        return Collections.emptyMap();
     }
 
     private long longValue(Object value) {

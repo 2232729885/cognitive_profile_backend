@@ -1,23 +1,33 @@
 package com.idata.profile.batch.dedup;
 
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
+import com.idata.profile.entity.dedup.EntityFusionRecord;
+import com.idata.profile.entity.graph.Event;
+import com.idata.profile.entity.graph.Narrative;
+import com.idata.profile.entity.graph.Organization;
+import com.idata.profile.entity.graph.Person;
 import com.idata.profile.infra.neo4j.Neo4jGraphService;
+import com.idata.profile.mapper.dedup.EntityFusionRecordMapper;
 import com.idata.profile.mapper.graph.EventMapper;
 import com.idata.profile.mapper.graph.NarrativeMapper;
 import com.idata.profile.mapper.graph.OrganizationMapper;
 import com.idata.profile.mapper.graph.PersonMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationContext;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+
+import java.util.Arrays;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class EntityDeduplicationJob {
-
-    // 融合算法待算法组提供后实现。
-    // 当前占位：定时扫描 dedup_status='pending' 的实体，
-    // 按 canonical_name 相似度分组，提交给融合服务判断是否为同一实体。
 
     private static final int BATCH_LIMIT = 200;
 
@@ -25,27 +35,224 @@ public class EntityDeduplicationJob {
     private final OrganizationMapper organizationMapper;
     private final EventMapper eventMapper;
     private final NarrativeMapper narrativeMapper;
-    @SuppressWarnings("unused")
+    private final EntityFusionRecordMapper entityFusionRecordMapper;
     private final Neo4jGraphService neo4jGraphService;
+    private final ApplicationContext applicationContext;
+    private final AtomicBoolean running = new AtomicBoolean(false);
 
-    /**
-     * 实体去重融合定时任务（占位）。
-     * 融合策略：
-     * 1. 扫描 dedup_status='pending' 的实体记录
-     * 2. 按 canonical_name 分组，同组内视为候选重复实体
-     * 3. 调用融合服务（TODO：算法组提供接口）判断哪些是真正的同一实体
-     * 4. 融合操作：
-     *    - PG：把被合并记录的 merge_history 指向 survivorId，dedup_status 置为 'deduplicated'
-     *          survivor 记录 dedup_status 置为 'canonical'，content_count 累加
-     *    - Neo4j：把被合并节点的所有关系重新指向 survivor 节点，删除被合并节点
-     * 5. 孤儿监控：超过7天仍为 pending 的实体打 warn 日志
-     *
-     * 当前实现：仅打印统计日志，不执行实际融合（等待算法组接口）
-     */
     @Scheduled(fixedDelay = 60 * 60 * 1000)
     public void run() {
-        log.info("[EntityDeduplicationJob] 占位运行，融合算法待算法组提供后实现，batchLimit={}", BATCH_LIMIT);
+        UUID jobRunId = UUID.randomUUID();
+        if (!running.compareAndSet(false, true)) {
+            log.info("[EntityDeduplicationJob] 上一次融合仍在运行，跳过本轮定时任务, jobRunId={}", jobRunId);
+            return;
+        }
+        try {
+            runInternal(jobRunId);
+        } finally {
+            running.set(false);
+        }
+    }
+
+    public boolean tryStartAsync(UUID jobRunId) {
+        if (!running.compareAndSet(false, true)) {
+            return false;
+        }
+        applicationContext.getBean(EntityDeduplicationJob.class).runAsyncAcquired(jobRunId);
+        return true;
+    }
+
+    @Async("pipelineThreadPool")
+    public void runAsyncAcquired(UUID jobRunId) {
+        try {
+            runInternal(jobRunId);
+        } finally {
+            running.set(false);
+        }
+    }
+
+    public boolean isRunning() {
+        return running.get();
+    }
+
+    private void runInternal(UUID jobRunId) {
+        log.info("[EntityDeduplicationJob] 开始融合, jobRunId={}", jobRunId);
+
+        int totalMerged = 0;
+        totalMerged += deduplicateEntities("person", jobRunId);
+        totalMerged += deduplicateEntities("organization", jobRunId);
+        totalMerged += deduplicateEntities("event", jobRunId);
+        totalMerged += deduplicateEntities("narrative", jobRunId);
+
+        log.info("[EntityDeduplicationJob] 融合完成, jobRunId={}, totalMerged={}", jobRunId, totalMerged);
         logPendingStats();
+    }
+
+    private int deduplicateEntities(String entityType, UUID jobRunId) {
+        return switch (entityType) {
+            case "person" -> deduplicatePersons(jobRunId);
+            case "organization" -> deduplicateOrganizations(jobRunId);
+            case "event" -> deduplicateEvents(jobRunId);
+            case "narrative" -> deduplicateNarratives(jobRunId);
+            default -> 0;
+        };
+    }
+
+    private int deduplicatePersons(UUID jobRunId) {
+        int merged = 0;
+        for (String name : personMapper.selectDuplicateCanonicalNames(BATCH_LIMIT)) {
+            try {
+                List<Person> pending = personMapper.selectPendingByCanonicalName(name);
+                if (pending.size() < 2) {
+                    continue;
+                }
+                Person survivor = pending.get(0);
+                List<Person> mergedList = pending.subList(1, pending.size());
+                UUID[] mergedIds = mergedList.stream().map(Person::getId).toArray(UUID[]::new);
+                String[] mergedNames = mergedList.stream().map(Person::getCanonicalName).toArray(String[]::new);
+                int totalContentCount = pending.stream().mapToInt(item -> contentCount(item.getContentCount())).sum();
+
+                personMapper.updateSurvivorAfterMerge(survivor.getId(), totalContentCount, mergedIds);
+                personMapper.update(null, new UpdateWrapper<Person>()
+                        .in("id", Arrays.asList(mergedIds))
+                        .set("dedup_status", "deduplicated")
+                        .setSql("updated_at = NOW()"));
+
+                boolean neo4jMerged = mergeNeo4jNodes(mergedIds, survivor.getId(), "Person");
+                insertRecord("person", survivor.getId(), survivor.getCanonicalName(), mergedIds, mergedNames,
+                        survivor.getContentCount(), totalContentCount, neo4jMerged, jobRunId);
+                merged += mergedList.size();
+            } catch (Exception e) {
+                log.warn("[EntityDeduplicationJob] person融合分组失败, canonicalName={}", name, e);
+            }
+        }
+        return merged;
+    }
+
+    private int deduplicateOrganizations(UUID jobRunId) {
+        int merged = 0;
+        for (String name : organizationMapper.selectDuplicateCanonicalNames(BATCH_LIMIT)) {
+            try {
+                List<Organization> pending = organizationMapper.selectPendingByCanonicalName(name);
+                if (pending.size() < 2) {
+                    continue;
+                }
+                Organization survivor = pending.get(0);
+                List<Organization> mergedList = pending.subList(1, pending.size());
+                UUID[] mergedIds = mergedList.stream().map(Organization::getId).toArray(UUID[]::new);
+                String[] mergedNames = mergedList.stream().map(Organization::getCanonicalName).toArray(String[]::new);
+                int totalContentCount = pending.stream().mapToInt(item -> contentCount(item.getContentCount())).sum();
+
+                organizationMapper.updateSurvivorAfterMerge(survivor.getId(), totalContentCount, mergedIds);
+                organizationMapper.update(null, new UpdateWrapper<Organization>()
+                        .in("id", Arrays.asList(mergedIds))
+                        .set("dedup_status", "deduplicated")
+                        .setSql("updated_at = NOW()"));
+
+                boolean neo4jMerged = mergeNeo4jNodes(mergedIds, survivor.getId(), "Organization");
+                insertRecord("organization", survivor.getId(), survivor.getCanonicalName(), mergedIds, mergedNames,
+                        survivor.getContentCount(), totalContentCount, neo4jMerged, jobRunId);
+                merged += mergedList.size();
+            } catch (Exception e) {
+                log.warn("[EntityDeduplicationJob] organization融合分组失败, canonicalName={}", name, e);
+            }
+        }
+        return merged;
+    }
+
+    private int deduplicateEvents(UUID jobRunId) {
+        int merged = 0;
+        for (String name : eventMapper.selectDuplicateCanonicalNames(BATCH_LIMIT)) {
+            try {
+                List<Event> pending = eventMapper.selectPendingByCanonicalName(name);
+                if (pending.size() < 2) {
+                    continue;
+                }
+                Event survivor = pending.get(0);
+                List<Event> mergedList = pending.subList(1, pending.size());
+                UUID[] mergedIds = mergedList.stream().map(Event::getId).toArray(UUID[]::new);
+                String[] mergedNames = mergedList.stream().map(Event::getCanonicalName).toArray(String[]::new);
+                int totalContentCount = pending.stream().mapToInt(item -> contentCount(item.getContentCount())).sum();
+
+                eventMapper.updateSurvivorAfterMerge(survivor.getId(), totalContentCount, mergedIds);
+                eventMapper.update(null, new UpdateWrapper<Event>()
+                        .in("id", Arrays.asList(mergedIds))
+                        .set("dedup_status", "deduplicated")
+                        .setSql("updated_at = NOW()"));
+
+                boolean neo4jMerged = mergeNeo4jNodes(mergedIds, survivor.getId(), "Event");
+                insertRecord("event", survivor.getId(), survivor.getCanonicalName(), mergedIds, mergedNames,
+                        survivor.getContentCount(), totalContentCount, neo4jMerged, jobRunId);
+                merged += mergedList.size();
+            } catch (Exception e) {
+                log.warn("[EntityDeduplicationJob] event融合分组失败, canonicalName={}", name, e);
+            }
+        }
+        return merged;
+    }
+
+    private int deduplicateNarratives(UUID jobRunId) {
+        int merged = 0;
+        for (String name : narrativeMapper.selectDuplicateCanonicalNames(BATCH_LIMIT)) {
+            try {
+                List<Narrative> pending = narrativeMapper.selectPendingByCanonicalName(name);
+                if (pending.size() < 2) {
+                    continue;
+                }
+                Narrative survivor = pending.get(0);
+                List<Narrative> mergedList = pending.subList(1, pending.size());
+                UUID[] mergedIds = mergedList.stream().map(Narrative::getId).toArray(UUID[]::new);
+                String[] mergedNames = mergedList.stream().map(Narrative::getCanonicalLabel).toArray(String[]::new);
+                int totalContentCount = pending.stream().mapToInt(item -> contentCount(item.getContentCount())).sum();
+
+                narrativeMapper.updateSurvivorAfterMerge(survivor.getId(), totalContentCount, mergedIds);
+                narrativeMapper.update(null, new UpdateWrapper<Narrative>()
+                        .in("id", Arrays.asList(mergedIds))
+                        .set("dedup_status", "deduplicated")
+                        .setSql("updated_at = NOW()"));
+
+                boolean neo4jMerged = mergeNeo4jNodes(mergedIds, survivor.getId(), "Narrative");
+                insertRecord("narrative", survivor.getId(), survivor.getCanonicalLabel(), mergedIds, mergedNames,
+                        survivor.getContentCount(), totalContentCount, neo4jMerged, jobRunId);
+                merged += mergedList.size();
+            } catch (Exception e) {
+                log.warn("[EntityDeduplicationJob] narrative融合分组失败, canonicalLabel={}", name, e);
+            }
+        }
+        return merged;
+    }
+
+    private boolean mergeNeo4jNodes(UUID[] mergedIds, UUID survivorId, String label) {
+        boolean allMerged = true;
+        for (UUID mergedId : mergedIds) {
+            try {
+                neo4jGraphService.mergeNodes(mergedId.toString(), survivorId.toString(), label);
+            } catch (Exception e) {
+                allMerged = false;
+                log.warn("Neo4j节点合并失败, sourceId={}, targetId={}, label={}",
+                        mergedId, survivorId, label, e);
+            }
+        }
+        return allMerged;
+    }
+
+    private void insertRecord(String entityType, UUID survivorId, String survivorName,
+                              UUID[] mergedIds, String[] mergedNames,
+                              Integer contentCountBefore, int contentCountAfter,
+                              boolean neo4jMerged, UUID jobRunId) {
+        EntityFusionRecord record = new EntityFusionRecord();
+        record.setEntityType(entityType);
+        record.setSurvivorId(survivorId);
+        record.setSurvivorName(survivorName);
+        record.setMergedIds(mergedIds);
+        record.setMergedNames(mergedNames);
+        record.setMergedCount(mergedIds.length);
+        record.setFusionMethod("exact_name");
+        record.setContentCountBefore(contentCountBefore);
+        record.setContentCountAfter(contentCountAfter);
+        record.setNeo4jMerged(neo4jMerged);
+        record.setJobRunId(jobRunId);
+        entityFusionRecordMapper.insert(record);
     }
 
     private void logPendingStats() {
@@ -57,19 +264,7 @@ public class EntityDeduplicationJob {
                 persons, organizations, events, narratives);
     }
 
-    /**
-     * Neo4j 节点合并操作（占位）。
-     * 真实实现需要：
-     * 1. 查出 sourceId 节点的所有关系
-     * 2. 在 targetId 节点上重建相同的关系
-     * 3. 删除 sourceId 节点
-     * 注意：需要确认 Neo4j 是否安装了 APOC 库，有 APOC 可以用
-     * apoc.refactor.mergeNodes() 简化此操作
-     */
-    @SuppressWarnings("unused")
-    private void mergeNeo4jNodes(String sourceId, String targetId, String label) {
-        // TODO: 算法组提供融合策略后实现
-        log.debug("[EntityDeduplicationJob] Neo4j节点合并占位: {} -> {}, label={}",
-                sourceId, targetId, label);
+    private int contentCount(Integer value) {
+        return value == null ? 0 : value;
     }
 }

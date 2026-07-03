@@ -9,6 +9,8 @@ import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 import java.math.BigDecimal;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Mapper
@@ -31,6 +33,30 @@ public interface NarrativeMapper extends BaseMapper<Narrative> {
 
     @Select("SELECT COUNT(*) FROM narratives WHERE dedup_status = #{dedupStatus}")
     long countByDedupStatus(@Param("dedupStatus") String dedupStatus);
+
+    @Select("SELECT * FROM narratives WHERE canonical_label = #{canonicalLabel} " +
+            "AND dedup_status = 'pending' ORDER BY created_at ASC")
+    List<Narrative> selectPendingByCanonicalName(@Param("canonicalLabel") String canonicalLabel);
+
+    @Select("SELECT canonical_label FROM narratives WHERE dedup_status = 'pending' " +
+            "GROUP BY canonical_label HAVING COUNT(*) > 1 LIMIT #{limit}")
+    List<String> selectDuplicateCanonicalNames(@Param("limit") int limit);
+
+    @Update("""
+            UPDATE narratives SET
+                content_count = #{contentCount},
+                merge_history = COALESCE(merge_history, ARRAY[]::uuid[])
+                                || #{mergedIds,typeHandler=com.idata.profile.infra.mybatis.UuidArrayTypeHandler},
+                dedup_status = 'canonical',
+                updated_at = NOW()
+            WHERE id = #{survivorId}
+            """)
+    int updateSurvivorAfterMerge(@Param("survivorId") UUID survivorId,
+                                 @Param("contentCount") int contentCount,
+                                 @Param("mergedIds") UUID[] mergedIds);
+
+    @Select("SELECT dedup_status AS status, COUNT(*) AS cnt FROM narratives GROUP BY dedup_status")
+    List<Map<String, Object>> selectDedupStatusStats();
 
     @Select("SELECT EXISTS(SELECT 1 FROM narratives WHERE id = #{id})")
     boolean existsById(@Param("id") UUID id);
