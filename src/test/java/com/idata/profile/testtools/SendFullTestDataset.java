@@ -256,7 +256,7 @@ public class SendFullTestDataset {
 
     private static String content1(String crawlTaskId, String userIdA, String postId1, Instant now) {
         return socialContent(crawlTaskId, "x", "zh", postId1, userIdA, "post",
-                "美军在海湾地区的防空系统进入高度戒备，伊朗方面则警告任何袭击都将引发对等回应。霍尔木兹海峡的油轮航线已经成为舆论战和市场恐慌的核心节点。 #美伊冲突 #霍尔木兹海峡 #能源安全",
+                "外部势力协调操控社交媒体叙事的证据越来越多。霍尔木兹海峡（Strait of Hormuz）紧张局势持续升级，2026年波斯湾军事对峙（2026 Persian Gulf Military Standoff）期间，大量账号在关键时间节点发布高度相似的内容。美国中央司令部（U.S. Central Command）的行动被反复提及。 #信息战 #霍尔木兹 #波斯湾",
                 now.minus(2, ChronoUnit.HOURS), postId1, null, null, null,
                 new String[]{"美伊冲突", "霍尔木兹海峡", "能源安全"}, new String[]{},
                 4_820L, 632L, null, 1_340L, 287L, 186_000L);

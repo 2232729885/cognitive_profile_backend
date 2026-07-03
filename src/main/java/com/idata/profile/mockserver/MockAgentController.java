@@ -78,8 +78,18 @@ public class MockAgentController {
         organization.setCanonicalName("U.S. Central Command");
         organization.setImportanceScore(new BigDecimal("84.00"));
 
+        T2ExtractResponse.ExtractedEntity location = new T2ExtractResponse.ExtractedEntity();
+        location.setType("location");
+        location.setCanonicalName("Strait of Hormuz");
+        location.setImportanceScore(new BigDecimal("85.00"));
+
+        T2ExtractResponse.ExtractedEntity event = new T2ExtractResponse.ExtractedEntity();
+        event.setType("event");
+        event.setCanonicalName("2026 Persian Gulf Military Standoff");
+        event.setImportanceScore(new BigDecimal("90.00"));
+
         T2ExtractResponse resp = new T2ExtractResponse();
-        resp.setEntities(List.of(person, organization, narrative));
+        resp.setEntities(List.of(person, organization, narrative, location, event));
         resp.setResolvedAuthorAccountId(null);
         resp.setRaw(toJson(resp));
         return resp;
@@ -95,10 +105,14 @@ public class MockAgentController {
         T3FuseRequest.T2EntityRef personRef = findEntity(request, "person", "Leila Farzan");
         T3FuseRequest.T2EntityRef organizationRef = findEntity(request, "organization", "U.S. Central Command");
         T3FuseRequest.T2EntityRef narrativeRef = findEntity(request, "narrative", "Hormuz Strait escalation narrative");
+        T3FuseRequest.T2EntityRef locationRef = findEntity(request, "location", "Strait of Hormuz");
+        T3FuseRequest.T2EntityRef eventRef = findEntity(request, "event", "2026 Persian Gulf Military Standoff");
 
         String personId = entityId(personRef);
         String organizationId = entityId(organizationRef);
         String narrativeId = entityId(narrativeRef);
+        String locationId = entityId(locationRef);
+        String eventId = entityId(eventRef);
 
         T3FuseResponse.EntityMerge merge = new T3FuseResponse.EntityMerge();
         merge.setSurvivorId(personId);
@@ -135,6 +149,28 @@ public class MockAgentController {
                 "source", "mock-t3"
         ));
 
+        T3FuseResponse.Neo4jNode locationNode = new T3FuseResponse.Neo4jNode();
+        locationNode.setLabel("Location");
+        locationNode.setId(locationId);
+        locationNode.setProperties(Map.of(
+                "canonicalName", "Strait of Hormuz",
+                "placeType", "water_body",
+                "country", "IR",
+                "importanceScore", 85.0,
+                "source", "mock-t3"
+        ));
+
+        T3FuseResponse.Neo4jNode eventNode = new T3FuseResponse.Neo4jNode();
+        eventNode.setLabel("Event");
+        eventNode.setId(eventId);
+        eventNode.setProperties(Map.of(
+                "canonicalName", "2026 Persian Gulf Military Standoff",
+                "eventType", "military",
+                "country", "IR",
+                "importanceScore", 90.0,
+                "source", "mock-t3"
+        ));
+
         T3FuseResponse.Neo4jRelation participates = new T3FuseResponse.Neo4jRelation();
         participates.setFromId(personId);
         participates.setToId(narrativeId);
@@ -153,10 +189,35 @@ public class MockAgentController {
         promotes.setRelationType("SUPPORTS");
         promotes.setProperties(Map.of("confidence", 0.82, "source", "mock-t3"));
 
+        T3FuseResponse.Neo4jRelation eventAtLocation = new T3FuseResponse.Neo4jRelation();
+        eventAtLocation.setFromId(eventId);
+        eventAtLocation.setToId(locationId);
+        eventAtLocation.setRelationType("EVENT_OCCURRED_AT");
+        eventAtLocation.setProperties(Map.of("confidence", 0.95, "source", "mock-t3"));
+
+        T3FuseResponse.Neo4jRelation eventInvolvesOrg = new T3FuseResponse.Neo4jRelation();
+        eventInvolvesOrg.setFromId(eventId);
+        eventInvolvesOrg.setToId(organizationId);
+        eventInvolvesOrg.setRelationType("EVENT_INVOLVES_ENTITY");
+        eventInvolvesOrg.setProperties(Map.of("role", "actor", "confidence", 0.88, "source", "mock-t3"));
+
+        T3FuseResponse.Neo4jRelation narrativeAboutEvent = new T3FuseResponse.Neo4jRelation();
+        narrativeAboutEvent.setFromId(narrativeId);
+        narrativeAboutEvent.setToId(eventId);
+        narrativeAboutEvent.setRelationType("NARRATIVE_ABOUT_EVENT");
+        narrativeAboutEvent.setProperties(Map.of("confidence", 0.92, "source", "mock-t3"));
+
+        T3FuseResponse.Neo4jRelation orgLocatedIn = new T3FuseResponse.Neo4jRelation();
+        orgLocatedIn.setFromId(organizationId);
+        orgLocatedIn.setToId(locationId);
+        orgLocatedIn.setRelationType("LOCATED_IN");
+        orgLocatedIn.setProperties(Map.of("confidence", 0.80, "source", "mock-t3"));
+
         T3FuseResponse resp = new T3FuseResponse();
         resp.setEntityMerges(List.of(merge));
-        resp.setNodes(List.of(personNode, organizationNode, narrativeNode));
-        resp.setRelations(List.of(participates, affiliated, promotes));
+        resp.setNodes(List.of(personNode, organizationNode, narrativeNode, locationNode, eventNode));
+        resp.setRelations(List.of(participates, affiliated, promotes,
+                eventAtLocation, eventInvolvesOrg, narrativeAboutEvent, orgLocatedIn));
         resp.setRaw(toJson(resp));
         return resp;
     }
