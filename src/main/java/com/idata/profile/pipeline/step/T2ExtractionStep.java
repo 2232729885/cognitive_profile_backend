@@ -7,7 +7,6 @@ import com.idata.profile.common.constant.PipelineStatus;
 import com.idata.profile.entity.content.MediaContent;
 import com.idata.profile.entity.raw.RawRecord;
 import com.idata.profile.entity.task.PipelineTask;
-import com.idata.profile.mapper.account.SocialAccountMapper;
 import com.idata.profile.mapper.content.MediaContentMapper;
 import com.idata.profile.mapper.graph.EventMapper;
 import com.idata.profile.mapper.graph.NarrativeMapper;
@@ -25,7 +24,6 @@ import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 @Slf4j
 @Component
@@ -42,7 +40,6 @@ public class T2ExtractionStep {
     private final OrganizationMapper organizationMapper;
     private final EventMapper eventMapper;
     private final NarrativeMapper narrativeMapper;
-    private final SocialAccountMapper socialAccountMapper;
 
     public void run(PipelineTask task) {
         OffsetDateTime startedAt = OffsetDateTime.now();
@@ -65,7 +62,7 @@ public class T2ExtractionStep {
 
         if (response.getEntities() != null) {
             for (T2ExtractResponse.ExtractedEntity entity : response.getEntities()) {
-                upsertEntity(entity, mc);
+                insertEntity(entity);
             }
         }
 
@@ -85,7 +82,7 @@ public class T2ExtractionStep {
         pipelineTaskMapper.updateById(task);
     }
 
-    private void upsertEntity(T2ExtractResponse.ExtractedEntity entity, MediaContent mc) {
+    private void insertEntity(T2ExtractResponse.ExtractedEntity entity) {
         if (entity == null || !hasText(entity.getType()) || !hasText(entity.getCanonicalName())) {
             log.warn("Skip invalid T2 extracted entity: {}", entity);
             return;
@@ -96,48 +93,12 @@ public class T2ExtractionStep {
                 ? entity.getImportanceScore() : BigDecimal.ZERO;
 
         switch (entity.getType()) {
-            case "person" -> upsertPerson(entity, mc, canonicalName, importanceScore);
-            case "organization" -> organizationMapper.upsertByCanonicalName(canonicalName, importanceScore);
-            case "event" -> eventMapper.upsertByCanonicalName(canonicalName, importanceScore);
-            case "narrative" -> narrativeMapper.upsertByCanonicalLabel(
+            case "person" -> personMapper.insertEntity(canonicalName, importanceScore);
+            case "organization" -> organizationMapper.insertEntity(canonicalName, importanceScore);
+            case "event" -> eventMapper.insertEntity(canonicalName, importanceScore);
+            case "narrative" -> narrativeMapper.insertEntity(
                     canonicalName, importanceScore, buildClaimAtoms(canonicalName, importanceScore));
             default -> log.warn("Unknown extracted entity type: {}", entity.getType());
-        }
-    }
-
-    private void upsertPerson(T2ExtractResponse.ExtractedEntity entity,
-                              MediaContent mc,
-                              String canonicalName,
-                              BigDecimal importanceScore) {
-        personMapper.upsertByCanonicalName(canonicalName, importanceScore);
-
-        UUID personId = personMapper.selectIdByCanonicalName(canonicalName);
-        if (personId == null) {
-            log.warn("Skip entityPersonId backfill because person was not found, canonicalName={}", canonicalName);
-            return;
-        }
-
-        if (mc.getAuthorAccountId() != null) {
-            int updated = socialAccountMapper.updateEntityPersonId(mc.getAuthorAccountId(), personId);
-            if (updated == 0) {
-                log.warn("No social_account updated for authorAccountId={}, personId={}", mc.getAuthorAccountId(), personId);
-            }
-        }
-
-        if (!hasText(entity.getMatchedAccountId())) {
-            return;
-        }
-
-        UUID accountId = parseUuid(entity.getMatchedAccountId());
-        if (accountId == null) {
-            log.warn("Skip entityPersonId backfill because matchedAccountId is invalid: {}",
-                    entity.getMatchedAccountId());
-            return;
-        }
-
-        int updated = socialAccountMapper.updateEntityPersonId(accountId, personId);
-        if (updated == 0) {
-            log.warn("No social_account updated for matchedAccountId={}, personId={}", accountId, personId);
         }
     }
 
@@ -161,14 +122,4 @@ public class T2ExtractionStep {
         return value != null && !value.trim().isEmpty();
     }
 
-    private UUID parseUuid(String value) {
-        if (!hasText(value)) {
-            return null;
-        }
-        try {
-            return UUID.fromString(value.trim());
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
-    }
 }

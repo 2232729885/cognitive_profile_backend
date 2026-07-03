@@ -12,10 +12,6 @@ import com.idata.profile.entity.task.PipelineTask;
 import com.idata.profile.infra.neo4j.Neo4jGraphService;
 import com.idata.profile.mapper.account.SocialAccountMapper;
 import com.idata.profile.mapper.content.MediaContentMapper;
-import com.idata.profile.mapper.graph.EventMapper;
-import com.idata.profile.mapper.graph.NarrativeMapper;
-import com.idata.profile.mapper.graph.OrganizationMapper;
-import com.idata.profile.mapper.graph.PersonMapper;
 import com.idata.profile.mapper.raw.RawRecordMapper;
 import com.idata.profile.mapper.task.PipelineTaskMapper;
 import lombok.RequiredArgsConstructor;
@@ -47,10 +43,6 @@ public class T3FusionStep {
     private final PipelineTaskMapper pipelineTaskMapper;
     private final MediaContentMapper mediaContentMapper;
     private final SocialAccountMapper socialAccountMapper;
-    private final PersonMapper personMapper;
-    private final OrganizationMapper organizationMapper;
-    private final EventMapper eventMapper;
-    private final NarrativeMapper narrativeMapper;
 
     public void run(PipelineTask task) {
         OffsetDateTime startedAt = OffsetDateTime.now();
@@ -67,7 +59,6 @@ public class T3FusionStep {
         mergeRelations(response.getRelations(), labelsByNodeId);
         linkAuthorAccount(task, response);
         writeMediaContentToNeo4j(task);
-        appendMergeHistory(response.getEntityMerges());
 
         rawRecord.setT3Output(response.getRaw());
         if (!PipelineStatus.T4_INDEXED.name().equals(rawRecord.getPipelineStatus())) {
@@ -96,10 +87,6 @@ public class T3FusionStep {
                     T3FuseRequest.T2EntityRef ref = new T3FuseRequest.T2EntityRef();
                     ref.setType(entity.getType());
                     ref.setCanonicalName(entity.getCanonicalName());
-                    UUID entityId = resolveEntityId(entity);
-                    if (entityId != null) {
-                        ref.setTempId(entityId.toString());
-                    }
                     refs.add(ref);
                 }
             }
@@ -109,20 +96,6 @@ public class T3FusionStep {
             request.setEntities(Collections.emptyList());
         }
         return request;
-    }
-
-    private UUID resolveEntityId(T2ExtractResponse.ExtractedEntity entity) {
-        if (entity == null || !hasText(entity.getType()) || !hasText(entity.getCanonicalName())) {
-            return null;
-        }
-        String canonicalName = entity.getCanonicalName().trim();
-        return switch (entity.getType()) {
-            case "person" -> personMapper.selectIdByCanonicalName(canonicalName);
-            case "organization" -> organizationMapper.selectIdByCanonicalName(canonicalName);
-            case "event" -> eventMapper.selectIdByCanonicalName(canonicalName);
-            case "narrative" -> narrativeMapper.selectIdByCanonicalLabel(canonicalName);
-            default -> null;
-        };
     }
 
     private void mergeNodes(List<T3FuseResponse.Neo4jNode> nodes) {
@@ -162,34 +135,6 @@ public class T3FusionStep {
                     relation.getToId(),
                     relation.getRelationType(),
                     toProperties(relation.getProperties()));
-        }
-    }
-
-    private void appendMergeHistory(List<T3FuseResponse.EntityMerge> entityMerges) {
-        if (entityMerges == null) {
-            return;
-        }
-
-        for (T3FuseResponse.EntityMerge merge : entityMerges) {
-            UUID survivorId = parseUuid(merge.getSurvivorId());
-            UUID[] mergedIds = parseUuidArray(merge.getMergedIds());
-            if (survivorId == null || mergedIds.length == 0) {
-                log.warn("Skip invalid T3 entity merge: {}", merge);
-                continue;
-            }
-
-            if (personMapper.existsById(survivorId)) {
-                personMapper.appendMergeHistory(survivorId, mergedIds);
-            } else if (organizationMapper.existsById(survivorId)) {
-                organizationMapper.appendMergeHistory(survivorId, mergedIds);
-            } else if (eventMapper.existsById(survivorId)) {
-                eventMapper.appendMergeHistory(survivorId, mergedIds);
-            } else if (narrativeMapper.existsById(survivorId)) {
-                narrativeMapper.appendMergeHistory(survivorId, mergedIds);
-            } else {
-                log.warn("Skip T3 entity merge because survivorId was not found in PG entity tables: {}",
-                        survivorId);
-            }
         }
     }
 
@@ -428,28 +373,6 @@ public class T3FusionStep {
                         + "This is temporary because Neo4jRelation does not carry fromLabel/toLabel.",
                 nodeId, DEFAULT_RELATION_NODE_LABEL);
         return DEFAULT_RELATION_NODE_LABEL;
-    }
-
-    private UUID[] parseUuidArray(List<String> values) {
-        if (values == null || values.isEmpty()) {
-            return new UUID[0];
-        }
-
-        return values.stream()
-                .map(this::parseUuid)
-                .filter(java.util.Objects::nonNull)
-                .toArray(UUID[]::new);
-    }
-
-    private UUID parseUuid(String value) {
-        if (!hasText(value)) {
-            return null;
-        }
-        try {
-            return UUID.fromString(value.trim());
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
     }
 
     private boolean hasText(String value) {

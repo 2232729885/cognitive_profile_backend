@@ -17,26 +17,20 @@ public interface NarrativeMapper extends BaseMapper<Narrative> {
     @Insert("""
             INSERT INTO narratives (
                 id, canonical_label, lifecycle_state, content_count,
-                account_count, importance_score, is_active, first_detected_at, claim_atoms
+                account_count, importance_score, is_active, dedup_status, first_detected_at, claim_atoms
             )
             VALUES (
                 gen_random_uuid(), #{canonicalLabel}, 'emerging', 1,
-                0, #{importanceScore}, TRUE, NOW(),
+                0, #{importanceScore}, TRUE, 'pending', NOW(),
                 COALESCE(NULLIF(#{claimAtoms}, '')::jsonb, '[]'::jsonb)
             )
-            ON CONFLICT (canonical_label)
-            DO UPDATE SET
-                content_count = narratives.content_count + 1,
-                importance_score = GREATEST(narratives.importance_score, #{importanceScore}),
-                claim_atoms = CASE
-                    WHEN #{claimAtoms} IS NULL OR #{claimAtoms} = '' THEN narratives.claim_atoms
-                    ELSE CAST(#{claimAtoms} AS jsonb)
-                END,
-                updated_at = NOW()
             """)
-    int upsertByCanonicalLabel(@Param("canonicalLabel") String canonicalLabel,
-                               @Param("importanceScore") BigDecimal importanceScore,
-                               @Param("claimAtoms") String claimAtoms);
+    int insertEntity(@Param("canonicalLabel") String canonicalLabel,
+                     @Param("importanceScore") BigDecimal importanceScore,
+                     @Param("claimAtoms") String claimAtoms);
+
+    @Select("SELECT COUNT(*) FROM narratives WHERE dedup_status = #{dedupStatus}")
+    long countByDedupStatus(@Param("dedupStatus") String dedupStatus);
 
     @Select("SELECT EXISTS(SELECT 1 FROM narratives WHERE id = #{id})")
     boolean existsById(@Param("id") UUID id);

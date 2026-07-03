@@ -16,17 +16,15 @@ public interface EventMapper extends BaseMapper<Event> {
 
     @Insert("""
             INSERT INTO events (
-                id, canonical_name, importance_score, content_count
+                id, canonical_name, importance_score, content_count, dedup_status
             )
-            VALUES (gen_random_uuid(), #{canonicalName}, #{importanceScore}, 1)
-            ON CONFLICT (canonical_name)
-            DO UPDATE SET
-                content_count = events.content_count + 1,
-                importance_score = GREATEST(events.importance_score, #{importanceScore}),
-                updated_at = NOW()
+            VALUES (gen_random_uuid(), #{canonicalName}, #{importanceScore}, 1, 'pending')
             """)
-    int upsertByCanonicalName(@Param("canonicalName") String canonicalName,
-                              @Param("importanceScore") BigDecimal importanceScore);
+    int insertEntity(@Param("canonicalName") String canonicalName,
+                     @Param("importanceScore") BigDecimal importanceScore);
+
+    @Select("SELECT COUNT(*) FROM events WHERE dedup_status = #{dedupStatus}")
+    long countByDedupStatus(@Param("dedupStatus") String dedupStatus);
 
     @Select("SELECT EXISTS(SELECT 1 FROM events WHERE id = #{id})")
     boolean existsById(@Param("id") UUID id);

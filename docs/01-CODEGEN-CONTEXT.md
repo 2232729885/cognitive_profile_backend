@@ -145,14 +145,14 @@ raw_payload JSONB · created_at
 ### persons / organizations / events（三表结构高度相似，精简字段）
 ```
 persons:        id · canonical_name VARCHAR(512) NOT NULL · importance_score NUMERIC(5,2) NOT NULL DEFAULT 0
-                 is_high_value BOOLEAN NOT NULL DEFAULT FALSE · content_count INTEGER NOT NULL DEFAULT 0
+                 is_high_value BOOLEAN NOT NULL DEFAULT FALSE · content_count INTEGER NOT NULL DEFAULT 0 · dedup_status
                  first_seen_at · last_seen_at · merge_history UUID[] · created_at · updated_at
 
 organizations:  id · canonical_name · org_type VARCHAR(64) · country VARCHAR(64)
-                 importance_score · is_high_value · content_count · merge_history · created_at · updated_at
+                 importance_score · is_high_value · content_count · dedup_status · merge_history · created_at · updated_at
 
 events:         id · canonical_name · event_type VARCHAR(64) · occurred_at_start · occurred_at_end · country VARCHAR(64)
-                 importance_score · content_count · merge_history · created_at · updated_at
+                 importance_score · content_count · dedup_status · merge_history · created_at · updated_at
 ```
 **枚举值：**
 - `org_type`: `government` | `media` | `ngo` | `political_party` | `military` | `company` | `other`
@@ -162,7 +162,7 @@ events:         id · canonical_name · event_type VARCHAR(64) · occurred_at_st
 ```
 id UUID PK · canonical_label VARCHAR(512) NOT NULL · frame_type VARCHAR(64)
 lifecycle_state VARCHAR(32) NOT NULL DEFAULT'emerging' · content_count INTEGER NOT NULL DEFAULT 0 · account_count INTEGER NOT NULL DEFAULT 0
-importance_score NUMERIC(5,2) NOT NULL DEFAULT 0 · is_active BOOLEAN NOT NULL DEFAULT TRUE
+importance_score NUMERIC(5,2) NOT NULL DEFAULT 0 · is_active BOOLEAN NOT NULL DEFAULT TRUE · dedup_status
 first_detected_at · peak_at · merge_history UUID[] · claim_atoms JSONB NOT NULL DEFAULT'[]'
 created_at · updated_at
 ```
@@ -340,9 +340,7 @@ function runT2(task):
     response = agentProxyClient.callT2(mc.bodyText, mc.entitiesHint, mc.narrativeHint,
                                          mc.hashtags, mc.mentions, mc.parentContentId, mc.repostOfContentId)
     for each entity in response.entities:
-        upsertEntity(entity)  // persons/organizations/events/narratives 精简字段 INSERT or UPDATE，content_count+1
-        if entity.type == 'person' and entity.matchedAccountId:
-            socialAccountMapper.update(entity.matchedAccountId, {entityPersonId: entity.id})
+        insertEntity(entity)  // persons/organizations/events/narratives 精简字段直接 INSERT，dedup_status='pending'
     if mc.authorAccountId is null and response.resolvedAuthorAccountId:
         mediaContentMapper.update(mc.id, {authorAccountId: response.resolvedAuthorAccountId})
     rawRecordMapper.update(task.rawRecordId, {t2Output: response.raw, pipelineStatus: 'T2_DONE'})
@@ -351,11 +349,9 @@ function runT2(task):
 
 function runT3(task):
     response = agentProxyClient.callT3(t2Output实体列表)
-    for each mergeOp in response.entityMerges:
-        // 实体归一：合并多个实体为一个，记录merge_history（这是正常归一，要保留）
-        entityMapper.update(mergeOp.survivorId, {mergeHistory: append(existing, mergeOp.mergedIds)})
+    // T3 融合决策已改为后台定时任务（EntityDeduplicationJob）批量处理，不在写入时实时融合。
+    // T3 仍然负责写 Neo4j 节点和关系，但不再负责 PG 实体记录的归一合并。
     neo4jClient.mergeNodesAndRelations(response.nodes, response.relations)
-        // 注意：字段冲突时新值直接覆盖旧值（SET），不暂存不审核，这和上面的merge_history是两件不同的事
     rawRecordMapper.update(task.rawRecordId, {t3Output: response.raw, pipelineStatus: 'T3_DONE'})
     pipelineTaskMapper.update(task.id, {t3Status:'done', t3DurationMs: elapsed})
 
@@ -467,6 +463,8 @@ function handleCollectionTask(kafkaMessage):
 ```
 
 ### 3.6 画像生成（定时任务，与入库流程完全独立，不是用户触发）
+
+EntityDeduplicationJob：实体去重融合（batch/dedup/），扫描 dedup_status='pending' 的实体，提交融合服务判断，执行 PG 记录合并和 Neo4j 节点合并。当前为占位实现，融合算法待算法组提供后实现。
 
 ```
 function generatePersonProfilesJob():

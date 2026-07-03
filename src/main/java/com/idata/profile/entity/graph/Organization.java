@@ -27,6 +27,7 @@ public class Organization {
     private java.math.BigDecimal importanceScore;
     private Boolean isHighValue;
     private Integer contentCount;
+    private String dedupStatus;
     private UUID[] mergeHistory;
 
     private OffsetDateTime createdAt;

@@ -28,6 +28,7 @@ public class Event {
     private String country;
     private java.math.BigDecimal importanceScore;
     private Integer contentCount;
+    private String dedupStatus;
     private UUID[] mergeHistory;
 
     private OffsetDateTime createdAt;

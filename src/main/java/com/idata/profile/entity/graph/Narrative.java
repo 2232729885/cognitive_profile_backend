@@ -25,6 +25,7 @@ public class Narrative {
     private Integer accountCount;
     private BigDecimal importanceScore;
     private Boolean isActive;
+    private String dedupStatus;
 
     private OffsetDateTime firstDetectedAt;
     private OffsetDateTime peakAt;

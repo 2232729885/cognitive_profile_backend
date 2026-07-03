@@ -28,18 +28,18 @@ public interface PersonMapper extends BaseMapper<Person> {
     @Insert("""
             INSERT INTO persons (
                 id, canonical_name, importance_score, is_high_value,
-                content_count, first_seen_at, last_seen_at
+                content_count, dedup_status, first_seen_at, last_seen_at
             )
-            VALUES (gen_random_uuid(), #{canonicalName}, #{importanceScore}, FALSE, 1, NOW(), NOW())
-            ON CONFLICT (canonical_name)
-            DO UPDATE SET
-                content_count = persons.content_count + 1,
-                last_seen_at = NOW(),
-                importance_score = GREATEST(persons.importance_score, #{importanceScore}),
-                updated_at = NOW()
+            VALUES (
+                gen_random_uuid(), #{canonicalName}, #{importanceScore},
+                FALSE, 1, 'pending', NOW(), NOW()
+            )
             """)
-    int upsertByCanonicalName(@Param("canonicalName") String canonicalName,
-                              @Param("importanceScore") BigDecimal importanceScore);
+    int insertEntity(@Param("canonicalName") String canonicalName,
+                     @Param("importanceScore") BigDecimal importanceScore);
+
+    @Select("SELECT COUNT(*) FROM persons WHERE dedup_status = #{dedupStatus}")
+    long countByDedupStatus(@Param("dedupStatus") String dedupStatus);
 
     @Select("SELECT id FROM persons WHERE canonical_name = #{canonicalName} LIMIT 1")
     UUID selectIdByCanonicalName(@Param("canonicalName") String canonicalName);

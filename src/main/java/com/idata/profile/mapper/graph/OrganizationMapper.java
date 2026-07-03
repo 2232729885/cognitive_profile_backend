@@ -16,17 +16,15 @@ public interface OrganizationMapper extends BaseMapper<Organization> {
 
     @Insert("""
             INSERT INTO organizations (
-                id, canonical_name, importance_score, is_high_value, content_count
+                id, canonical_name, importance_score, is_high_value, content_count, dedup_status
             )
-            VALUES (gen_random_uuid(), #{canonicalName}, #{importanceScore}, FALSE, 1)
-            ON CONFLICT (canonical_name)
-            DO UPDATE SET
-                content_count = organizations.content_count + 1,
-                importance_score = GREATEST(organizations.importance_score, #{importanceScore}),
-                updated_at = NOW()
+            VALUES (gen_random_uuid(), #{canonicalName}, #{importanceScore}, FALSE, 1, 'pending')
             """)
-    int upsertByCanonicalName(@Param("canonicalName") String canonicalName,
-                              @Param("importanceScore") BigDecimal importanceScore);
+    int insertEntity(@Param("canonicalName") String canonicalName,
+                     @Param("importanceScore") BigDecimal importanceScore);
+
+    @Select("SELECT COUNT(*) FROM organizations WHERE dedup_status = #{dedupStatus}")
+    long countByDedupStatus(@Param("dedupStatus") String dedupStatus);
 
     @Select("SELECT EXISTS(SELECT 1 FROM organizations WHERE id = #{id})")
     boolean existsById(@Param("id") UUID id);

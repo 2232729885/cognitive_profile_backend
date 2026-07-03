@@ -48,8 +48,8 @@ public class SocialAccount {
     private String accountType;         // T1标注: official|media|kol|normal|bot|cyborg
     private java.math.BigDecimal accountTypeConfidence;
 
-    private UUID entityPersonId;        // T3归一后回填
-    private UUID entityOrgId;           // T3归一后回填
+    private UUID entityPersonId;        // EntityDeduplicationJob融合后回填
+    private UUID entityOrgId;           // EntityDeduplicationJob融合后回填
 
     private OffsetDateTime latestSnapshotAt;
     private OffsetDateTime firstSeenAt;
