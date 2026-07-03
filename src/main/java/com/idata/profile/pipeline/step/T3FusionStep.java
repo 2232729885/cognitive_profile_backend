@@ -24,7 +24,7 @@ import tools.jackson.core.JacksonException;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.ObjectMapper;
 
-import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -66,6 +66,7 @@ public class T3FusionStep {
         mergeNodes(response.getNodes());
         mergeRelations(response.getRelations(), labelsByNodeId);
         linkAuthorAccount(task, response);
+        writeMediaContentToNeo4j(task);
         appendMergeHistory(response.getEntityMerges());
 
         rawRecord.setT3Output(response.getRaw());
@@ -230,6 +231,146 @@ public class T3FusionStep {
                     "AMPLIFIES",
                     Map.of("frequency", 1, "confidence", 0.80D, "source", "t3_author_link",
                             "extraction_method", "author_field_lookup"));
+        }
+    }
+
+    private void writeMediaContentToNeo4j(PipelineTask task) {
+        try {
+            MediaContent content = mediaContentMapper.selectById(task.getContentId());
+            if (content == null) {
+                log.debug("Skip structural MediaContent Neo4j write because content was not found, taskId={}",
+                        task.getId());
+                return;
+            }
+
+            mergeMediaContentNode(content);
+
+            if (content.getAuthorAccountId() != null) {
+                mergeSocialAccountNode(content.getAuthorAccountId());
+                neo4jGraphService.mergeRelation(
+                        "SocialAccount", content.getAuthorAccountId().toString(),
+                        "MediaContent", content.getId().toString(),
+                        "AUTHORED",
+                        Map.of("source", "backend_structural",
+                                "extraction_method", "author_field_lookup"));
+            }
+
+            writePropagationRelation(content, content.getParentContentId(), "REPLY_TO");
+            writePropagationRelation(content, content.getRepostOfContentId(), "REPOSTS");
+            writePropagationRelation(content, content.getQuotedContentId(), "QUOTES");
+            if (!sameContentId(content.getRootContentId(), content.getPlatformContentId())) {
+                writePropagationRelation(content, content.getRootContentId(), "REPLY_TO");
+            }
+
+            writeHashtagNarratives(content);
+        } catch (Exception e) {
+            log.warn("Structural MediaContent Neo4j write failed, taskId={}, contentId={}",
+                    task.getId(), task.getContentId(), e);
+        }
+    }
+
+    private void writePropagationRelation(MediaContent content, String targetPlatformContentId, String relationType) {
+        if (!hasText(content.getPlatform()) || !hasText(targetPlatformContentId)) {
+            return;
+        }
+
+        try {
+            MediaContent target = mediaContentMapper.selectByPlatformAndContentId(
+                    content.getPlatform(), targetPlatformContentId.trim());
+            if (target == null) {
+                log.debug("Skip {} relation because target content was not found, contentId={}, platform={}, "
+                                + "targetPlatformContentId={}",
+                        relationType, content.getId(), content.getPlatform(), targetPlatformContentId);
+                return;
+            }
+            mergeMediaContentNode(target);
+            neo4jGraphService.mergeRelation(
+                    "MediaContent", content.getId().toString(),
+                    "MediaContent", target.getId().toString(),
+                    relationType,
+                    Map.of("source", "backend_structural",
+                            "extraction_method", "propagation_chain_field"));
+        } catch (Exception e) {
+            log.warn("Failed to write propagation relation to Neo4j, contentId={}, relationType={}, "
+                            + "targetPlatformContentId={}",
+                    content.getId(), relationType, targetPlatformContentId, e);
+        }
+    }
+
+    private void writeHashtagNarratives(MediaContent content) {
+        String[] hashtags = content.getHashtags();
+        if (hashtags == null || hashtags.length == 0) {
+            return;
+        }
+
+        for (String rawHashtag : hashtags) {
+            if (!hasText(rawHashtag)) {
+                continue;
+            }
+            String hashtag = rawHashtag.trim();
+            try {
+                String narrativeId = UUID.nameUUIDFromBytes(
+                        ("hashtag:" + hashtag).getBytes(StandardCharsets.UTF_8)).toString();
+                neo4jGraphService.mergeNode("Narrative", narrativeId,
+                        Map.of("canonicalLabel", hashtag,
+                                "source", "backend_structural",
+                                "frameType", "hashtag"));
+                neo4jGraphService.mergeRelation(
+                        "MediaContent", content.getId().toString(),
+                        "Narrative", narrativeId,
+                        "AMPLIFIES",
+                        Map.of("source", "backend_structural",
+                                "extraction_method", "hashtag_field"));
+            } catch (Exception e) {
+                log.warn("Failed to write hashtag narrative to Neo4j, contentId={}, hashtag={}",
+                        content.getId(), hashtag, e);
+            }
+        }
+    }
+
+    private void mergeMediaContentNode(MediaContent content) {
+        Map<String, Object> contentProps = new HashMap<>();
+        putIfHasText(contentProps, "platform", content.getPlatform());
+        putIfHasText(contentProps, "contentType", content.getContentType());
+        putIfHasText(contentProps, "language", content.getLanguage());
+        putIfHasText(contentProps, "platformContentId", content.getPlatformContentId());
+        putIfNotNull(contentProps, "publishedAt",
+                content.getPublishedAt() != null ? content.getPublishedAt().toString() : null);
+        putIfHasText(contentProps, "url", content.getUrl());
+        putIfHasText(contentProps, "topicCategory", content.getTopicCategory());
+        putIfHasText(contentProps, "sentimentLabel", content.getSentimentLabel());
+        putIfNotNull(contentProps, "aigcScore",
+                content.getAigcScore() != null ? content.getAigcScore().doubleValue() : null);
+        contentProps.put("source", "backend_structural");
+        neo4jGraphService.mergeNode("MediaContent", content.getId().toString(), contentProps);
+    }
+
+    private void mergeSocialAccountNode(UUID accountId) {
+        SocialAccount account = socialAccountMapper.selectById(accountId);
+        Map<String, Object> accountProps = new HashMap<>();
+        if (account != null) {
+            putIfHasText(accountProps, "platform", account.getPlatform());
+            putIfHasText(accountProps, "platformUserId", account.getPlatformUserId());
+            putIfHasText(accountProps, "handle", account.getHandle());
+            putIfHasText(accountProps, "displayName", account.getDisplayName());
+        }
+        accountProps.put("source", "backend_structural");
+        neo4jGraphService.mergeNode("SocialAccount", accountId.toString(), accountProps);
+    }
+
+    private boolean sameContentId(String left, String right) {
+        return hasText(left) && hasText(right) && left.trim().equals(right.trim());
+    }
+
+    private void putIfHasText(Map<String, Object> target, String key, String value) {
+        if (hasText(value)) {
+            target.put(key, value);
+        }
+    }
+
+    private void putIfNotNull(Map<String, Object> target, String key, Object value) {
+        if (value != null) {
+            target.put(key, value);
         }
     }
 
