@@ -217,17 +217,19 @@ public class T3FusionStep {
 
         neo4jGraphService.mergeNode("SocialAccount", account.getId().toString(), accountProps);
         neo4jGraphService.mergeRelation(
-                "SocialAccount", account.getId().toString(),
                 "Person", personId,
-                "OPERATED_BY",
-                Map.of("confidence", 0.95D, "source", "t3_author_link"));
+                "SocialAccount", account.getId().toString(),
+                "HAS_ACCOUNT",
+                Map.of("confidence", 0.95D, "source", "t3_author_link",
+                        "extraction_method", "author_field_lookup"));
 
         if (hasText(narrativeId)) {
             neo4jGraphService.mergeRelation(
                     "SocialAccount", account.getId().toString(),
                     "Narrative", narrativeId,
-                    "PARTICIPATES_IN_NARRATIVE",
-                    Map.of("frequency", 1, "confidence", 0.80D, "source", "t3_author_link"));
+                    "AMPLIFIES",
+                    Map.of("frequency", 1, "confidence", 0.80D, "source", "t3_author_link",
+                            "extraction_method", "author_field_lookup"));
         }
     }
 

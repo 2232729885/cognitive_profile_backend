@@ -76,7 +76,7 @@ public class Neo4jGraphService {
 
     public List<UUID> findSocialAccountIdsByNarrative(UUID narrativeId) {
         String cypher = """
-                MATCH (a:SocialAccount)-[:PARTICIPATES_IN_NARRATIVE]->(n:Narrative {id: $narrativeId})
+                MATCH (a:SocialAccount)-[:AMPLIFIES]->(n:Narrative {id: $narrativeId})
                 RETURN a.id AS accountId
                 """;
         return neo4jClient.query(cypher)

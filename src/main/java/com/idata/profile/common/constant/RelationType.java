@@ -1,16 +1,16 @@
 package com.idata.profile.common.constant;
 
 /**
- * account_relations.relation_type。
- * 课题三直接交付的事实关系，confidence 默认 1.0，
- * 区别于 T6 推断的协同关系（COORDINATES_WITH，写入Neo4j时 detected_by='T6'）。
+ * account_relations.relation_type mapping.
+ * The code field is the original relation string from KT3 Kafka messages and must not be changed.
+ * All Neo4j relation labels come from the RZDK relationships.py RelationType enum vocabulary.
  */
 public enum RelationType {
     FOLLOWING("following", "FOLLOWS"),
-    SUBSCRIBE("subscribe", "SUBSCRIBES_TO"),
-    MEMBER_OF("member_of", "MEMBER_OF_GROUP"),
-    OWNER_OF("owner_of", "OWNER_OF"),
-    CREATOR_OF("creator_of", "OWNER_OF"),
+    SUBSCRIBE("subscribe", "MEMBER_OF"),
+    MEMBER_OF("member_of", "MEMBER_OF"),
+    OWNER_OF("owner_of", "OWNS"),
+    CREATOR_OF("creator_of", "OWNS"),
     ADMIN_OF("admin_of", "ADMIN_OF"),
     MODERATOR_OF("moderator_of", "ADMIN_OF");
 
@@ -26,7 +26,6 @@ public enum RelationType {
         return code;
     }
 
-    /** 回填批处理写入 Neo4j 时使用的关系标签，见 batch.relation.AccountRelationBackfillJob */
     public String getNeo4jRelationLabel() {
         return neo4jRelationLabel;
     }
@@ -37,6 +36,6 @@ public enum RelationType {
                 return type;
             }
         }
-        throw new IllegalArgumentException("未知的 relation_type: " + code);
+        throw new IllegalArgumentException("Unknown relation_type: " + code);
     }
 }

@@ -111,6 +111,8 @@
 
 ## 3. T3 信息融合
 
+所有 `relationType` 字段的值必须来自 RZDK `relationships.py` 的 `RelationType` 枚举词表（共 36 种），不允许自定义关系类型。
+
 **Action**: `fuse_entities`
 **完整路径**: `POST /mock/t3/fuse_entities`
 **对应DTO**: `agentproxy.dto.t3.T3FuseRequest` / `T3FuseResponse`

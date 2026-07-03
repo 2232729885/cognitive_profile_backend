@@ -420,7 +420,7 @@ function backfillAccountRelationUuidJob():
         // WHERE from_account_id IS NOT NULL AND to_account_id IS NOT NULL AND synced_to_neo4j = FALSE
     for each rel in readyRelations:
         neo4jRelationType = mapRelationType(rel.relationType)
-            // following→FOLLOWS, subscribe→SUBSCRIBES_TO, member_of→MEMBER_OF_GROUP, admin_of→ADMIN_OF, owner_of→OWNER_OF
+            // following→FOLLOWS, subscribe→MEMBER_OF, member_of→MEMBER_OF, admin_of→ADMIN_OF, owner_of→OWNS
         neo4jClient.mergeRelation(rel.fromAccountId, rel.toAccountId, neo4jRelationType,
                                     {observedAt: rel.observedAt, confidence: 1.0, source: rel.source})
         accountRelationMapper.markSyncedToNeo4j(rel.id)

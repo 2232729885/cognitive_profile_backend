@@ -87,6 +87,8 @@ public class MockAgentController {
 
     @PostMapping("/mock/t3/fuse_entities")
     public T3FuseResponse fuseEntities(@RequestBody T3FuseRequest request) {
+        // All relation types must come from the RZDK relationships.py RelationType enum.
+        // Real T3 integrations must use the same vocabulary.
         log.info("[MOCK-T3] fuse_entities, entityRefs={}",
                 request.getEntities() != null ? request.getEntities().size() : 0);
 
@@ -136,7 +138,7 @@ public class MockAgentController {
         T3FuseResponse.Neo4jRelation participates = new T3FuseResponse.Neo4jRelation();
         participates.setFromId(personId);
         participates.setToId(narrativeId);
-        participates.setRelationType("PARTICIPATES_IN_NARRATIVE");
+        participates.setRelationType("AMPLIFIES");
         participates.setProperties(Map.of("frequency", 12, "confidence", 0.85, "source", "mock-t3"));
 
         T3FuseResponse.Neo4jRelation affiliated = new T3FuseResponse.Neo4jRelation();
@@ -148,7 +150,7 @@ public class MockAgentController {
         T3FuseResponse.Neo4jRelation promotes = new T3FuseResponse.Neo4jRelation();
         promotes.setFromId(organizationId);
         promotes.setToId(narrativeId);
-        promotes.setRelationType("PROMOTES_NARRATIVE");
+        promotes.setRelationType("SUPPORTS");
         promotes.setProperties(Map.of("confidence", 0.82, "source", "mock-t3"));
 
         T3FuseResponse resp = new T3FuseResponse();
@@ -205,7 +207,7 @@ public class MockAgentController {
         resp.setTargetEvidence("mock evidence");
         resp.setHiddenRelations(List.of(Map.of(
                 "targetId", UUID.randomUUID().toString(),
-                "relationType", "latent_subordination",
+                "relationType", "POTENTIAL_SUBORDINATE_TO",
                 "confidence", 0.63
         )));
         resp.setManipulationRisk("high");
