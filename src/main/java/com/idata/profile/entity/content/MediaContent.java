@@ -78,6 +78,7 @@ public class MediaContent {
     private String narrativeHint;
     private Boolean needHumanReview;
     private String humanReviewStatus;
+    private Boolean propagationSyncedToNeo4j;
 
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;

@@ -255,11 +255,15 @@ public class T3FusionStep {
                                 "extraction_method", "author_field_lookup"));
             }
 
-            writePropagationRelation(content, content.getParentContentId(), "REPLY_TO");
-            writePropagationRelation(content, content.getRepostOfContentId(), "REPOSTS");
-            writePropagationRelation(content, content.getQuotedContentId(), "QUOTES");
+            boolean allSynced = true;
+            allSynced &= writePropagationRelation(content, content.getParentContentId(), "REPLY_TO");
+            allSynced &= writePropagationRelation(content, content.getRepostOfContentId(), "REPOSTS");
+            allSynced &= writePropagationRelation(content, content.getQuotedContentId(), "QUOTES");
             if (!sameContentId(content.getRootContentId(), content.getPlatformContentId())) {
-                writePropagationRelation(content, content.getRootContentId(), "REPLY_TO");
+                allSynced &= writePropagationRelation(content, content.getRootContentId(), "REPLY_TO");
+            }
+            if (allSynced) {
+                mediaContentMapper.markPropagationSyncedToNeo4j(content.getId());
             }
 
             writeHashtagNarratives(content);
@@ -269,9 +273,14 @@ public class T3FusionStep {
         }
     }
 
-    private void writePropagationRelation(MediaContent content, String targetPlatformContentId, String relationType) {
-        if (!hasText(content.getPlatform()) || !hasText(targetPlatformContentId)) {
-            return;
+    private boolean writePropagationRelation(MediaContent content, String targetPlatformContentId, String relationType) {
+        if (!hasText(targetPlatformContentId)) {
+            return true;
+        }
+        if (!hasText(content.getPlatform())) {
+            log.debug("Skip {} relation because platform is empty, contentId={}, targetPlatformContentId={}",
+                    relationType, content.getId(), targetPlatformContentId);
+            return false;
         }
 
         try {
@@ -281,7 +290,7 @@ public class T3FusionStep {
                 log.debug("Skip {} relation because target content was not found, contentId={}, platform={}, "
                                 + "targetPlatformContentId={}",
                         relationType, content.getId(), content.getPlatform(), targetPlatformContentId);
-                return;
+                return false;
             }
             mergeMediaContentNode(target);
             neo4jGraphService.mergeRelation(
@@ -290,10 +299,12 @@ public class T3FusionStep {
                     relationType,
                     Map.of("source", "backend_structural",
                             "extraction_method", "propagation_chain_field"));
+            return true;
         } catch (Exception e) {
             log.warn("Failed to write propagation relation to Neo4j, contentId={}, relationType={}, "
                             + "targetPlatformContentId={}",
                     content.getId(), relationType, targetPlatformContentId, e);
+            return false;
         }
     }
 

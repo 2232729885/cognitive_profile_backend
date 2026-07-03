@@ -168,6 +168,7 @@ CREATE TABLE IF NOT EXISTS media_contents (
     narrative_hint          TEXT,
     need_human_review       BOOLEAN     NOT NULL DEFAULT FALSE,
     human_review_status     VARCHAR(32),
+    propagation_synced_to_neo4j BOOLEAN NOT NULL DEFAULT FALSE,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -220,6 +221,7 @@ COMMENT ON COLUMN media_contents.entities_hint        IS 'T1输出给T2的实体
 COMMENT ON COLUMN media_contents.narrative_hint       IS 'T1输出给T2的叙事线索文本';
 COMMENT ON COLUMN media_contents.need_human_review    IS 'T1判断是否需要人工复核，aigc_score>0.8时自动置true';
 COMMENT ON COLUMN media_contents.human_review_status  IS '人工复核状态：pending | confirmed | modified | rejected';
+COMMENT ON COLUMN media_contents.propagation_synced_to_neo4j IS '传播链关系是否已同步到Neo4j。对端内容尚未入库时保持false，由ContentPropagationBackfillJob后续回填';
 
 CREATE INDEX IF NOT EXISTS idx_mc_platform     ON media_contents(platform);
 CREATE INDEX IF NOT EXISTS idx_mc_published    ON media_contents(published_at DESC);
@@ -231,6 +233,9 @@ CREATE INDEX IF NOT EXISTS idx_mc_raw          ON media_contents(raw_record_id);
 CREATE INDEX IF NOT EXISTS idx_mc_aigc         ON media_contents(aigc_score DESC) WHERE aigc_score > 0.5;
 CREATE INDEX IF NOT EXISTS idx_mc_review       ON media_contents(need_human_review) WHERE need_human_review = TRUE;
 CREATE INDEX IF NOT EXISTS idx_mc_hashtags     ON media_contents USING GIN(hashtags);
+CREATE INDEX IF NOT EXISTS idx_mc_pending_propagation_sync
+    ON media_contents(propagation_synced_to_neo4j)
+    WHERE propagation_synced_to_neo4j = FALSE;
 
 CREATE TRIGGER trg_media_contents_updated_at
   BEFORE UPDATE ON media_contents
