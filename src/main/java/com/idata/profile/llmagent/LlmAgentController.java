@@ -21,6 +21,8 @@ import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.openai.OpenAiChatModel;
+import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -304,11 +306,7 @@ public class LlmAgentController {
         String userPrompt = buildT1UserPrompt(request);
 
         try {
-            String raw = chatClient.prompt()
-                    .system(T1_SYSTEM_PROMPT)
-                    .user(userPrompt)
-                    .call()
-                    .content();
+            String raw = callJsonLlm(T1_SYSTEM_PROMPT, userPrompt);
 
             T1AnnotateResponse response = parseT1Response(raw);
             response.setProcessedAt(java.time.OffsetDateTime.now().toString());
@@ -332,11 +330,7 @@ public class LlmAgentController {
         String userPrompt = buildT2UserPrompt(request);
 
         try {
-            String raw = chatClient.prompt()
-                    .system(T2_SYSTEM_PROMPT)
-                    .user(userPrompt)
-                    .call()
-                    .content();
+            String raw = callJsonLlm(T2_SYSTEM_PROMPT, userPrompt);
 
             T2ExtractResponse response = parseT2Response(raw);
             filterUnsupportedRelationships(response);
@@ -356,11 +350,7 @@ public class LlmAgentController {
 
         String userPrompt = buildT3UserPrompt(request);
         try {
-            String raw = chatClient.prompt()
-                    .system(T3_SYSTEM_PROMPT)
-                    .user(userPrompt)
-                    .call()
-                    .content();
+            String raw = callJsonLlm(T3_SYSTEM_PROMPT, userPrompt);
 
             T3ResolveResponse response = parseT3Response(raw, request);
             return response;
@@ -390,11 +380,7 @@ public class LlmAgentController {
 
         String context = buildPersonContext(request.getTargetId());
         try {
-            String raw = chatClient.prompt()
-                    .system(T5_SYSTEM_PROMPT)
-                    .user("请根据以下上下文生成人物画像：\n\n" + context)
-                    .call()
-                    .content();
+            String raw = callJsonLlm(T5_SYSTEM_PROMPT, "请根据以下上下文生成人物画像：\n\n" + context);
 
             return parseT5Response(raw);
         } catch (Exception e) {
@@ -413,11 +399,7 @@ public class LlmAgentController {
 
         String userPrompt = buildT6UserPrompt(request);
         try {
-            String raw = chatClient.prompt()
-                    .system(T6_SYSTEM_PROMPT)
-                    .user(userPrompt)
-                    .call()
-                    .content();
+            String raw = callJsonLlm(T6_SYSTEM_PROMPT, userPrompt);
 
             T6IdentifyResponse response = parseT6Response(raw, request);
             normalizeT6Summary(response, request, startedAt);
@@ -532,6 +514,34 @@ public class LlmAgentController {
         resp.setRelationships(List.of());
         resp.setEvents(List.of());
         return resp;
+    }
+
+    private String callJsonLlm(String systemPrompt, String userPrompt) {
+        return chatClient.prompt()
+                .options(jsonOnlyOptions())
+                .system(systemPrompt + """
+
+                        硬性输出约束：
+                        - 只输出一个合法 JSON 对象。
+                        - 不要输出“首先”“下面”“分析”“解释”等自然语言前缀。
+                        - 不要输出 <think>、推理过程、markdown、代码块。
+                        - 如果信息不足，也必须按指定 JSON 结构填默认值或空数组。
+                        """)
+                .user(userPrompt)
+                .call()
+                .content();
+    }
+
+    private OpenAiChatOptions.Builder jsonOnlyOptions() {
+        return OpenAiChatOptions.builder()
+                .temperature(0.1)
+                .responseFormat(OpenAiChatModel.ResponseFormat.builder()
+                        .type(OpenAiChatModel.ResponseFormat.Type.JSON_OBJECT)
+                        .build())
+                .extraBody(Map.of(
+                        "enable_thinking", false,
+                        "chat_template_kwargs", Map.of("enable_thinking", false)
+                ));
     }
 
     private String buildT3UserPrompt(T3ResolveRequest request) {
@@ -1008,13 +1018,70 @@ public class LlmAgentController {
     }
 
     private String cleanJson(String raw) {
-        String json = raw.trim();
-        if (json.startsWith("```")) {
-            json = json.replaceFirst("^```[\\w-]*\\s*", "")
+        if (raw == null) {
+            return "";
+        }
+        String text = raw.trim()
+                .replaceFirst("(?s)^\\s*<think>.*?</think>\\s*", "")
+                .trim();
+        if (text.startsWith("```")) {
+            text = text.replaceFirst("^```[\\w-]*\\s*", "")
                     .replaceFirst("\\s*```$", "")
                     .trim();
         }
-        return json;
+
+        int objectStart = text.indexOf('{');
+        int arrayStart = text.indexOf('[');
+        int start;
+        char open;
+        char close;
+        if (objectStart >= 0 && (arrayStart < 0 || objectStart < arrayStart)) {
+            start = objectStart;
+            open = '{';
+            close = '}';
+        } else if (arrayStart >= 0) {
+            start = arrayStart;
+            open = '[';
+            close = ']';
+        } else {
+            return text;
+        }
+
+        int end = findJsonEnd(text, start, open, close);
+        return end >= start ? text.substring(start, end + 1).trim() : text.substring(start).trim();
+    }
+
+    private int findJsonEnd(String text, int start, char open, char close) {
+        int depth = 0;
+        boolean inString = false;
+        boolean escaped = false;
+        for (int i = start; i < text.length(); i++) {
+            char ch = text.charAt(i);
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (ch == '\\') {
+                escaped = inString;
+                continue;
+            }
+            if (ch == '"') {
+                inString = !inString;
+                continue;
+            }
+            if (inString) {
+                continue;
+            }
+            if (ch == open) {
+                depth++;
+            } else if (ch == close) {
+                depth--;
+                if (depth == 0) {
+                    return i;
+                }
+            }
+        }
+        return -1;
     }
 
     private boolean hasText(String value) {
@@ -1053,7 +1120,7 @@ public class LlmAgentController {
                     timeoutCause.getClass().getSimpleName(), timeoutCause.getMessage());
             return;
         }
-        log.error(message, e);
+        log.warn("{}, reason={}: {}", message, e.getClass().getSimpleName(), e.getMessage());
     }
 
     private Throwable findTimeoutCause(Throwable throwable) {
