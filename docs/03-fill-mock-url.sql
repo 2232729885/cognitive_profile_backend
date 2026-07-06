@@ -32,3 +32,11 @@ INSERT INTO sub_agent_registry (
 SELECT agent_code, active_url_type, mock_url, timeout_seconds, is_active
 FROM sub_agent_registry
 ORDER BY agent_code;
+
+-- 切换 T1/T2 为本地大模型版本（Qwen3-VL-32B）
+-- 执行以下 SQL 后重启项目即可，无需改代码：
+-- UPDATE sub_agent_registry SET mock_url = 'http://localhost:8080/llm/t1', active_url_type = 'mock' WHERE agent_code = 'T1';
+-- UPDATE sub_agent_registry SET mock_url = 'http://localhost:8080/llm/t2', active_url_type = 'mock' WHERE agent_code = 'T2';
+-- 切换回固定 Mock 数据：
+-- UPDATE sub_agent_registry SET mock_url = 'http://localhost:8080/mock/t1' WHERE agent_code = 'T1';
+-- UPDATE sub_agent_registry SET mock_url = 'http://localhost:8080/mock/t2' WHERE agent_code = 'T2';
