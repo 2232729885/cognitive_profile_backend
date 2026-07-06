@@ -109,7 +109,8 @@ public class SendRealWorldDataset {
             send(producer, KafkaTopicConstants.ACCOUNT_RELATION, accountRelation(
                     crawlTaskId, "telegram", pressTvId, telegramChannelId, "admin_of", "channel_profile", now));
 
-            send(producer, KafkaTopicConstants.SOCIAL_CONTENT, contentPressTvPost(crawlTaskId, pressTvId, postId1, now));
+            send(producer, KafkaTopicConstants.SOCIAL_CONTENT,
+                    contentPressTvPost(crawlTaskId, pressTvId, postId1, assetId1, now));
             send(producer, KafkaTopicConstants.SOCIAL_CONTENT, contentArabicRepost(crawlTaskId, alMayadeenId, pressTvId, postId1, postId2, now));
             send(producer, KafkaTopicConstants.SOCIAL_CONTENT, contentPersianQuote(crawlTaskId, iranianCivilId, pressTvId, postId1, postId3, now));
             send(producer, KafkaTopicConstants.SOCIAL_CONTENT, contentIrgcBot(crawlTaskId, irgcBotId, pressTvId, postId4, now));
@@ -133,7 +134,7 @@ public class SendRealWorldDataset {
             producer.flush();
         }
 
-        printSummary(crawlTaskId, postId1, postId2, postId3, postId5, postId6);
+        printSummary(crawlTaskId, postId1, postId2, postId3, postId5, postId6, assetId1);
         printSelfCheck();
     }
 
@@ -359,12 +360,14 @@ public class SendRealWorldDataset {
                 json(now.toString()), json(source));
     }
 
-    private static String contentPressTvPost(String crawlTaskId, String authorId, String postId, Instant now) {
+    private static String contentPressTvPost(String crawlTaskId, String authorId,
+                                             String postId, String assetId, Instant now) {
         return socialContent(crawlTaskId, "x", "en", postId, authorId, "post",
                 "Iranian naval commanders say patrol units in the Persian Gulf are monitoring US destroyer movements after a disputed cyber incident at a nuclear research site. Officials in Tehran deny any disruption to enrichment work and warn that new sanctions would be met with reciprocal measures. #Iran #PersianGulf #Nuclear",
                 now.minus(3, ChronoUnit.HOURS), postId, null, null, null,
                 new String[]{"Iran", "PersianGulf", "Nuclear"}, new String[]{},
-                8_420L, 1_120L, 640L, 2_980L, 410L, 386_000L);
+                8_420L, 1_120L, 640L, 2_980L, 410L, 386_000L,
+                new String[]{assetId});
     }
 
     private static String contentArabicRepost(String crawlTaskId, String authorId, String mentionId,
@@ -373,7 +376,7 @@ public class SendRealWorldDataset {
                 "التصعيد في الخليج لم يعد خبرا عابرا؛ الرواية الإيرانية تربط الهجوم السيبراني بالعقوبات الأميركية وتتهم إسرائيل بالتحريض.",
                 now.minus(160, ChronoUnit.MINUTES), rootId, null, rootId, null,
                 new String[]{"إيران", "الخليج_الفارسي", "أميركا"}, new String[]{mentionId},
-                2_100L, 340L, 180L, 890L, null, 104_000L);
+                2_100L, 340L, 180L, 890L, null, 104_000L, null);
     }
 
     private static String contentPersianQuote(String crawlTaskId, String authorId, String mentionId,
@@ -382,7 +385,7 @@ public class SendRealWorldDataset {
                 "وقتی تحریم‌ها هر روز شدیدتر می‌شود، مردم عادی هزینه تنش را می‌دهند. درباره حمله سایبری به تأسیسات هسته‌ای هنوز سند روشنی منتشر نشده اما هر طرف آن را به سود روایت خودش استفاده می‌کند. #ایران #تحریم",
                 now.minus(145, ChronoUnit.MINUTES), quotedId, null, null, quotedId,
                 new String[]{"ایران", "تحریم", "خلیج_فارس"}, new String[]{mentionId},
-                930L, 220L, 70L, 310L, 95L, 61_000L);
+                930L, 220L, 70L, 310L, 95L, 61_000L, null);
     }
 
     private static String contentIrgcBot(String crawlTaskId, String authorId, String mentionId,
@@ -391,7 +394,7 @@ public class SendRealWorldDataset {
                 "گشت‌های دریایی ایران هر حرکت ناوهای آمریکا را زیر نظر دارند. حمله سایبری به سایت هسته‌ای شکست خورد و پاسخ مقاومت قطعی است. #ایران #سپاه #خلیج_فارس",
                 now.minus(19, ChronoUnit.HOURS), postId, null, null, null,
                 new String[]{"ایران", "سپاه", "خلیج_فارس"}, new String[]{mentionId},
-                3L, 1L, 0L, 2L, null, 93_000L);
+                3L, 1L, 0L, 2L, null, 93_000L, null);
     }
 
     private static String contentVietnamQuote(String crawlTaskId, String authorId, String rootId,
@@ -400,7 +403,7 @@ public class SendRealWorldDataset {
                 "Căng thẳng Mỹ-Iran tại Vịnh Ba Tư có thể đẩy giá dầu châu Á tăng nhanh. Việt Nam cần theo dõi rủi ro vận tải qua eo biển Hormuz và phản ứng của các hãng bảo hiểm hàng hải.",
                 now.minus(110, ChronoUnit.MINUTES), rootId, null, null, quotedId,
                 new String[]{"Iran", "Hormuz", "dầu_mỏ"}, new String[]{},
-                1_240L, 180L, 96L, 420L, 40L, 78_000L);
+                1_240L, 180L, 96L, 420L, 40L, 78_000L, null);
     }
 
     private static String contentTagalogQuote(String crawlTaskId, String authorId, String rootId,
@@ -409,7 +412,7 @@ public class SendRealWorldDataset {
                 "Kung magsara o maantala ang ruta sa Strait of Hormuz, tataas ang presyo ng langis at maaapektuhan ang remittance budgets ng maraming pamilyang Pilipino sa Gulf.",
                 now.minus(98, ChronoUnit.MINUTES), rootId, null, null, quotedId,
                 new String[]{"Iran", "Gulf", "OFW"}, new String[]{},
-                870L, 140L, 61L, 260L, 28L, 49_000L);
+                870L, 140L, 61L, 260L, 28L, 49_000L, null);
     }
 
     private static String contentIsraelResponse(String crawlTaskId, String authorId, String mentionId,
@@ -418,7 +421,7 @@ public class SendRealWorldDataset {
                 "Israel will continue to monitor threats from Iran's nuclear and missile programs. Claims blaming Israel for every cyber incident are part of Tehran's information campaign, not evidence. #Israel #NuclearDeal #Iran",
                 now.minus(85, ChronoUnit.MINUTES), postId, null, null, null,
                 new String[]{"Israel", "NuclearDeal", "Iran"}, new String[]{mentionId},
-                6_900L, 1_020L, 210L, 1_480L, 360L, 244_000L);
+                6_900L, 1_020L, 210L, 1_480L, 360L, 244_000L, null);
     }
 
     private static String contentTelegramChannel(String crawlTaskId, String authorId, String postId, Instant now) {
@@ -426,7 +429,7 @@ public class SendRealWorldDataset {
                 "گزارش داخلی: مسیرهای دریایی جنوب در آماده‌باش رسانه‌ای است. لینک تحلیل: https://t.me/sepah_field_updates/8821 #خلیج_فارس #مقاومت #جنگ_روایت‌ها",
                 now.minus(70, ChronoUnit.MINUTES), postId, null, null, null,
                 new String[]{"خلیج_فارس", "مقاومت", "جنگ_روایت‌ها"}, new String[]{},
-                4_800L, 610L, 390L, 1_900L, null, 210_000L);
+                4_800L, 610L, 390L, 1_900L, null, 210_000L, null);
     }
 
     private static String contentChineseReport(String crawlTaskId, String authorId, String rootId,
@@ -435,7 +438,7 @@ public class SendRealWorldDataset {
                 "多家媒体称，美伊围绕波斯湾军事部署、核设施网络攻击归因和新一轮制裁展开舆论攻防。市场最关注霍尔木兹海峡航运是否受影响。#美伊冲突 #霍尔木兹海峡",
                 now.minus(62, ChronoUnit.MINUTES), rootId, null, null, null,
                 new String[]{"美伊冲突", "霍尔木兹海峡"}, new String[]{},
-                1_760L, 330L, 120L, 510L, 58L, 88_000L);
+                1_760L, 330L, 120L, 510L, 58L, 88_000L, null);
     }
 
     private static String contentChineseReply(String crawlTaskId, String authorId, String rootId,
@@ -444,7 +447,7 @@ public class SendRealWorldDataset {
                 "现在最需要区分事实、归因和宣传口径。网络攻击是谁做的还没有可靠证据，但各方都在抢叙事主动权。",
                 now.minus(45, ChronoUnit.MINUTES), rootId, parentId, null, null,
                 new String[]{"信息战"}, new String[]{},
-                260L, 42L, 18L, null, null, 12_000L);
+                260L, 42L, 18L, null, null, 12_000L, null);
     }
 
     private static String contentIndonesianQuote(String crawlTaskId, String authorId, String rootId,
@@ -453,7 +456,7 @@ public class SendRealWorldDataset {
                 "Ketegangan AS-Iran di Teluk Persia bukan hanya isu militer. Dampaknya bisa terasa pada harga BBM, biaya logistik, dan sentimen pasar Asia Tenggara.",
                 now.minus(38, ChronoUnit.MINUTES), rootId, null, null, quotedId,
                 new String[]{"Iran", "Hormuz", "Energi"}, new String[]{},
-                690L, 96L, 44L, 180L, 22L, 33_000L);
+                690L, 96L, 44L, 180L, 22L, 33_000L, null);
     }
 
     private static String contentBbcPersianPost(String crawlTaskId, String authorId, String postId, Instant now) {
@@ -461,7 +464,7 @@ public class SendRealWorldDataset {
                 "بی‌بی‌سی فارسی در برنامه امشب به ابهام‌های حمله سایبری منتسب به تأسیسات هسته‌ای ایران، نقش اسرائیل در روایت‌ها و واکنش بازار نفت می‌پردازد.",
                 now.minus(30, ChronoUnit.MINUTES), postId, null, null, null,
                 new String[]{"ایران", "بی‌بی‌سی", "هسته‌ای"}, new String[]{},
-                3_200L, 540L, 180L, 730L, null, 126_000L);
+                3_200L, 540L, 180L, 730L, null, 126_000L, null);
     }
 
     private static String socialContent(String crawlTaskId, String platform, String language,
@@ -471,7 +474,8 @@ public class SendRealWorldDataset {
                                         String repostOfContentId, String quotedContentId,
                                         String[] hashtags, String[] mentions,
                                         Long likeCount, Long commentCount, Long shareCount,
-                                        Long repostCount, Long quoteCount, Long viewCount) {
+                                        Long repostCount, Long quoteCount, Long viewCount,
+                                        String[] mediaAssetIds) {
         return """
                 {
                   "schema_version": "%s",
@@ -497,6 +501,7 @@ public class SendRealWorldDataset {
                     "hashtags": %s,
                     "mentions": %s,
                     "external_urls": ["https://analysis.ft-test.example/us-iran-gulf-2026"],
+                    "media_asset_ids": %s,
                     "metrics": {
                       "like_count": %s,
                       "comment_count": %s,
@@ -512,7 +517,8 @@ public class SendRealWorldDataset {
                 json(contentType), json(bodyText), json(language), json(publishedAt.toString()),
                 json(platform), json(platformContentId), jsonNullable(rootContentId),
                 jsonNullable(parentContentId), jsonNullable(repostOfContentId), jsonNullable(quotedContentId),
-                jsonArray(hashtags), jsonArray(mentions), numberOrNull(likeCount), numberOrNull(commentCount),
+                jsonArray(hashtags), jsonArray(mentions), jsonArray(mediaAssetIds),
+                numberOrNull(likeCount), numberOrNull(commentCount),
                 numberOrNull(shareCount), numberOrNull(repostCount), numberOrNull(quoteCount), numberOrNull(viewCount));
     }
 
@@ -741,7 +747,8 @@ public class SendRealWorldDataset {
     }
 
     private static void printSummary(String crawlTaskId, String postId1, String postId2,
-                                     String postId3, String postId5, String postId6) {
+                                     String postId3, String postId5, String postId6,
+                                     String assetId1) {
         System.out.println("========= 美伊冲突场景测试数据集 发送完成 =========");
         System.out.println("crawlTaskId = " + crawlTaskId);
         System.out.println();
@@ -754,6 +761,10 @@ public class SendRealWorldDataset {
         System.out.println("  └─ postId3 (波斯语引用评论) = " + postId3);
         System.out.println("     └─ postId5 (越南语二次传播) = " + postId5);
         System.out.println("     └─ postId6 (塔加洛语二次传播) = " + postId6);
+        System.out.println();
+        System.out.println("图片资产：assetId1 已关联到 postId1，assetId1 = " + assetId1);
+        System.out.println("可在 Neo4j 里查询：");
+        System.out.println("  MATCH (c:MediaContent)-[:HAS_MEDIA]->(a:MediaAsset) RETURN c, a LIMIT 5");
         System.out.println();
         System.out.println("全局验证SQL:");
         System.out.println("  SELECT language, count(*) FROM raw_records");
