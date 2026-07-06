@@ -43,6 +43,7 @@ public class MediaAsset {
     private java.math.BigDecimal aigcScore;  // T1写入
     private String objectAnnotations;   // T1图像标注：物体检测结果JSON
     private String sceneLabel;          // T1图像标注：场景分类标签
+    private Boolean t1Annotated;        // T1图像标注是否已完成
     private String minioBucket;
     private String minioKey;
     private String embeddingId;         // T4写入，对应Milvus image_embeddings向量ID

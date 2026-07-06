@@ -4,6 +4,7 @@ import com.idata.profile.agentproxy.AgentProxyClient;
 import com.idata.profile.agentproxy.dto.t1.T1AnnotateRequest;
 import com.idata.profile.agentproxy.dto.t1.T1AnnotateResponse;
 import com.idata.profile.common.constant.PipelineStatus;
+import com.idata.profile.common.util.ImageAnnotationUtil;
 import com.idata.profile.entity.content.MediaAsset;
 import com.idata.profile.entity.content.MediaContent;
 import com.idata.profile.entity.raw.RawRecord;
@@ -14,7 +15,6 @@ import com.idata.profile.mapper.raw.RawRecordMapper;
 import com.idata.profile.mapper.task.PipelineTaskMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
@@ -37,9 +37,7 @@ public class T1AnnotationStep {
     private final MediaAssetMapper mediaAssetMapper;
     private final RawRecordMapper rawRecordMapper;
     private final PipelineTaskMapper pipelineTaskMapper;
-
-    @Value("${minio.endpoint}")
-    private String minioEndpoint;
+    private final ImageAnnotationUtil imageAnnotationUtil;
 
     public void run(PipelineTask task) {
         OffsetDateTime startedAt = OffsetDateTime.now();
@@ -135,7 +133,7 @@ public class T1AnnotationStep {
                     continue;
                 }
 
-                String imageUrl = buildImageUrl(asset);
+                String imageUrl = imageAnnotationUtil.buildImageUrl(asset);
                 if (imageUrl == null) {
                     log.warn("[T1] 图片无法构造访问URL, assetId={}", assetId);
                     continue;
@@ -151,63 +149,12 @@ public class T1AnnotationStep {
                     continue;
                 }
 
-                applyImageAnnotations(asset, imageResponse);
+                imageAnnotationUtil.applyImageAnnotations(asset, imageResponse);
+                asset.setT1Annotated(true);
                 mediaAssetMapper.updateById(asset);
             } catch (Exception e) {
                 log.warn("[T1] 图像标注失败, assetId={}", assetId, e);
             }
         }
-    }
-
-    private String buildImageUrl(MediaAsset asset) {
-        if (hasText(asset.getMinioBucket()) && hasText(asset.getMinioKey())) {
-            return stripTrailingSlash(minioEndpoint) + "/" + asset.getMinioBucket() + "/" + asset.getMinioKey();
-        }
-        if (hasText(asset.getSourceUrl())) {
-            return asset.getSourceUrl();
-        }
-        return null;
-    }
-
-    private void applyImageAnnotations(MediaAsset asset, T1AnnotateResponse response) {
-        T1AnnotateResponse.Annotations annotations = response.getAnnotations();
-        if (annotations == null) {
-            return;
-        }
-
-        if (annotations.getTextOcr() != null) {
-            asset.setOcrText(annotations.getTextOcr());
-        }
-
-        if (annotations.getAigcSuspicion() != null) {
-            asset.setAigcScore(toAigcScore(annotations.getAigcSuspicion()));
-        }
-
-        if (annotations.getObjects() != null) {
-            try {
-                asset.setObjectAnnotations(OBJECT_MAPPER.writeValueAsString(annotations.getObjects()));
-            } catch (JacksonException e) {
-                log.warn("Failed to serialize objects annotation, assetId={}", asset.getId(), e);
-            }
-        }
-
-        if (annotations.getScene() != null) {
-            asset.setSceneLabel(annotations.getScene());
-        }
-    }
-
-    private String stripTrailingSlash(String value) {
-        if (value == null) {
-            return "";
-        }
-        String result = value;
-        while (result.endsWith("/")) {
-            result = result.substring(0, result.length() - 1);
-        }
-        return result;
-    }
-
-    private boolean hasText(String value) {
-        return value != null && !value.isBlank();
     }
 }

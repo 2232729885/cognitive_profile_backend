@@ -6,6 +6,7 @@ import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 import java.util.List;
 import java.util.UUID;
@@ -36,6 +37,14 @@ public interface MediaAssetMapper extends BaseMapper<MediaAsset> {
     @Select("SELECT * FROM media_assets WHERE embedding_id IS NULL " +
             "AND asset_type IN ('image','video') LIMIT #{limit}")
     List<MediaAsset> selectPendingEmbedding(@Param("limit") int limit);
+
+    /** 查找尚未完成 T1 图像标注的图片资产 */
+    @Select("SELECT * FROM media_assets WHERE asset_type = 'image' " +
+            "AND t1_annotated = FALSE ORDER BY created_at ASC LIMIT #{limit}")
+    List<MediaAsset> selectPendingT1Annotation(@Param("limit") int limit);
+
+    @Update("UPDATE media_assets SET t1_annotated = TRUE WHERE id = #{id}")
+    int markT1Annotated(@Param("id") UUID id);
 
     @Select("""
             <script>
