@@ -13,6 +13,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import tools.jackson.databind.ObjectMapper;
 
+import java.io.InterruptedIOException;
+import java.net.SocketTimeoutException;
 import java.util.List;
 import java.util.Set;
 
@@ -158,7 +160,7 @@ public class LlmAgentController {
             return response;
 
         } catch (Exception e) {
-            log.error("[LLM-T1] annotate_text失败", e);
+            logLlmFailure("[LLM-T1] annotate_text失败，返回fallback", e);
             T1AnnotateResponse response = buildFallbackT1Response(request.getText());
             response.setLanguage(request.getLanguage());
             return response;
@@ -185,7 +187,7 @@ public class LlmAgentController {
             return response;
 
         } catch (Exception e) {
-            log.error("[LLM-T2] extract_entities失败", e);
+            logLlmFailure("[LLM-T2] extract_entities失败，返回fallback", e);
             return buildFallbackT2Response();
         }
     }
@@ -302,5 +304,26 @@ public class LlmAgentController {
                     .trim();
         }
         return json;
+    }
+
+    private void logLlmFailure(String message, Exception e) {
+        Throwable timeoutCause = findTimeoutCause(e);
+        if (timeoutCause != null) {
+            log.warn("{}, reason={}: {}", message,
+                    timeoutCause.getClass().getSimpleName(), timeoutCause.getMessage());
+            return;
+        }
+        log.error(message, e);
+    }
+
+    private Throwable findTimeoutCause(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (current instanceof SocketTimeoutException || current instanceof InterruptedIOException) {
+                return current;
+            }
+            current = current.getCause();
+        }
+        return null;
     }
 }
