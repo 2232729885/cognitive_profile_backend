@@ -4,19 +4,46 @@ import com.idata.profile.agentproxy.dto.t1.T1AnnotateRequest;
 import com.idata.profile.agentproxy.dto.t1.T1AnnotateResponse;
 import com.idata.profile.agentproxy.dto.t2.T2ExtractRequest;
 import com.idata.profile.agentproxy.dto.t2.T2ExtractResponse;
+import com.idata.profile.agentproxy.dto.t3.T3ResolveRequest;
+import com.idata.profile.agentproxy.dto.t3.T3ResolveResponse;
+import com.idata.profile.agentproxy.dto.t4.T4EmbeddingRequest;
+import com.idata.profile.agentproxy.dto.t4.T4EmbeddingResponse;
+import com.idata.profile.agentproxy.dto.t5.T5GenerateProfileRequest;
+import com.idata.profile.agentproxy.dto.t5.T5GenerateProfileResponse;
+import com.idata.profile.agentproxy.dto.t6.T6IdentifyRequest;
+import com.idata.profile.agentproxy.dto.t6.T6IdentifyResponse;
+import com.idata.profile.entity.content.MediaContent;
+import com.idata.profile.entity.graph.Person;
+import com.idata.profile.infra.neo4j.Neo4jGraphService;
+import com.idata.profile.mapper.content.MediaContentMapper;
+import com.idata.profile.mapper.graph.PersonMapper;
+import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.client.RestClient;
 import tools.jackson.databind.ObjectMapper;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.io.InterruptedIOException;
 import java.net.SocketTimeoutException;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Slf4j
 @RestController
@@ -126,6 +153,123 @@ public class LlmAgentController {
             5. entities 数量控制在 10 个以内，relationships 控制在 15 个以内
             """;
 
+    private static final String T3_SYSTEM_PROMPT = """
+            你是一个实体消歧专家，专门判断不同语言表述的实体是否指向同一个真实世界对象。
+            严格按照 JSON 格式输出，不要有 markdown 代码块，不要有解释说明。
+
+            输出 JSON 结构：
+            {
+              "mergeGroups": [
+                {
+                  "survivorId": "保留的实体ID（importanceScore最高的那个）",
+                  "mergedIds": ["被合并的实体ID列表"],
+                  "confidence": 0.92,
+                  "matchMethod": "cross_language|alias_match|semantic_similarity|identifier_match"
+                }
+              ],
+              "disjointPairs": [],
+              "uncertain": ["无法判断的实体ID列表"]
+            }
+
+            判断规则：
+            1. survivorId 必须是输入列表中某个实体的 id，不能凭空创造
+            2. confidence >= 0.8 才放入 mergeGroups，否则放入 uncertain
+            3. 同一平台相同 sourceIdentifiers 的实体必须合并（identifier_match，confidence=0.98）
+            4. 跨语言同名（如"拜登"和"Biden"）放入 mergeGroups（cross_language，confidence=0.92）
+            5. 明确不同的实体放入 disjointPairs
+            6. 没有重复实体时 mergeGroups 返回空数组
+            """;
+
+    private static final String T5_SYSTEM_PROMPT = """
+            你是一个专业的认知操控目标分析系统。根据提供的人物信息和内容数据，生成该人物的全息画像。
+            严格按照 JSON 格式输出，不要有 markdown 代码块，不要有解释说明。
+
+            输出 JSON 结构（所有字段必须有值，不能返回 null）：
+            {
+              "politicalOrientation": "pro_west|anti_west|neutral|complex",
+              "politicalScore": 0.0（-100亲西方 到 100反西方）,
+              "politicalConfidence": 0.85,
+              "emotionProfile": {"moral_outrage": 0.5, "resentment": 0.3, "fear_inducing": 0.2, "national_pride": 0.4, "conspiracy_belief": 0.3, "victimhood_narrative": 0.2, "contempt": 0.1, "distrust": 0.4, "hope_appeal": 0.2, "helplessness": 0.1},
+              "stanceProfile": [{"topic": "议题", "stance": "strongly_support|support|neutral|oppose|strongly_oppose", "confidence": 0.85}],
+              "activeTimePattern": {"0": 0.01, "14": 0.15},
+              "postFrequencyDaily": 3.5,
+              "contentOriginalRatio": 0.4,
+              "bendProfile": {"Distort": 0.3, "Dismiss": 0.2, "Amplify": 0.3, "Narrativize": 0.1, "other": 0.1},
+              "influenceScore": 65.0,
+              "reachScore": 55.0,
+              "viralityScore": 45.0,
+              "mbtiType": "ENTJ",
+              "mbtiConfidence": 0.6,
+              "decisionStyle": "aggressive|cautious|opportunistic|ideological",
+              "languageStyle": "inciting|rational|emotional|neutral",
+              "interestDomains": ["geopolitics", "military"],
+              "coordinationNetwork": [],
+              "preferredNarratives": [],
+              "targetType": "T00|T01|T02|T03|T04|T05|T06|T07|T08|T09|T10",
+              "targetConfidence": 0.8,
+              "targetEvidence": "中文证据说明",
+              "hiddenRelations": [],
+              "manipulationRisk": "critical|high|medium|low",
+              "manipulationScore": 50.0,
+              "modelVersions": {"t5_model": "qwen3-vl-32b"}
+            }
+
+            targetType 定义：T00=正常用户，T01-T04=内容操控，T05-T07=协调操控，T08-T10=高级威胁
+            bendProfile 五项之和必须等于 1.0
+            emotionProfile 每项 0-1 之间
+            """;
+
+    private static final String T6_SYSTEM_PROMPT = """
+            你是一个信息操控目标识别专家，专门分析社交媒体账号的操控行为模式。
+            严格按照 JSON 格式输出，不要有 markdown 代码块，不要有解释说明。
+
+            输出 JSON 结构：
+            {
+              "accountIdentifyResult": [
+                {
+                  "accountId": "账号ID（必须是输入列表中的ID）",
+                  "targetType": "T00|T01-T10|T??",
+                  "targetTypeName": "中文名称",
+                  "confidence": 0.85,
+                  "csiScore": 0.72,
+                  "evidence": {
+                    "matchedTacticId": "T08",
+                    "distributionSimilarity": 0.91,
+                    "sequenceSimilarity": 0.83,
+                    "combinedScore": 0.87,
+                    "evidence": "中文证据说明（具体说明判断依据）"
+                  },
+                  "filterReason": null
+                }
+              ],
+              "entityIdentifyResult": [],
+              "groupIdentifyResult": [],
+              "summary": {
+                "narrativeId": "叙事ID或null",
+                "totalAccounts": 10,
+                "t00Count": 7,
+                "suspectCount": 0,
+                "identifiedCount": 3,
+                "unknownCount": 0,
+                "groupCount": 0,
+                "processingTimeMs": 0
+              }
+            }
+
+            targetType 定义：T00=正常用户，T01=内容扭曲者，T02=信息压制者，T03=叙事放大者，
+            T04=叙事构建者，T05=协调分发者，T06=情感操控者，T07=虚假信源，T08=协调网络核心节点，
+            T09=跨平台协调者，T10=高级持续威胁，T??=可疑但无法确定
+
+            判断要点：
+            1. 每个输入账号都必须在 accountIdentifyResult 里有对应结果
+            2. accountId 必须是输入列表里的原始 accountId，不能修改
+            3. 关注发帖频率、内容重复度、与其他账号的协同程度、注册时间
+            4. 正常用户（T00）的 filterReason 说明原因：entropy_high/csi_low/authority_low/all_three
+            5. summary 里的计数必须和 accountIdentifyResult 里的实际数量一致
+            """;
+
+    private static final List<String> BEND_KEYS = List.of("Distort", "Dismiss", "Amplify", "Narrativize", "other");
+
     private static final Set<String> ALLOWED_RELATION_TYPES = Set.of(
             "SAME_AS", "HAS_ACCOUNT", "ALIAS_OF", "MERGED_INTO",
             "AFFILIATED_WITH", "PART_OF", "CONTROLS", "OWNS", "MEMBER_OF", "ADMIN_OF", "PUBLISHED_IN",
@@ -138,6 +282,19 @@ public class LlmAgentController {
 
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
+    private final PersonMapper personMapper;
+    private final MediaContentMapper mediaContentMapper;
+    private final Neo4jGraphService neo4jGraphService;
+    private final RestClient embeddingRestClient = RestClient.create();
+
+    @Value("${llm.embedding.base-url}")
+    private String embeddingBaseUrl;
+
+    @Value("${llm.embedding.api-key}")
+    private String embeddingApiKey;
+
+    @Value("${llm.embedding.model}")
+    private String embeddingModel;
 
     @PostMapping("/t1/annotate_text")
     public T1AnnotateResponse annotateText(@RequestBody T1AnnotateRequest request) {
@@ -189,6 +346,87 @@ public class LlmAgentController {
         } catch (Exception e) {
             logLlmFailure("[LLM-T2] extract_entities失败，返回fallback", e);
             return buildFallbackT2Response();
+        }
+    }
+
+    @PostMapping("/t3/resolve_entities")
+    public T3ResolveResponse resolveEntities(@RequestBody T3ResolveRequest request) {
+        int candidateCount = request.getEntities() != null ? request.getEntities().size() : 0;
+        log.info("[LLM-T3] resolve_entities, candidateCount={}", candidateCount);
+
+        String userPrompt = buildT3UserPrompt(request);
+        try {
+            String raw = chatClient.prompt()
+                    .system(T3_SYSTEM_PROMPT)
+                    .user(userPrompt)
+                    .call()
+                    .content();
+
+            T3ResolveResponse response = parseT3Response(raw, request);
+            return response;
+        } catch (Exception e) {
+            logLlmFailure("[LLM-T3] resolve_entities失败，返回fallback", e);
+            return buildFallbackT3Response(request);
+        }
+    }
+
+    @PostMapping("/t4/generate_text_embedding")
+    public T4EmbeddingResponse generateTextEmbedding(@RequestBody T4EmbeddingRequest request) {
+        log.info("[LLM-T4] generate_text_embedding, textLength={}",
+                request.getText() != null ? request.getText().length() : 0);
+        return callEmbeddingApi(request.getText(), null);
+    }
+
+    @PostMapping("/t4/generate_image_embedding")
+    public T4EmbeddingResponse generateImageEmbedding(@RequestBody T4EmbeddingRequest request) {
+        log.info("[LLM-T4] generate_image_embedding, imageUrl={}", request.getImageUrl());
+        return callEmbeddingApi(null, request.getImageUrl());
+    }
+
+    @PostMapping("/t5/complete_profile")
+    public T5GenerateProfileResponse completeProfile(@RequestBody T5GenerateProfileRequest request) {
+        log.info("[LLM-T5] complete_profile, targetId={}, targetType={}",
+                request.getTargetId(), request.getTargetType());
+
+        String context = buildPersonContext(request.getTargetId());
+        try {
+            String raw = chatClient.prompt()
+                    .system(T5_SYSTEM_PROMPT)
+                    .user("请根据以下上下文生成人物画像：\n\n" + context)
+                    .call()
+                    .content();
+
+            return parseT5Response(raw);
+        } catch (Exception e) {
+            logLlmFailure("[LLM-T5] complete_profile失败，返回fallback", e);
+            return buildFallbackT5Response(context);
+        }
+    }
+
+    @PostMapping("/t6/identify_targets")
+    public T6IdentifyResponse identifyTargets(@RequestBody T6IdentifyRequest request) {
+        long startedAt = System.nanoTime();
+        log.info("[LLM-T6] identify_targets, narrativeId={}, accountCount={}, contentCount={}",
+                request.getNarrativeId(),
+                request.getSocialAccounts() != null ? request.getSocialAccounts().size() : 0,
+                request.getMediaContents() != null ? request.getMediaContents().size() : 0);
+
+        String userPrompt = buildT6UserPrompt(request);
+        try {
+            String raw = chatClient.prompt()
+                    .system(T6_SYSTEM_PROMPT)
+                    .user(userPrompt)
+                    .call()
+                    .content();
+
+            T6IdentifyResponse response = parseT6Response(raw, request);
+            normalizeT6Summary(response, request, startedAt);
+            return response;
+        } catch (Exception e) {
+            logLlmFailure("[LLM-T6] identify_targets失败，返回fallback", e);
+            T6IdentifyResponse response = buildFallbackT6Response(request);
+            normalizeT6Summary(response, request, startedAt);
+            return response;
         }
     }
 
@@ -296,6 +534,479 @@ public class LlmAgentController {
         return resp;
     }
 
+    private String buildT3UserPrompt(T3ResolveRequest request) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("请判断以下实体候选是否指向同一个真实世界对象：\n\n");
+        if (request.getEntities() != null) {
+            for (T3ResolveRequest.EntityCandidate entity : request.getEntities()) {
+                sb.append("id: ").append(entity.getId())
+                        .append(" | type: ").append(entity.getEntityType())
+                        .append(" | name: ").append(entity.getCanonicalName())
+                        .append(" | aliases: ").append(entity.getAliases())
+                        .append(" | platforms: ").append(entity.getSourceIdentifiers())
+                        .append("\n");
+            }
+        }
+        return sb.toString();
+    }
+
+    private T3ResolveResponse parseT3Response(String raw, T3ResolveRequest request) throws Exception {
+        T3ResolveResponse response = objectMapper.readValue(cleanJson(raw), T3ResolveResponse.class);
+        normalizeT3Response(response, request);
+        return response;
+    }
+
+    private void normalizeT3Response(T3ResolveResponse response, T3ResolveRequest request) {
+        Set<String> inputIds = request.getEntities() == null ? Set.of() : request.getEntities().stream()
+                .map(T3ResolveRequest.EntityCandidate::getId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+
+        if (response.getMergeGroups() == null) {
+            response.setMergeGroups(List.of());
+        }
+        response.setMergeGroups(response.getMergeGroups().stream()
+                .filter(group -> group != null
+                        && group.getSurvivorId() != null
+                        && inputIds.contains(group.getSurvivorId())
+                        && group.getConfidence() != null
+                        && group.getConfidence() >= 0.8D)
+                .peek(group -> {
+                    if (group.getMergedIds() == null) {
+                        group.setMergedIds(List.of());
+                    } else {
+                        group.setMergedIds(group.getMergedIds().stream()
+                                .filter(id -> id != null && inputIds.contains(id) && !id.equals(group.getSurvivorId()))
+                                .toList());
+                    }
+                })
+                .filter(group -> !group.getMergedIds().isEmpty())
+                .toList());
+
+        if (response.getDisjointPairs() == null) {
+            response.setDisjointPairs(List.of());
+        }
+        if (response.getUncertain() == null) {
+            response.setUncertain(List.of());
+        } else {
+            response.setUncertain(response.getUncertain().stream()
+                    .filter(inputIds::contains)
+                    .toList());
+        }
+    }
+
+    private T3ResolveResponse buildFallbackT3Response(T3ResolveRequest request) {
+        T3ResolveResponse resp = new T3ResolveResponse();
+        resp.setMergeGroups(List.of());
+        resp.setDisjointPairs(List.of());
+        resp.setUncertain(request.getEntities() == null ? List.of() : request.getEntities().stream()
+                .map(T3ResolveRequest.EntityCandidate::getId)
+                .filter(Objects::nonNull)
+                .toList());
+        return resp;
+    }
+
+    private T4EmbeddingResponse callEmbeddingApi(String text, String imageUrl) {
+        String input = hasText(text) ? text : imageUrl;
+        if (!hasText(input)) {
+            return null;
+        }
+        try {
+            EmbeddingApiResponse apiResponse = embeddingRestClient.post()
+                    .uri(normalizeBaseUrl(embeddingBaseUrl) + "/embeddings")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + embeddingApiKey)
+                    .body(Map.of("model", embeddingModel, "input", input))
+                    .retrieve()
+                    .body(EmbeddingApiResponse.class);
+
+            if (apiResponse == null || apiResponse.getData() == null || apiResponse.getData().isEmpty()
+                    || apiResponse.getData().get(0).getEmbedding() == null) {
+                return null;
+            }
+
+            List<Double> doubles = apiResponse.getData().get(0).getEmbedding();
+            float[] embedding = new float[doubles.size()];
+            for (int i = 0; i < doubles.size(); i++) {
+                embedding[i] = doubles.get(i).floatValue();
+            }
+
+            T4EmbeddingResponse response = new T4EmbeddingResponse();
+            response.setEmbedding(embedding);
+            response.setModelVersion(embeddingModel);
+            return response;
+        } catch (Exception e) {
+            logLlmFailure("[LLM-T4] embedding接口调用失败，返回null", e);
+            return null;
+        }
+    }
+
+    private String normalizeBaseUrl(String baseUrl) {
+        if (baseUrl == null) {
+            return "";
+        }
+        return baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+    }
+
+    private String buildPersonContext(String targetId) {
+        UUID personId;
+        try {
+            personId = UUID.fromString(targetId);
+        } catch (Exception e) {
+            return "人物ID格式无效：" + targetId;
+        }
+
+        Person person = personMapper.selectById(personId);
+        if (person == null) {
+            return "未找到该人物信息";
+        }
+
+        StringBuilder ctx = new StringBuilder();
+        ctx.append("人物基本信息：\n");
+        ctx.append("  姓名：").append(person.getCanonicalName()).append("\n");
+        ctx.append("  重要性评分：").append(person.getImportanceScore()).append("\n");
+        ctx.append("  首次出现：").append(person.getFirstSeenAt()).append("\n");
+        ctx.append("  内容出现次数：").append(person.getContentCount()).append("\n");
+
+        List<UUID> accountIds = neo4jGraphService.findSocialAccountIdsByPerson(personId.toString());
+        if (!accountIds.isEmpty()) {
+            ctx.append("  关联账号数：").append(accountIds.size()).append("\n");
+        }
+
+        if (!accountIds.isEmpty()) {
+            List<MediaContent> contents = mediaContentMapper.selectByAuthorAccountIds(accountIds, 50);
+            if (!contents.isEmpty()) {
+                ctx.append("\n最近发布的内容（最多50条）：\n");
+                for (MediaContent mc : contents) {
+                    ctx.append("  [").append(mc.getPlatform()).append("] ");
+                    ctx.append(mc.getPublishedAt()).append(": ");
+                    if (hasText(mc.getBodyText())) {
+                        ctx.append(mc.getBodyText(), 0, Math.min(mc.getBodyText().length(), 200));
+                    }
+                    ctx.append("\n");
+                }
+            }
+        }
+
+        return ctx.toString();
+    }
+
+    private T5GenerateProfileResponse parseT5Response(String raw) throws Exception {
+        T5GenerateProfileResponse response = objectMapper.readValue(cleanJson(raw), T5GenerateProfileResponse.class);
+        normalizeT5Response(response);
+        return response;
+    }
+
+    private void normalizeT5Response(T5GenerateProfileResponse response) {
+        if (!hasText(response.getPoliticalOrientation())) {
+            response.setPoliticalOrientation("neutral");
+        }
+        response.setPoliticalScore(defaultBigDecimal(response.getPoliticalScore(), "0"));
+        response.setPoliticalConfidence(defaultBigDecimal(response.getPoliticalConfidence(), "0.5"));
+        if (response.getEmotionProfile() == null) {
+            response.setEmotionProfile(defaultEmotionProfile());
+        }
+        if (response.getStanceProfile() == null) {
+            response.setStanceProfile(List.of());
+        }
+        if (response.getActiveTimePattern() == null) {
+            response.setActiveTimePattern(Map.of("0", 0.0));
+        }
+        response.setPostFrequencyDaily(defaultBigDecimal(response.getPostFrequencyDaily(), "0"));
+        response.setContentOriginalRatio(defaultBigDecimal(response.getContentOriginalRatio(), "0"));
+        response.setBendProfile(normalizedBendProfile(response.getBendProfile()));
+        response.setInfluenceScore(defaultBigDecimal(response.getInfluenceScore(), "0"));
+        response.setReachScore(defaultBigDecimal(response.getReachScore(), "0"));
+        response.setViralityScore(defaultBigDecimal(response.getViralityScore(), "0"));
+        if (!hasText(response.getMbtiType())) {
+            response.setMbtiType("UNKNOWN");
+        }
+        response.setMbtiConfidence(defaultBigDecimal(response.getMbtiConfidence(), "0"));
+        if (!hasText(response.getDecisionStyle())) {
+            response.setDecisionStyle("cautious");
+        }
+        if (!hasText(response.getLanguageStyle())) {
+            response.setLanguageStyle("neutral");
+        }
+        if (response.getInterestDomains() == null) {
+            response.setInterestDomains(new String[0]);
+        }
+        if (response.getCoordinationNetwork() == null) {
+            response.setCoordinationNetwork(List.of());
+        }
+        if (response.getPreferredNarratives() == null) {
+            response.setPreferredNarratives(List.of());
+        }
+        if (!hasText(response.getTargetType())) {
+            response.setTargetType("T00");
+        }
+        response.setTargetConfidence(defaultBigDecimal(response.getTargetConfidence(), "0.5"));
+        if (!hasText(response.getTargetEvidence())) {
+            response.setTargetEvidence("证据不足，使用兜底画像。");
+        }
+        if (response.getHiddenRelations() == null) {
+            response.setHiddenRelations(List.of());
+        }
+        if (!hasText(response.getManipulationRisk())) {
+            response.setManipulationRisk("low");
+        }
+        response.setManipulationScore(defaultBigDecimal(response.getManipulationScore(), "0"));
+        if (response.getModelVersions() == null) {
+            response.setModelVersions(Map.of("t5_model", MODEL_VERSION));
+        }
+    }
+
+    private T5GenerateProfileResponse buildFallbackT5Response(String context) {
+        T5GenerateProfileResponse response = new T5GenerateProfileResponse();
+        response.setPoliticalOrientation("neutral");
+        response.setPoliticalScore(BigDecimal.ZERO);
+        response.setPoliticalConfidence(new BigDecimal("0.3"));
+        response.setEmotionProfile(defaultEmotionProfile());
+        response.setStanceProfile(List.of());
+        response.setActiveTimePattern(Map.of("0", 0.0));
+        response.setPostFrequencyDaily(BigDecimal.ZERO);
+        response.setContentOriginalRatio(BigDecimal.ZERO);
+        response.setBendProfile(defaultBendProfile());
+        response.setInfluenceScore(BigDecimal.ZERO);
+        response.setReachScore(BigDecimal.ZERO);
+        response.setViralityScore(BigDecimal.ZERO);
+        response.setMbtiType("UNKNOWN");
+        response.setMbtiConfidence(BigDecimal.ZERO);
+        response.setDecisionStyle("cautious");
+        response.setLanguageStyle("neutral");
+        response.setInterestDomains(new String[0]);
+        response.setCoordinationNetwork(List.of());
+        response.setPreferredNarratives(List.of());
+        response.setTargetType("T00");
+        response.setTargetConfidence(new BigDecimal("0.3"));
+        response.setTargetEvidence("LLM画像生成失败或数据不足，使用兜底画像。上下文摘要：" + abbreviate(context, 200));
+        response.setHiddenRelations(List.of());
+        response.setManipulationRisk("low");
+        response.setManipulationScore(BigDecimal.ZERO);
+        response.setModelVersions(Map.of("t5_model", MODEL_VERSION));
+        return response;
+    }
+
+    private Map<String, Double> normalizedBendProfile(Object value) {
+        Map<String, Double> raw = new LinkedHashMap<>();
+        if (value instanceof Map<?, ?> map) {
+            for (String key : BEND_KEYS) {
+                raw.put(key, toDouble(map.get(key), 0D));
+            }
+        } else {
+            raw.putAll(defaultBendProfile());
+        }
+
+        double total = raw.values().stream().mapToDouble(Double::doubleValue).sum();
+        if (total <= 0D) {
+            return defaultBendProfile();
+        }
+
+        Map<String, Double> normalized = new LinkedHashMap<>();
+        for (String key : BEND_KEYS) {
+            normalized.put(key, BigDecimal.valueOf(raw.getOrDefault(key, 0D) / total)
+                    .setScale(6, RoundingMode.HALF_UP)
+                    .doubleValue());
+        }
+        return normalized;
+    }
+
+    private Map<String, Double> defaultBendProfile() {
+        Map<String, Double> bend = new LinkedHashMap<>();
+        bend.put("Distort", 0.2);
+        bend.put("Dismiss", 0.2);
+        bend.put("Amplify", 0.2);
+        bend.put("Narrativize", 0.2);
+        bend.put("other", 0.2);
+        return bend;
+    }
+
+    private Map<String, Double> defaultEmotionProfile() {
+        Map<String, Double> emotion = new LinkedHashMap<>();
+        for (String key : List.of("moral_outrage", "resentment", "fear_inducing", "national_pride",
+                "conspiracy_belief", "victimhood_narrative", "contempt", "distrust", "hope_appeal", "helplessness")) {
+            emotion.put(key, 0D);
+        }
+        return emotion;
+    }
+
+    private String buildT6UserPrompt(T6IdentifyRequest request) {
+        StringBuilder sb = new StringBuilder();
+
+        if (request.getNarrativeId() != null) {
+            sb.append("分析场景：叙事ID ").append(request.getNarrativeId()).append(" 的参与账号\n\n");
+        }
+
+        sb.append("待分析账号列表（共").append(
+                request.getSocialAccounts() != null ? request.getSocialAccounts().size() : 0
+        ).append("个）：\n");
+        if (request.getSocialAccounts() != null) {
+            for (T6IdentifyRequest.SocialAccountRef sa : request.getSocialAccounts()) {
+                sb.append("  账号ID: ").append(sa.getAccountId())
+                        .append(" | 平台: ").append(sa.getSourcePlatformId())
+                        .append(" | handle: ").append(sa.getHandle());
+                if (sa.getAccountMetrics() != null) {
+                    sb.append(" | 粉丝: ").append(sa.getAccountMetrics().getFollowers())
+                            .append(" | 发帖: ").append(sa.getAccountMetrics().getPosts());
+                }
+                if (sa.getRegisterTime() != null) {
+                    sb.append(" | 注册时间: ").append(sa.getRegisterTime());
+                }
+                sb.append("\n");
+            }
+        }
+
+        sb.append("\n最近发布内容（最多20条）：\n");
+        if (request.getMediaContents() != null) {
+            request.getMediaContents().stream().limit(20).forEach(mc -> {
+                sb.append("  [").append(abbreviate(mc.getSourceAccountId(), 8)).append("...] ");
+                sb.append(mc.getPublishedAt()).append(" | ").append(mc.getMessageType()).append(": ");
+                if (mc.getBodyText() != null) {
+                    sb.append(mc.getBodyText(), 0, Math.min(mc.getBodyText().length(), 150));
+                }
+                sb.append("\n");
+            });
+        }
+
+        return sb.toString();
+    }
+
+    private T6IdentifyResponse parseT6Response(String raw, T6IdentifyRequest request) throws Exception {
+        T6IdentifyResponse response = objectMapper.readValue(cleanJson(raw), T6IdentifyResponse.class);
+        ensureAllT6Accounts(response, request);
+        return response;
+    }
+
+    private void ensureAllT6Accounts(T6IdentifyResponse response, T6IdentifyRequest request) {
+        if (response.getAccountIdentifyResult() == null) {
+            response.setAccountIdentifyResult(new ArrayList<>());
+        } else {
+            response.setAccountIdentifyResult(new ArrayList<>(response.getAccountIdentifyResult()));
+        }
+
+        Set<String> inputIds = request.getSocialAccounts() == null ? Set.of() : request.getSocialAccounts().stream()
+                .map(T6IdentifyRequest.SocialAccountRef::getAccountId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+
+        response.setAccountIdentifyResult(response.getAccountIdentifyResult().stream()
+                .filter(result -> result != null && inputIds.contains(result.getAccountId()))
+                .collect(Collectors.toCollection(ArrayList::new)));
+
+        Set<String> returnedIds = response.getAccountIdentifyResult().stream()
+                .map(T6IdentifyResponse.AccountIdentifyResult::getAccountId)
+                .collect(Collectors.toSet());
+        for (String accountId : inputIds) {
+            if (!returnedIds.contains(accountId)) {
+                response.getAccountIdentifyResult().add(buildFallbackT6AccountResult(accountId));
+            }
+        }
+
+        for (T6IdentifyResponse.AccountIdentifyResult result : response.getAccountIdentifyResult()) {
+            normalizeT6AccountResult(result);
+        }
+        if (response.getEntityIdentifyResult() == null) {
+            response.setEntityIdentifyResult(List.of());
+        }
+        if (response.getGroupIdentifyResult() == null) {
+            response.setGroupIdentifyResult(List.of());
+        }
+    }
+
+    private void normalizeT6Summary(T6IdentifyResponse response, T6IdentifyRequest request, long startedAt) {
+        if (response.getSummary() == null) {
+            response.setSummary(new T6IdentifyResponse.Summary());
+        }
+        List<T6IdentifyResponse.AccountIdentifyResult> results = response.getAccountIdentifyResult() != null
+                ? response.getAccountIdentifyResult() : List.of();
+        int total = request.getSocialAccounts() != null ? request.getSocialAccounts().size() : 0;
+        int t00 = (int) results.stream().filter(result -> "T00".equals(result.getTargetType())).count();
+        int unknown = (int) results.stream().filter(result -> "T??".equals(result.getTargetType())).count();
+        int identified = (int) results.stream()
+                .filter(result -> result.getTargetType() != null
+                        && !"T00".equals(result.getTargetType())
+                        && !"T??".equals(result.getTargetType()))
+                .count();
+
+        T6IdentifyResponse.Summary summary = response.getSummary();
+        summary.setNarrativeId(request.getNarrativeId());
+        summary.setTotalAccounts(total);
+        summary.setT00Count(t00);
+        summary.setSuspectCount(unknown);
+        summary.setIdentifiedCount(identified);
+        summary.setUnknownCount(unknown);
+        summary.setGroupCount(response.getGroupIdentifyResult() != null ? response.getGroupIdentifyResult().size() : 0);
+        summary.setProcessingTimeMs(Duration.ofNanos(System.nanoTime() - startedAt).toMillis());
+    }
+
+    private T6IdentifyResponse buildFallbackT6Response(T6IdentifyRequest request) {
+        T6IdentifyResponse response = new T6IdentifyResponse();
+        response.setAccountIdentifyResult(request.getSocialAccounts() == null ? List.of() : request.getSocialAccounts().stream()
+                .map(T6IdentifyRequest.SocialAccountRef::getAccountId)
+                .filter(Objects::nonNull)
+                .map(this::buildFallbackT6AccountResult)
+                .toList());
+        response.setEntityIdentifyResult(List.of());
+        response.setGroupIdentifyResult(List.of());
+        return response;
+    }
+
+    private T6IdentifyResponse.AccountIdentifyResult buildFallbackT6AccountResult(String accountId) {
+        T6IdentifyResponse.AccountIdentifyResult result = new T6IdentifyResponse.AccountIdentifyResult();
+        result.setAccountId(accountId);
+        result.setTargetType("T??");
+        result.setTargetTypeName("可疑但无法确定");
+        result.setConfidence(new BigDecimal("0.3"));
+        result.setCsiScore(BigDecimal.ZERO);
+        result.setEvidence(buildFallbackT6Evidence());
+        result.setFilterReason(null);
+        return result;
+    }
+
+    private T6IdentifyResponse.MatchEvidence buildFallbackT6Evidence() {
+        T6IdentifyResponse.MatchEvidence evidence = new T6IdentifyResponse.MatchEvidence();
+        evidence.setMatchedTacticId("T??");
+        evidence.setDistributionSimilarity(0D);
+        evidence.setSequenceSimilarity(0D);
+        evidence.setCombinedScore(0D);
+        evidence.setEvidence("LLM识别失败或结果缺失，使用兜底识别结果。");
+        return evidence;
+    }
+
+    private void normalizeT6AccountResult(T6IdentifyResponse.AccountIdentifyResult result) {
+        if (!hasText(result.getTargetType())) {
+            result.setTargetType("T??");
+        }
+        if (!hasText(result.getTargetTypeName())) {
+            result.setTargetTypeName(targetTypeName(result.getTargetType()));
+        }
+        result.setConfidence(defaultBigDecimal(result.getConfidence(), "0.5"));
+        result.setCsiScore(defaultBigDecimal(result.getCsiScore(), "0"));
+        if (result.getEvidence() == null) {
+            result.setEvidence(buildFallbackT6Evidence());
+        }
+        if ("T00".equals(result.getTargetType()) && !hasText(result.getFilterReason())) {
+            result.setFilterReason("csi_low");
+        }
+    }
+
+    private String targetTypeName(String targetType) {
+        return switch (targetType) {
+            case "T00" -> "正常用户";
+            case "T01" -> "内容扭曲者";
+            case "T02" -> "信息压制者";
+            case "T03" -> "叙事放大者";
+            case "T04" -> "叙事构建者";
+            case "T05" -> "协调分发者";
+            case "T06" -> "情感操控者";
+            case "T07" -> "虚假信源";
+            case "T08" -> "协调网络核心节点";
+            case "T09" -> "跨平台协调者";
+            case "T10" -> "高级持续威胁";
+            default -> "可疑但无法确定";
+        };
+    }
+
     private String cleanJson(String raw) {
         String json = raw.trim();
         if (json.startsWith("```")) {
@@ -304,6 +1015,35 @@ public class LlmAgentController {
                     .trim();
         }
         return json;
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
+    }
+
+    private String abbreviate(String value, int maxLength) {
+        if (value == null) {
+            return "";
+        }
+        return value.substring(0, Math.min(value.length(), maxLength));
+    }
+
+    private BigDecimal defaultBigDecimal(BigDecimal value, String fallback) {
+        return value != null ? value : new BigDecimal(fallback);
+    }
+
+    private double toDouble(Object value, double fallback) {
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+        if (value == null) {
+            return fallback;
+        }
+        try {
+            return Double.parseDouble(value.toString());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
     }
 
     private void logLlmFailure(String message, Exception e) {
@@ -325,5 +1065,15 @@ public class LlmAgentController {
             current = current.getCause();
         }
         return null;
+    }
+
+    @Data
+    private static class EmbeddingApiResponse {
+        private List<EmbeddingData> data;
+
+        @Data
+        private static class EmbeddingData {
+            private List<Double> embedding;
+        }
     }
 }

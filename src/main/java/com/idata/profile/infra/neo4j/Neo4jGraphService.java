@@ -149,6 +149,25 @@ public class Neo4jGraphService {
                 .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
     }
 
+    public List<UUID> findSocialAccountIdsByPerson(String personId) {
+        if (!hasText(personId)) {
+            return List.of();
+        }
+        String cypher = """
+                MATCH (p:Person {id: $personId})-[:HAS_ACCOUNT]->(sa:SocialAccount)
+                RETURN sa.id AS accountId
+                """;
+        return neo4jClient.query(cypher)
+                .bind(personId).to("personId")
+                .fetch()
+                .all()
+                .stream()
+                .map(row -> row.get("accountId"))
+                .map(this::toUuid)
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+    }
+
     /**
      * 查询节点的2跳关系图，用于前端知识图谱可视化
      * 返回格式：{"nodes": [...], "relations": [...]}

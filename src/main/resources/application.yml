@@ -86,3 +86,9 @@ server:
 logging:
   level:
     com.idata.profile: debug
+
+llm:
+  embedding:
+    base-url: http://172.16.40.232:18013/v1
+    api-key: idata@123456
+    model: Qwen3-VL-Embedding-8B

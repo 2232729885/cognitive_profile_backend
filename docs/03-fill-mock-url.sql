@@ -37,6 +37,10 @@ ORDER BY agent_code;
 -- 执行以下 SQL 后重启项目即可，无需改代码：
 -- UPDATE sub_agent_registry SET mock_url = 'http://localhost:8080/llm/t1', active_url_type = 'mock' WHERE agent_code = 'T1';
 -- UPDATE sub_agent_registry SET mock_url = 'http://localhost:8080/llm/t2', active_url_type = 'mock' WHERE agent_code = 'T2';
+-- UPDATE sub_agent_registry SET mock_url = 'http://localhost:8080/llm/t3', active_url_type = 'mock' WHERE agent_code = 'T3';
+-- UPDATE sub_agent_registry SET mock_url = 'http://localhost:8080/llm/t4', active_url_type = 'mock' WHERE agent_code = 'T4';
+-- UPDATE sub_agent_registry SET mock_url = 'http://localhost:8080/llm/t5', active_url_type = 'mock' WHERE agent_code = 'T5';
+-- UPDATE sub_agent_registry SET mock_url = 'http://localhost:8080/llm/t6', active_url_type = 'mock' WHERE agent_code = 'T6';
 -- 切换回固定 Mock 数据：
 -- UPDATE sub_agent_registry SET mock_url = 'http://localhost:8080/mock/t1' WHERE agent_code = 'T1';
 -- UPDATE sub_agent_registry SET mock_url = 'http://localhost:8080/mock/t2' WHERE agent_code = 'T2';
