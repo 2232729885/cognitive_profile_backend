@@ -46,20 +46,30 @@ public class T1AnnotationStep {
         pipelineTaskMapper.updateById(task);
 
         MediaContent mc = mediaContentMapper.selectById(task.getContentId());
+        T1AnnotateResponse textResponse = null;
 
-        T1AnnotateRequest request = new T1AnnotateRequest();
-        request.setText(mc.getBodyText());
-        request.setLanguage(mc.getLanguage());
+        if (hasText(mc.getBodyText())) {
+            T1AnnotateRequest request = new T1AnnotateRequest();
+            request.setText(mc.getBodyText());
+            request.setLanguage(mc.getLanguage());
 
-        T1AnnotateResponse response = agentProxyClient.call("T1", "annotate_text", request, T1AnnotateResponse.class);
-        applyAnnotations(mc, response);
-        mediaContentMapper.updateById(mc);
+            textResponse = agentProxyClient.call("T1", "annotate_text", request, T1AnnotateResponse.class);
+            applyAnnotations(mc, textResponse);
+            mediaContentMapper.updateById(mc);
+        } else {
+            log.info("[T1] 跳过文本标注：bodyText为空, contentId={}", mc.getId());
+        }
+
         if (mc.getMediaAssetIds() != null && mc.getMediaAssetIds().length > 0) {
             annotateImages(mc.getMediaAssetIds());
         }
 
+        completeTask(task, startedAt, textResponse);
+    }
+
+    private void completeTask(PipelineTask task, OffsetDateTime startedAt, T1AnnotateResponse textResponse) {
         RawRecord rawRecord = rawRecordMapper.selectById(task.getRawRecordId());
-        rawRecord.setT1Output(response.getRaw());
+        rawRecord.setT1Output(textResponse != null ? textResponse.getRaw() : null);
         rawRecord.setPipelineStatus(PipelineStatus.T1_DONE.name());
         rawRecordMapper.updateById(rawRecord);
 
@@ -156,5 +166,9 @@ public class T1AnnotationStep {
                 log.warn("[T1] 图像标注失败, assetId={}", assetId, e);
             }
         }
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 }
