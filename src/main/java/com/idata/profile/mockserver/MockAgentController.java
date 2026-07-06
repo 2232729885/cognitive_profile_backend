@@ -102,6 +102,59 @@ public class MockAgentController {
         return resp;
     }
 
+    @PostMapping("/mock/t1/annotate_image")
+    public T1AnnotateResponse annotateImage(@RequestBody T1AnnotateRequest request) {
+        log.info("[MOCK-T1] annotate_image, imageUrl={}, hasImageData={}",
+                request.getImageUrl(), request.getImageData() != null);
+
+        T1AnnotateResponse.Annotations.DetectedObject obj1 =
+                new T1AnnotateResponse.Annotations.DetectedObject();
+        obj1.setLabel("person");
+        obj1.setConfidence(0.95);
+        obj1.setBbox(List.of(10, 20, 100, 200));
+
+        T1AnnotateResponse.Annotations.DetectedObject obj2 =
+                new T1AnnotateResponse.Annotations.DetectedObject();
+        obj2.setLabel("military_vehicle");
+        obj2.setConfidence(0.82);
+        obj2.setBbox(List.of(150, 30, 80, 250));
+
+        T1AnnotateResponse.Annotations annotations = new T1AnnotateResponse.Annotations();
+        annotations.setObjects(List.of(obj1, obj2));
+        annotations.setScene("outdoor_military");
+        annotations.setTextOcr(null);
+        annotations.setAigcSuspicion("low");
+
+        T1AnnotateResponse.EvidenceClue clue1 = new T1AnnotateResponse.EvidenceClue();
+        clue1.setEvidenceId("ev_img_001");
+        clue1.setEvidenceType("image_region");
+        clue1.setRawContent("person");
+        clue1.setSpan(Map.of("bbox", List.of(10, 20, 100, 200)));
+        clue1.setConfidence(0.95);
+
+        T1AnnotateResponse.EvidenceClue clue2 = new T1AnnotateResponse.EvidenceClue();
+        clue2.setEvidenceId("ev_img_002");
+        clue2.setEvidenceType("image_region");
+        clue2.setRawContent("military_vehicle");
+        clue2.setSpan(Map.of("bbox", List.of(150, 30, 80, 250)));
+        clue2.setConfidence(0.82);
+
+        T1AnnotateResponse.QualityControl qualityControl = new T1AnnotateResponse.QualityControl();
+        qualityControl.setAutoLabelStatus("success");
+        qualityControl.setNeedHumanReview(false);
+        qualityControl.setSchemaVersion("t1_annotation_v0.3");
+        qualityControl.setModelVersion("mock-t1-image-v1.0");
+
+        T1AnnotateResponse resp = new T1AnnotateResponse();
+        resp.setAnnotations(annotations);
+        resp.setEvidenceClues(List.of(clue1, clue2));
+        resp.setQualityControl(qualityControl);
+        resp.setConfidence(0.88);
+        resp.setProcessedAt(java.time.OffsetDateTime.now().toString());
+        resp.setRaw(null);
+        return resp;
+    }
+
     @PostMapping("/mock/t2/extract_entities")
     public T2ExtractResponse extractEntities(@RequestBody T2ExtractRequest request) {
         log.info("[MOCK-T2] extract_entities, textLength={}, hasAnnotation={}",

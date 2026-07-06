@@ -427,6 +427,8 @@ CREATE TABLE IF NOT EXISTS media_assets (
     ocr_text            TEXT,
     asr_text            TEXT,
     aigc_score          NUMERIC(4,3),
+    object_annotations  TEXT,
+    scene_label         VARCHAR(100),
     minio_bucket        VARCHAR(128),
     minio_key           TEXT,
     embedding_id        VARCHAR(128),
@@ -451,6 +453,8 @@ COMMENT ON COLUMN media_assets.thumbnail_uri IS '缩略图路径（data.thumbnai
 COMMENT ON COLUMN media_assets.ocr_text      IS '图片/视频帧OCR文本（课题三可选提供）';
 COMMENT ON COLUMN media_assets.asr_text      IS '音视频语音转写文本（课题三可选提供，YouTube视频分析重要输入）';
 COMMENT ON COLUMN media_assets.aigc_score    IS 'T1对图片/视频的AIGC可疑度评分 0.0-1.0';
+COMMENT ON COLUMN media_assets.object_annotations IS 'T1图像标注：物体检测结果JSON';
+COMMENT ON COLUMN media_assets.scene_label   IS 'T1图像标注：场景分类标签，如 outdoor/indoor/military/protest';
 COMMENT ON COLUMN media_assets.minio_bucket  IS '我方MinIO存储桶（本地镜像后填入）';
 COMMENT ON COLUMN media_assets.minio_key     IS '我方MinIO对象存储路径';
 COMMENT ON COLUMN media_assets.embedding_id  IS '对应Milvus image_embeddings中的向量ID（T4写入）';
@@ -460,6 +464,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_ma_sha256    ON media_assets(sha256) WHERE 
 CREATE INDEX IF NOT EXISTS idx_ma_content ON media_assets(content_id) WHERE content_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_ma_raw     ON media_assets(raw_record_id) WHERE raw_record_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_ma_type    ON media_assets(asset_type);
+
+ALTER TABLE media_assets ADD COLUMN IF NOT EXISTS
+    object_annotations TEXT;
+ALTER TABLE media_assets ADD COLUMN IF NOT EXISTS
+    scene_label VARCHAR(100);
 
 -- ------------------------------------------------------------
 -- 采集任务元数据

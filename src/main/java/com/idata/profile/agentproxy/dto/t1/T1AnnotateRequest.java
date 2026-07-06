@@ -19,4 +19,10 @@ public class T1AnnotateRequest {
      * 不传则默认全部9项。
      */
     private List<String> annotationTypes;
+
+    /** 图像 URL，图像标注时必填（MinIO 可访问地址）*/
+    private String imageUrl;
+
+    /** 图像 base64，imageUrl 不可用时传此字段（可选）*/
+    private String imageData;
 }

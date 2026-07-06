@@ -41,6 +41,22 @@ public class T1AnnotateResponse {
         private String aigcSuspicion;
         /** T2的实体提示列表 */
         private List<EntityHint> entitiesHint;
+        /** 物体检测结果，annotate_image 时返回 */
+        private List<DetectedObject> objects;
+        /** 场景分类，如 outdoor/indoor/protest/military/text_heavy */
+        private String scene;
+        /** OCR 提取的文字，无文字时为 null */
+        private String textOcr;
+
+        @Data
+        public static class DetectedObject {
+            /** 物体标签，如 person/vehicle/weapon/flag/building */
+            private String label;
+            /** 置信度 0-1 */
+            private Double confidence;
+            /** 边界框 [x, y, width, height]，像素坐标 */
+            private List<Integer> bbox;
+        }
 
         @Data
         public static class LanguageStyle {
