@@ -162,6 +162,7 @@ public class T1AnnotationStep {
                 imageAnnotationUtil.applyImageAnnotations(asset, imageResponse);
                 asset.setT1Annotated(true);
                 mediaAssetMapper.updateById(asset);
+                imageAnnotationUtil.updateNeo4jAnnotations(asset);
             } catch (Exception e) {
                 log.warn("[T1] 图像标注失败, assetId={}", assetId, e);
             }

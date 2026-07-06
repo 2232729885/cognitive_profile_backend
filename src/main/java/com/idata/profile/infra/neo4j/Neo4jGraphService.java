@@ -342,7 +342,7 @@ public class Neo4jGraphService {
     private List<String> resolveSearchLabels(String label) {
         List<String> allowed = List.of(
                 "Person", "Organization", "Event", "Location",
-                "Narrative", "SocialAccount", "MediaContent");
+                "Narrative", "SocialAccount", "MediaContent", "MediaAsset");
         if (!hasText(label)) {
             return allowed;
         }
@@ -354,6 +354,7 @@ public class Neo4jGraphService {
             case "Narrative" -> "n.canonicalLabel";
             case "SocialAccount" -> "coalesce(n.displayName, n.handle)";
             case "MediaContent" -> "n.platformContentId";
+            case "MediaAsset" -> "coalesce(n.sourceUrl, n.minioKey, n.id)";
             default -> "n.canonicalName";
         };
     }

@@ -6,11 +6,13 @@ import com.idata.profile.agentproxy.dto.t2.T2ExtractResponse;
 import com.idata.profile.common.constant.PipelineStatus;
 import com.idata.profile.common.util.StableUuidUtil;
 import com.idata.profile.entity.account.SocialAccount;
+import com.idata.profile.entity.content.MediaAsset;
 import com.idata.profile.entity.content.MediaContent;
 import com.idata.profile.entity.raw.RawRecord;
 import com.idata.profile.entity.task.PipelineTask;
 import com.idata.profile.infra.neo4j.Neo4jGraphService;
 import com.idata.profile.mapper.account.SocialAccountMapper;
+import com.idata.profile.mapper.content.MediaAssetMapper;
 import com.idata.profile.mapper.content.MediaContentMapper;
 import com.idata.profile.mapper.graph.EventMapper;
 import com.idata.profile.mapper.graph.NarrativeMapper;
@@ -41,7 +43,7 @@ public class T2ExtractionStep {
     private static final Set<String> ALLOWED_RELATION_TYPES = Set.of(
             "SAME_AS", "HAS_ACCOUNT", "ALIAS_OF", "MERGED_INTO",
             "AFFILIATED_WITH", "PART_OF", "CONTROLS", "OWNS", "MEMBER_OF", "ADMIN_OF", "PUBLISHED_IN",
-            "AUTHORED", "REPLY_TO", "COMMENT_ON", "REPOSTS", "QUOTES", "SHARES", "REFERENCES_URL", "MENTIONS",
+            "AUTHORED", "REPLY_TO", "COMMENT_ON", "REPOSTS", "QUOTES", "SHARES", "REFERENCES_URL", "MENTIONS", "HAS_MEDIA",
             "DESCRIBES", "REPORTS", "EVENT_OCCURRED_AT", "EVENT_INVOLVES_ENTITY", "LOCATED_IN", "POSTS_FROM",
             "CONTENT_EXPRESSES_NARRATIVE", "NARRATIVE_TARGETS_ENTITY", "NARRATIVE_ABOUT_EVENT",
             "SUPPORTS", "OPPOSES", "HAS_EMOTION",
@@ -58,6 +60,7 @@ public class T2ExtractionStep {
     private final NarrativeMapper narrativeMapper;
     private final Neo4jGraphService neo4jGraphService;
     private final SocialAccountMapper socialAccountMapper;
+    private final MediaAssetMapper mediaAssetMapper;
 
     public void run(PipelineTask task) {
         OffsetDateTime startedAt = OffsetDateTime.now();
@@ -341,9 +344,60 @@ public class T2ExtractionStep {
             }
 
             writeHashtagNarratives(content);
+            writeMediaAssetNodes(content);
         } catch (Exception e) {
             log.warn("Structural MediaContent Neo4j write failed, taskId={}, contentId={}",
                     task.getId(), task.getContentId(), e);
+        }
+    }
+
+    private void writeMediaAssetNodes(MediaContent content) {
+        UUID[] assetIds = content.getMediaAssetIds();
+        if (assetIds == null || assetIds.length == 0) {
+            return;
+        }
+
+        for (UUID assetId : assetIds) {
+            try {
+                MediaAsset asset = mediaAssetMapper.selectById(assetId);
+                if (asset == null) {
+                    log.debug("MediaAsset not yet available, will be written later, assetId={}", assetId);
+                    continue;
+                }
+                if ("thumbnail".equals(asset.getAssetType())) {
+                    continue;
+                }
+
+                Map<String, Object> props = new HashMap<>();
+                putIfHasText(props, "assetType", asset.getAssetType());
+                putIfHasText(props, "mimeType", asset.getMimeType());
+                putIfHasText(props, "sourceUrl", asset.getSourceUrl());
+                putIfHasText(props, "minioBucket", asset.getMinioBucket());
+                putIfHasText(props, "minioKey", asset.getMinioKey());
+                putIfNotNull(props, "fileSizeBytes", asset.getFileSizeBytes());
+                putIfNotNull(props, "width", asset.getWidth());
+                putIfNotNull(props, "height", asset.getHeight());
+                putIfNotNull(props, "durationSeconds", asset.getDurationSeconds());
+                putIfHasText(props, "ocrText", asset.getOcrText());
+                putIfHasText(props, "asrText", asset.getAsrText());
+                putIfHasText(props, "sceneLabel", asset.getSceneLabel());
+                putIfHasText(props, "objectAnnotations", asset.getObjectAnnotations());
+                putIfNotNull(props, "aigcScore",
+                        asset.getAigcScore() != null ? asset.getAigcScore().doubleValue() : null);
+                props.put("source", "backend_structural");
+
+                neo4jGraphService.mergeNode("MediaAsset", asset.getId().toString(), props);
+                Map<String, Object> relationProps = new HashMap<>();
+                putIfHasText(relationProps, "assetType", asset.getAssetType());
+                relationProps.put("source", "backend_structural");
+                neo4jGraphService.mergeRelation(
+                        "MediaContent", content.getId().toString(),
+                        "MediaAsset", asset.getId().toString(),
+                        "HAS_MEDIA",
+                        relationProps);
+            } catch (Exception e) {
+                log.warn("Failed to write MediaAsset to Neo4j, assetId={}", assetId, e);
+            }
         }
     }
 

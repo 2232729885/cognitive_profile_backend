@@ -67,6 +67,7 @@ public class ImageEmbeddingJob {
                 imageAnnotationUtil.applyImageAnnotations(asset, response);
                 asset.setT1Annotated(true);
                 mediaAssetMapper.updateById(asset);
+                imageAnnotationUtil.updateNeo4jAnnotations(asset);
                 success++;
             } catch (Exception e) {
                 log.warn("[ImageEmbeddingJob] T1图像标注回填失败, assetId={}", asset.getId(), e);
