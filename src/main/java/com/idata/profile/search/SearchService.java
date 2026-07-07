@@ -25,6 +25,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -49,12 +50,24 @@ public class SearchService {
         int safeSize = normalizeSize(size);
         int fetchSize = Math.max((safePage + 1) * safeSize, safeSize);
 
-        List<String> rankedIds = esService.searchByKeyword(keyword, platform, language, fetchSize);
+        List<MediaContentEsService.EsSearchResult> esResults = esService.searchByKeywordWithHighlight(
+                keyword, platform, language, fetchSize);
+        List<String> rankedIds = esResults.stream()
+                .map(MediaContentEsService.EsSearchResult::getContentId)
+                .toList();
+        Map<String, Map<String, List<String>>> highlights = esResults.stream()
+                .collect(Collectors.toMap(
+                        MediaContentEsService.EsSearchResult::getContentId,
+                        MediaContentEsService.EsSearchResult::getHighlights,
+                        (left, right) -> left,
+                        LinkedHashMap::new));
         int fromIndex = Math.min(safePage * safeSize, rankedIds.size());
         int toIndex = Math.min(fromIndex + safeSize, rankedIds.size());
         List<MediaContent> items = fetchContentsInOrder(rankedIds.subList(fromIndex, toIndex));
 
-        return buildResult(items, rankedIds.size(), "text", startedAt);
+        SearchResult result = buildResult(items, rankedIds.size(), "text", startedAt);
+        result.setHighlights(highlights);
+        return result;
     }
 
     public SearchResult searchBySemantic(String queryText, String platform,

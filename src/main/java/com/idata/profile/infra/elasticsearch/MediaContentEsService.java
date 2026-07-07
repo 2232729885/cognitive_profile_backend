@@ -5,6 +5,8 @@ import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch.core.IndexResponse;
 import co.elastic.clients.elasticsearch.core.SearchResponse;
 import co.elastic.clients.elasticsearch.core.search.Hit;
+import lombok.AllArgsConstructor;
+import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -21,6 +23,50 @@ public class MediaContentEsService {
     private static final String MEDIA_CONTENTS_INDEX = "media_contents_index";
 
     private final ElasticsearchClient esClient;
+
+    /**
+     * 确保索引存在并应用正确的 mapping（含 IK 分词器）。
+     * 应用启动时调用一次，索引已存在时跳过。
+     */
+    public void ensureIndex() {
+        try {
+            boolean exists = esClient.indices().exists(e -> e.index(MEDIA_CONTENTS_INDEX)).value();
+            if (exists) {
+                log.info("ES index already exists: {}", MEDIA_CONTENTS_INDEX);
+                return;
+            }
+
+            esClient.indices().create(c -> c
+                    .index(MEDIA_CONTENTS_INDEX)
+                    .settings(s -> s
+                            .analysis(a -> a
+                                    .analyzer("ik_max_word_analyzer", an -> an
+                                            .custom(cu -> cu
+                                                    .tokenizer("ik_max_word")
+                                                    .filter(List.of("lowercase"))))
+                                    .analyzer("ik_smart_analyzer", an -> an
+                                            .custom(cu -> cu
+                                                    .tokenizer("ik_smart")
+                                                    .filter(List.of("lowercase"))))))
+                    .mappings(m -> m
+                            .properties("body_text", p -> p
+                                    .text(t -> t
+                                            .analyzer("ik_max_word")
+                                            .searchAnalyzer("ik_smart")))
+                            .properties("title", p -> p
+                                    .text(t -> t
+                                            .analyzer("ik_max_word")
+                                            .searchAnalyzer("ik_smart")))
+                            .properties("platform", p -> p.keyword(k -> k))
+                            .properties("language", p -> p.keyword(k -> k))
+                            .properties("hashtags", p -> p.keyword(k -> k))
+                            .properties("published_at", p -> p
+                                    .date(d -> d.format("strict_date_optional_time||epoch_millis")))));
+            log.info("ES index created with IK analyzer: {}", MEDIA_CONTENTS_INDEX);
+        } catch (IOException e) {
+            log.error("Failed to ensure ES index: {}", MEDIA_CONTENTS_INDEX, e);
+        }
+    }
 
     public void index(String contentId, Object document) {
         try {
@@ -75,6 +121,53 @@ public class MediaContentEsService {
         }
     }
 
+    public List<EsSearchResult> searchByKeywordWithHighlight(String keyword, String platform,
+                                                             String language, int size) {
+        if (esClient == null || !hasText(keyword) || size <= 0) {
+            return List.of();
+        }
+
+        try {
+            SearchResponse<Map> response = esClient.search(s -> s
+                            .index(MEDIA_CONTENTS_INDEX)
+                            .size(size)
+                            .query(q -> q.bool(b -> {
+                                b.must(m -> m.multiMatch(mm -> mm
+                                        .query(keyword)
+                                        .fields("body_text", "title")));
+                                if (hasText(platform)) {
+                                    b.filter(f -> f.term(t -> t.field("platform").value(platform)));
+                                }
+                                if (hasText(language)) {
+                                    b.filter(f -> f.term(t -> t.field("language").value(language)));
+                                }
+                                return b;
+                            }))
+                            .highlight(h -> h
+                                    .fields("body_text", f -> f
+                                            .numberOfFragments(3)
+                                            .fragmentSize(150)
+                                            .preTags("<em class=\"highlight\">")
+                                            .postTags("</em>"))
+                                    .fields("title", f -> f
+                                            .numberOfFragments(1)
+                                            .preTags("<em class=\"highlight\">")
+                                            .postTags("</em>"))),
+                    Map.class);
+
+            return response.hits().hits().stream()
+                    .map(hit -> new EsSearchResult(hit.id(), hit.highlight()))
+                    .toList();
+        } catch (ElasticsearchException e) {
+            if (isIndexNotFound(e)) {
+                return List.of();
+            }
+            throw e;
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to search media content by keyword: " + keyword, e);
+        }
+    }
+
     /**
      * 按 hashtag 精确检索，返回包含该 hashtag 的内容 ID 列表
      */
@@ -110,5 +203,15 @@ public class MediaContentEsService {
 
     private boolean hasText(String value) {
         return value != null && !value.trim().isEmpty();
+    }
+
+    @Data
+    @AllArgsConstructor
+    public static class EsSearchResult {
+        private String contentId;
+        /**
+         * key: 字段名（body_text/title），value: 高亮 HTML 片段列表
+         */
+        private Map<String, List<String>> highlights;
     }
 }
