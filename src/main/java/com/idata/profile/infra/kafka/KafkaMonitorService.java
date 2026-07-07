@@ -3,12 +3,12 @@ package com.idata.profile.infra.kafka;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.TopicPartitionInfo;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.kafka.core.KafkaAdmin;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -23,7 +23,8 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class KafkaMonitorService {
 
-    private final KafkaAdmin kafkaAdmin;
+    @Value("${spring.kafka.bootstrap-servers:localhost:9092}")
+    private String bootstrapServers;
 
     @Value("${spring.kafka.consumer.group-id:cognitive-profile-ingestion}")
     private String consumerGroupId;
@@ -39,7 +40,7 @@ public class KafkaMonitorService {
     );
 
     public List<Map<String, Object>> getTopicStats() {
-        try (AdminClient adminClient = AdminClient.create(kafkaAdmin.getConfigurationProperties())) {
+        try (AdminClient adminClient = AdminClient.create(adminConfig())) {
             Map<TopicPartition, Long> endOffsets = getEndOffsets(adminClient);
             Map<TopicPartition, Long> committedOffsets = getCommittedOffsets(adminClient);
 
@@ -86,6 +87,10 @@ public class KafkaMonitorService {
                 return item;
             }).collect(Collectors.toList());
         }
+    }
+
+    private Map<String, Object> adminConfig() {
+        return Map.of(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
     }
 
     private Map<TopicPartition, Long> getEndOffsets(AdminClient adminClient) throws Exception {
