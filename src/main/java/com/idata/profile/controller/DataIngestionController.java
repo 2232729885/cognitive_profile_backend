@@ -101,6 +101,36 @@ public class DataIngestionController {
         return Result.ok(task);
     }
 
+    /**
+     * 原始记录列表，支持按 record_type、pipeline_status、platform 过滤
+     */
+    @GetMapping("/raw-records")
+    public Result<IPage<RawRecord>> listRawRecords(@RequestParam(required = false) String recordType,
+                                                   @RequestParam(required = false) String pipelineStatus,
+                                                   @RequestParam(required = false) String platform,
+                                                   @RequestParam(defaultValue = "0") int page,
+                                                   @RequestParam(defaultValue = "20") int size) {
+        LambdaQueryWrapper<RawRecord> wrapper = new LambdaQueryWrapper<RawRecord>()
+                .eq(hasText(recordType), RawRecord::getRecordType, recordType)
+                .eq(hasText(pipelineStatus), RawRecord::getPipelineStatus, pipelineStatus)
+                .eq(hasText(platform), RawRecord::getPlatform, platform)
+                .orderByDesc(RawRecord::getCreatedAt);
+        return Result.ok(rawRecordMapper.selectPage(
+                new Page<>(Math.max(page, 0) + 1L, normalizeSize(size)), wrapper));
+    }
+
+    /**
+     * 原始记录详情（含 t1Output、t2Output 等处理结果）
+     */
+    @GetMapping("/raw-records/{id}")
+    public Result<RawRecord> getRawRecord(@PathVariable UUID id) {
+        RawRecord record = rawRecordMapper.selectById(id);
+        if (record == null) {
+            return Result.fail("NOT_FOUND", "\u8bb0\u5f55\u4e0d\u5b58\u5728");
+        }
+        return Result.ok(record);
+    }
+
     @GetMapping("/pipeline/stats")
     public Result<Map<String, Object>> pipelineStats() {
         List<Map<String, Object>> rows = rawRecordMapper.selectMaps(
