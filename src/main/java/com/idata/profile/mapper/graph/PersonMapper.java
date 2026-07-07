@@ -20,7 +20,9 @@ public interface PersonMapper extends BaseMapper<Person> {
      * 画像生成定时任务选取候选人：见 batch.profile.PersonProfileGenerationJob。
      * 排除7天内已生成active画像的人物，按importanceScore排序。
      */
-    @Select("SELECT p.* FROM persons p WHERE p.id NOT IN ( " +
+    @Select("SELECT p.* FROM persons p " +
+            "WHERE p.dedup_status = 'canonical' " +
+            "AND p.id NOT IN ( " +
             "  SELECT person_id FROM person_profiles " +
             "  WHERE status = 'active' AND generated_at > NOW() - INTERVAL '7 days' " +
             ") ORDER BY p.importance_score DESC LIMIT #{limit}")
