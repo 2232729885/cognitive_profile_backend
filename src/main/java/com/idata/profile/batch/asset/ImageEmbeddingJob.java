@@ -6,6 +6,7 @@ import com.idata.profile.agentproxy.dto.t1.T1AnnotateResponse;
 import com.idata.profile.common.util.ImageAnnotationUtil;
 import com.idata.profile.entity.content.MediaAsset;
 import com.idata.profile.mapper.content.MediaAssetMapper;
+import com.idata.profile.mapper.content.MediaContentMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -23,6 +24,7 @@ public class ImageEmbeddingJob {
 
     private final ImageEmbeddingService imageEmbeddingService;
     private final MediaAssetMapper mediaAssetMapper;
+    private final MediaContentMapper mediaContentMapper;
     private final AgentProxyClient agentProxyClient;
     private final ImageAnnotationUtil imageAnnotationUtil;
 
@@ -30,11 +32,19 @@ public class ImageEmbeddingJob {
     public void run() {
         log.info("[ImageEmbeddingJob] 开始处理");
 
+        backfillContentIds();
         backfillT1ImageAnnotations();
 
         int successCount = imageEmbeddingService.processPending(BATCH_LIMIT);
         if (successCount > 0) {
             log.info("Image embedding scheduled job indexed {} assets", successCount);
+        }
+    }
+
+    private void backfillContentIds() {
+        int updated = mediaContentMapper.backfillMediaAssetIds();
+        if (updated > 0) {
+            log.info("[ImageEmbeddingJob] media_contents.media_asset_ids backfilled, updated={}", updated);
         }
     }
 

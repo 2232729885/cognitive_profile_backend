@@ -19,6 +19,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
 
+import java.util.UUID;
+
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -52,9 +54,12 @@ public class MediaAssetConsumer {
         rawRecordMapper.insert(rawRecord);
 
         MediaAsset asset = normalizer.normalize(kafkaMessage, rawRecord);
-        linkContent(kafkaMessage, asset, rawRecord);
+        UUID linkedContentId = linkContent(kafkaMessage, asset, rawRecord);
         int inserted = mediaAssetMapper.insertIgnoreOnConflictSha256(asset);
         MediaAsset indexedAsset = inserted > 0 ? asset : mediaAssetMapper.selectBySha256(asset.getSha256());
+        if (linkedContentId != null && indexedAsset != null) {
+            mediaContentMapper.appendMediaAssetId(linkedContentId, indexedAsset.getId().toString());
+        }
 
         rawRecord.setPipelineStatus(PipelineStatus.NORMALIZED.name());
         rawRecordMapper.updateById(rawRecord);
@@ -89,16 +94,18 @@ public class MediaAssetConsumer {
         return IngestionMessageSupport.buildRawRecord(kafkaMessage, KafkaTopicConstants.MEDIA_ASSET);
     }
 
-    private void linkContent(Object kafkaMessage, MediaAsset asset, RawRecord rawRecord) {
+    private UUID linkContent(Object kafkaMessage, MediaAsset asset, RawRecord rawRecord) {
         String platformContentId = IngestionMessageSupport.text(
                 IngestionMessageSupport.data(kafkaMessage), "platform_content_id");
         if (!IngestionMessageSupport.hasText(platformContentId)) {
-            return;
+            return null;
         }
         MediaContent content = mediaContentMapper.selectByPlatformAndContentId(
                 rawRecord.getPlatform(), platformContentId);
         if (content != null) {
             asset.setContentId(content.getId());
+            return content.getId();
         }
+        return null;
     }
 }

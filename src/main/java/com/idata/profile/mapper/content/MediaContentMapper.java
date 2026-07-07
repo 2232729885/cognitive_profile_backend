@@ -53,6 +53,27 @@ public interface MediaContentMapper extends BaseMapper<MediaContent> {
     @Update("UPDATE media_contents SET propagation_synced_to_neo4j = TRUE WHERE id = #{id}")
     int markPropagationSyncedToNeo4j(@Param("id") UUID id);
 
+    @Update("UPDATE media_contents " +
+            "SET media_asset_ids = array_append(coalesce(media_asset_ids, ARRAY[]::uuid[]), #{assetId}::uuid) " +
+            "WHERE id = #{contentId} " +
+            "AND (media_asset_ids IS NULL OR NOT (#{assetId}::uuid = ANY(media_asset_ids)))")
+    int appendMediaAssetId(@Param("contentId") UUID contentId,
+                           @Param("assetId") String assetId);
+
+    @Update("""
+            UPDATE media_contents mc
+            SET media_asset_ids = subq.asset_ids
+            FROM (
+                SELECT content_id,
+                       array_agg(id ORDER BY created_at) AS asset_ids
+                FROM media_assets
+                WHERE content_id IS NOT NULL
+                GROUP BY content_id
+            ) subq
+            WHERE mc.id = subq.content_id
+            """)
+    int backfillMediaAssetIds();
+
     @Select("SELECT COUNT(*) FROM media_contents WHERE propagation_synced_to_neo4j = FALSE " +
             "AND (parent_content_id IS NOT NULL OR repost_of_content_id IS NOT NULL " +
             "     OR quoted_content_id IS NOT NULL OR root_content_id IS NOT NULL) " +
