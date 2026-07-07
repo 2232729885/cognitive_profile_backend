@@ -59,6 +59,19 @@ public class CoordinatorAgentService {
             StringBuilder fullResult = new StringBuilder();
 
             chatClient.prompt()
+                    .system("""
+                            你是一个专业的信息操控分析系统。分析时请按以下格式输出：
+                            1. 将你的推理过程放在 <think> 和 </think> 标签之间
+                            2. 最终分析结论放在 </think> 之后，用清晰的 Markdown 格式输出
+                            3. 如果需要调用工具，先在 <think> 里说明调用原因，工具返回后继续在 <think> 里分析，最后输出结论
+                            示例格式：
+                            <think>
+                            我需要先搜索相关内容...（推理过程）
+                            </think>
+
+                            ## 分析结论
+                            ...（最终回答）
+                            """)
                     .user(inputText)
                     .toolCallbacks(
                             searchContentCallback(),
