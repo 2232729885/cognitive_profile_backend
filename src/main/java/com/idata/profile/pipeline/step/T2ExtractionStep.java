@@ -128,11 +128,12 @@ public class T2ExtractionStep {
             return;
         }
 
+        String entityType = entity.getType().toLowerCase();
         String canonicalName = entity.getCanonicalName().trim();
         BigDecimal importanceScore = entity.getImportanceScore() != null
                 ? entity.getImportanceScore() : BigDecimal.ZERO;
 
-        switch (entity.getType()) {
+        switch (entityType) {
             case "person" -> personMapper.insertEntity(canonicalName, importanceScore);
             case "organization" -> organizationMapper.insertEntity(canonicalName, importanceScore);
             case "event" -> eventMapper.insertEntity(canonicalName, importanceScore);
@@ -173,13 +174,14 @@ public class T2ExtractionStep {
                     continue;
                 }
                 try {
-                    String label = toNeo4jLabel(entity.getType());
+                    String entityType = entity.getType().toLowerCase();
+                    String label = toNeo4jLabel(entityType);
                     if (!hasText(label)) {
                         continue;
                     }
-                    String nodeId = stableUuid(entity.getType() + ":" + entity.getCanonicalName());
+                    String nodeId = stableUuid(entityType + ":" + entity.getCanonicalName());
                     Map<String, Object> props = new HashMap<>();
-                    String nameKey = "narrative".equals(entity.getType()) ? "canonicalLabel" : "canonicalName";
+                    String nameKey = "narrative".equals(entityType) ? "canonicalLabel" : "canonicalName";
                     props.put(nameKey, entity.getCanonicalName());
                     if (entity.getImportanceScore() != null) {
                         props.put("importanceScore", entity.getImportanceScore().doubleValue());
