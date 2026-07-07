@@ -8,6 +8,7 @@ import com.idata.profile.entity.graph.Narrative;
 import com.idata.profile.entity.graph.Person;
 import com.idata.profile.entity.profile.PersonProfile;
 import com.idata.profile.entity.raw.RawRecord;
+import com.idata.profile.infra.kafka.KafkaMonitorService;
 import com.idata.profile.infra.neo4j.Neo4jGraphService;
 import com.idata.profile.mapper.account.SocialAccountMapper;
 import com.idata.profile.mapper.content.MediaContentMapper;
@@ -43,6 +44,7 @@ public class MetricsController {
     private final SocialAccountMapper socialAccountMapper;
     private final NarrativeMapper narrativeMapper;
     private final ExecutorService pipelineThreadPool;
+    private final KafkaMonitorService kafkaMonitorService;
 
     @GetMapping("/pipeline")
     public Result<Map<String, Object>> pipeline(@RequestParam(defaultValue = "24") int hours) {
@@ -80,6 +82,11 @@ public class MetricsController {
         result.put("t4IndexedSuccessRate", rawStats.get("t4IndexedSuccessRate"));
         result.put("last24hCount", rawStats.get("last24hCount"));
         return Result.ok(result);
+    }
+
+    @GetMapping("/kafka")
+    public Result<List<Map<String, Object>>> kafka() {
+        return Result.ok(kafkaMonitorService.getTopicStats());
     }
 
     private Map<String, Object> pipelineStats(int hours) {
