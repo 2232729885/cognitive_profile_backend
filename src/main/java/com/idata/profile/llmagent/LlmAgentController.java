@@ -399,7 +399,7 @@ public class LlmAgentController {
 
         String userPrompt = buildT6UserPrompt(request);
         try {
-            String raw = callJsonLlm(T6_SYSTEM_PROMPT, userPrompt);
+            String raw = callJsonLlm(T6_SYSTEM_PROMPT, userPrompt, 4096);
 
             T6IdentifyResponse response = parseT6Response(raw, request);
             normalizeT6Summary(response, request, startedAt);
@@ -517,8 +517,12 @@ public class LlmAgentController {
     }
 
     private String callJsonLlm(String systemPrompt, String userPrompt) {
+        return callJsonLlm(systemPrompt, userPrompt, null);
+    }
+
+    private String callJsonLlm(String systemPrompt, String userPrompt, Integer maxTokens) {
         return chatClient.prompt()
-                .options(jsonOnlyOptions())
+                .options(jsonOnlyOptions(maxTokens))
                 .system(systemPrompt + """
 
                         硬性输出约束：
@@ -533,7 +537,11 @@ public class LlmAgentController {
     }
 
     private OpenAiChatOptions.Builder jsonOnlyOptions() {
-        return OpenAiChatOptions.builder()
+        return jsonOnlyOptions(null);
+    }
+
+    private OpenAiChatOptions.Builder jsonOnlyOptions(Integer maxTokens) {
+        OpenAiChatOptions.Builder builder = OpenAiChatOptions.builder()
                 .temperature(0.1)
                 .responseFormat(OpenAiChatModel.ResponseFormat.builder()
                         .type(OpenAiChatModel.ResponseFormat.Type.JSON_OBJECT)
@@ -542,6 +550,10 @@ public class LlmAgentController {
                         "enable_thinking", false,
                         "chat_template_kwargs", Map.of("enable_thinking", false)
                 ));
+        if (maxTokens != null) {
+            builder.maxTokens(maxTokens);
+        }
+        return builder;
     }
 
     private String buildT3UserPrompt(T3ResolveRequest request) {

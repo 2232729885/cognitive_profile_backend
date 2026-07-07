@@ -4,10 +4,13 @@ import com.idata.profile.entity.system.SubAgentRegistry;
 import com.idata.profile.mapper.system.SubAgentRegistryMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
+
+import java.time.Duration;
 
 /**
  * 全系统调用T1-T6 Agent的唯一入口。
@@ -27,7 +30,6 @@ import org.springframework.web.client.RestClient;
 public class AgentProxyClient {
 
     private final SubAgentRegistryMapper subAgentRegistryMapper;
-    private final RestClient restClient = RestClient.create();
 
     /**
      * 调用指定Agent的指定action。
@@ -53,11 +55,30 @@ public class AgentProxyClient {
         log.debug("调用Agent: code={}, action={}, urlType={}, url={}",
                 agentCode, action, agent.getActiveUrlType(), baseUrl);
 
-        // TODO: 根据实际 T1-T6 Agent 接口规范补充请求头、超时配置（agent.getTimeoutSeconds()）
-        return restClient.post()
+        return restClient(timeoutSeconds(agentCode, agent.getTimeoutSeconds())).post()
                 .uri(baseUrl + "/" + action)
                 .body(request)
                 .retrieve()
                 .body(responseType);
+    }
+
+    private RestClient restClient(int timeoutSeconds) {
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        Duration timeout = Duration.ofSeconds(timeoutSeconds);
+        requestFactory.setConnectTimeout(timeout);
+        requestFactory.setReadTimeout(timeout);
+        return RestClient.builder()
+                .requestFactory(requestFactory)
+                .build();
+    }
+
+    private int timeoutSeconds(String agentCode, Integer configuredTimeoutSeconds) {
+        int timeout = configuredTimeoutSeconds == null || configuredTimeoutSeconds <= 0
+                ? 60
+                : configuredTimeoutSeconds;
+        if ("T6".equals(agentCode)) {
+            return Math.max(timeout, 120);
+        }
+        return timeout;
     }
 }
