@@ -50,7 +50,7 @@ public interface MediaAssetMapper extends BaseMapper<MediaAsset> {
             <script>
             SELECT * FROM media_assets WHERE id IN
             <foreach collection='ids' item='id' open='(' separator=',' close=')'>
-                #{id,typeHandler=org.apache.ibatis.type.UUIDTypeHandler}
+                #{id,typeHandler=com.idata.profile.infra.mybatis.UuidTypeHandler}
             </foreach>
             </script>
             """)
