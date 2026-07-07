@@ -5,14 +5,12 @@ import com.idata.profile.agentproxy.dto.t6.T6IdentifyRequest;
 import com.idata.profile.agentproxy.dto.t6.T6IdentifyResponse;
 import com.idata.profile.entity.account.SocialAccount;
 import com.idata.profile.entity.content.MediaContent;
-import com.idata.profile.entity.graph.Narrative;
 import com.idata.profile.entity.graph.Person;
 import com.idata.profile.entity.task.IdentificationResult;
 import com.idata.profile.entity.task.IdentificationTask;
 import com.idata.profile.infra.neo4j.Neo4jGraphService;
 import com.idata.profile.mapper.account.SocialAccountMapper;
 import com.idata.profile.mapper.content.MediaContentMapper;
-import com.idata.profile.mapper.graph.NarrativeMapper;
 import com.idata.profile.mapper.graph.PersonMapper;
 import com.idata.profile.mapper.task.IdentificationResultMapper;
 import com.idata.profile.mapper.task.IdentificationTaskMapper;
@@ -43,7 +41,6 @@ public class IdentificationTaskService {
 
     private final IdentificationTaskMapper identificationTaskMapper;
     private final IdentificationResultMapper identificationResultMapper;
-    private final NarrativeMapper narrativeMapper;
     private final PersonMapper personMapper;
     private final SocialAccountMapper socialAccountMapper;
     private final MediaContentMapper mediaContentMapper;
@@ -115,6 +112,10 @@ public class IdentificationTaskService {
         }
     }
 
+    public IdentificationTask getTask(UUID taskId) {
+        return identificationTaskMapper.selectById(taskId);
+    }
+
     private T6IdentifyRequest buildRequest(IdentificationTask task) {
         if (TRIGGER_NARRATIVE.equals(task.getTriggerType())) {
             return buildNarrativeRequest(task);
@@ -130,14 +131,9 @@ public class IdentificationTaskService {
             throw new IllegalArgumentException("narrativeId is required for triggerType=narrative");
         }
 
-        Narrative narrative = narrativeMapper.selectById(task.getNarrativeId());
-        if (narrative == null) {
-            throw new IllegalArgumentException("Narrative not found: " + task.getNarrativeId());
-        }
-
         List<UUID> accountUuids = neo4jGraphService.findSocialAccountIdsByNarrative(task.getNarrativeId());
         if (accountUuids.isEmpty()) {
-            log.warn("No social accounts found for narrativeId={}", task.getNarrativeId());
+            log.warn("No social accounts found for narrativeId={} in Neo4j", task.getNarrativeId());
         }
 
         List<SocialAccount> accounts = accountUuids.isEmpty()
