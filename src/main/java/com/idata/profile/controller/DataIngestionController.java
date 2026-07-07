@@ -7,10 +7,14 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.idata.profile.auth.JwtAuthFilter;
 import com.idata.profile.common.response.Result;
 import com.idata.profile.entity.content.CollectionTask;
+import com.idata.profile.entity.content.MediaAsset;
+import com.idata.profile.entity.content.MediaContent;
 import com.idata.profile.entity.raw.RawRecord;
 import com.idata.profile.entity.system.BatchImportTask;
 import com.idata.profile.infra.minio.MinioStorageService;
 import com.idata.profile.mapper.content.CollectionTaskMapper;
+import com.idata.profile.mapper.content.MediaAssetMapper;
+import com.idata.profile.mapper.content.MediaContentMapper;
 import com.idata.profile.mapper.raw.RawRecordMapper;
 import com.idata.profile.mapper.system.BatchImportTaskMapper;
 import jakarta.servlet.http.HttpServletRequest;
@@ -25,6 +29,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.time.OffsetDateTime;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -42,6 +47,8 @@ public class DataIngestionController {
     private final BatchImportTaskMapper batchImportTaskMapper;
     private final RawRecordMapper rawRecordMapper;
     private final CollectionTaskMapper collectionTaskMapper;
+    private final MediaContentMapper mediaContentMapper;
+    private final MediaAssetMapper mediaAssetMapper;
     private final MinioStorageService minioStorageService;
 
     @PostMapping("/upload")
@@ -129,6 +136,48 @@ public class DataIngestionController {
             return Result.fail("NOT_FOUND", "\u8bb0\u5f55\u4e0d\u5b58\u5728");
         }
         return Result.ok(record);
+    }
+
+    /**
+     * 贴文详情：含关联媒体资产和传播链（原帖/父帖/引用帖）
+     */
+    @GetMapping("/contents/{contentId}")
+    public Result<Map<String, Object>> getContentDetail(@PathVariable UUID contentId) {
+        MediaContent content = mediaContentMapper.selectById(contentId);
+        if (content == null) {
+            return Result.fail("NOT_FOUND", "\u5185\u5bb9\u4e0d\u5b58\u5728");
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("content", content);
+
+        if (content.getMediaAssetIds() != null && content.getMediaAssetIds().length > 0) {
+            List<UUID> assetIds = Arrays.asList(content.getMediaAssetIds());
+            List<MediaAsset> assets = mediaAssetMapper.selectByIds(assetIds);
+            result.put("assets", assets);
+        } else {
+            result.put("assets", List.of());
+        }
+
+        Map<String, Object> propagation = new LinkedHashMap<>();
+        if (hasText(content.getParentContentId())) {
+            MediaContent parent = mediaContentMapper.selectByPlatformAndContentId(
+                    content.getPlatform(), content.getParentContentId());
+            propagation.put("parent", parent);
+        }
+        if (hasText(content.getRepostOfContentId())) {
+            MediaContent repost = mediaContentMapper.selectByPlatformAndContentId(
+                    content.getPlatform(), content.getRepostOfContentId());
+            propagation.put("repostOf", repost);
+        }
+        if (hasText(content.getQuotedContentId())) {
+            MediaContent quoted = mediaContentMapper.selectByPlatformAndContentId(
+                    content.getPlatform(), content.getQuotedContentId());
+            propagation.put("quotedContent", quoted);
+        }
+        result.put("propagation", propagation);
+
+        return Result.ok(result);
     }
 
     @GetMapping("/pipeline/stats")
