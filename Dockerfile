@@ -1,4 +1,4 @@
-FROM eclipse-temurin:26-jre
+FROM hlyn3voy1ie4dwn74t.xuanyuan.run/eclipse-temurin:26-jre
 
 # 时区
 ENV TZ=Asia/Shanghai
@@ -8,7 +8,7 @@ WORKDIR /app
 
 # 本地先打好 jar 包：mvn package -DskipTests
 # jar 包路径：target/cognitive-profile-backend-*.jar
-COPY target/cognitive-profile-backend-*.jar app.jar
+COPY cognitive-profile-backend-*.jar app.jar
 
 # 非 root 用户运行
 RUN groupadd -r appuser && useradd -r -g appuser appuser
