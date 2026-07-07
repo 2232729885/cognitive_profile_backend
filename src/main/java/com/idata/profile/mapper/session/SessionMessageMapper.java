@@ -14,4 +14,10 @@ public interface SessionMessageMapper extends BaseMapper<SessionMessage> {
 
     @Select("SELECT * FROM session_messages WHERE session_id = #{sessionId} ORDER BY created_at ASC")
     List<SessionMessage> selectBySessionIdOrderByCreatedAt(@Param("sessionId") UUID sessionId);
+
+    @Select("SELECT * FROM session_messages " +
+            "WHERE session_id = #{sessionId} " +
+            "ORDER BY created_at DESC LIMIT #{limit}")
+    List<SessionMessage> selectRecentBySessionId(@Param("sessionId") UUID sessionId,
+                                                 @Param("limit") int limit);
 }

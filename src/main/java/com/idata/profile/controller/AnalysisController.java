@@ -15,12 +15,18 @@ import jakarta.servlet.http.HttpServletRequest;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -55,12 +61,48 @@ public class AnalysisController {
 
         WorkflowTask task = workflowTaskService.createTask(session.getId(), userId, request.getInputText());
         insertUserMessage(session, request.getInputText());
-        coordinatorAgentService.executeAsync(task.getId(), request.getInputText());
+        coordinatorAgentService.executeAsync(task.getId(), session.getId(), request.getInputText());
 
         return Result.ok(new AnalysisTaskResponse(
                 task.getId(),
                 session.getId(),
                 task.getStatus(),
+                "/api/analysis/" + task.getId() + "/stream"
+        ));
+    }
+
+    @PostMapping("/tasks/with-file")
+    public Result<AnalysisTaskResponse> createTaskWithFile(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam("inputText") String inputText,
+            @RequestParam(value = "sessionId", required = false) UUID sessionId,
+            HttpServletRequest request) throws IOException {
+
+        UUID userId = (UUID) request.getAttribute(JwtAuthFilter.ATTR_USER_ID);
+        if (userId == null) {
+            return Result.fail("UNAUTHORIZED", "\u672a\u8ba4\u8bc1");
+        }
+        if (inputText == null || inputText.isBlank()) {
+            return Result.fail("BAD_REQUEST", "inputText\u4e0d\u80fd\u4e3a\u7a7a");
+        }
+
+        String fileContent = extractFileContent(file);
+        String fullInput = inputText + "\n\n【附件内容】\n"
+                + fileContent.substring(0, Math.min(fileContent.length(), 3000));
+
+        Session session = resolveSession(sessionId, userId, inputText);
+        if (session == null) {
+            return Result.fail("NOT_FOUND", "\u4f1a\u8bdd\u4e0d\u5b58\u5728");
+        }
+
+        WorkflowTask task = workflowTaskService.createTask(session.getId(), userId, inputText);
+        insertUserMessage(session, inputText + " [附件: " + safeFilename(file.getOriginalFilename()) + "]");
+        coordinatorAgentService.executeAsync(task.getId(), session.getId(), fullInput);
+
+        return Result.ok(new AnalysisTaskResponse(
+                task.getId(),
+                session.getId(),
+                "PENDING",
                 "/api/analysis/" + task.getId() + "/stream"
         ));
     }
@@ -89,6 +131,40 @@ public class AnalysisController {
     @GetMapping("/sessions/{sessionId}/messages")
     public Result<List<SessionMessage>> listMessages(@PathVariable UUID sessionId) {
         return Result.ok(sessionMessageMapper.selectBySessionIdOrderByCreatedAt(sessionId));
+    }
+
+    @DeleteMapping("/sessions/{sessionId}")
+    public Result<Void> deleteSession(@PathVariable UUID sessionId,
+                                      HttpServletRequest request) {
+        UUID userId = (UUID) request.getAttribute(JwtAuthFilter.ATTR_USER_ID);
+        Session session = sessionMapper.selectById(sessionId);
+        if (session == null || !session.getUserId().equals(userId)) {
+            return Result.fail("NOT_FOUND", "\u4f1a\u8bdd\u4e0d\u5b58\u5728");
+        }
+        session.setIsArchived(true);
+        session.setUpdatedAt(OffsetDateTime.now());
+        sessionMapper.updateById(session);
+        return Result.ok(null);
+    }
+
+    @PutMapping("/sessions/{sessionId}/title")
+    public Result<Void> renameSession(@PathVariable UUID sessionId,
+                                      @RequestBody Map<String, String> body,
+                                      HttpServletRequest request) {
+        UUID userId = (UUID) request.getAttribute(JwtAuthFilter.ATTR_USER_ID);
+        Session session = sessionMapper.selectById(sessionId);
+        if (session == null || !session.getUserId().equals(userId)) {
+            return Result.fail("NOT_FOUND", "\u4f1a\u8bdd\u4e0d\u5b58\u5728");
+        }
+        String title = body.get("title");
+        if (title == null || title.isBlank()) {
+            return Result.fail("BAD_REQUEST", "\u6807\u9898\u4e0d\u80fd\u4e3a\u7a7a");
+        }
+        String trimmed = title.trim();
+        session.setTitle(trimmed.substring(0, Math.min(trimmed.length(), 50)));
+        session.setUpdatedAt(OffsetDateTime.now());
+        sessionMapper.updateById(session);
+        return Result.ok(null);
     }
 
     @GetMapping("/agent-info")
@@ -171,6 +247,20 @@ public class AnalysisController {
             return normalized;
         }
         return normalized.substring(0, 40);
+    }
+
+    private String extractFileContent(MultipartFile file) throws IOException {
+        String filename = file.getOriginalFilename() != null
+                ? file.getOriginalFilename().toLowerCase() : "";
+        if (filename.endsWith(".txt") || filename.endsWith(".md")
+                || filename.endsWith(".json") || filename.endsWith(".csv")) {
+            return new String(file.getBytes(), StandardCharsets.UTF_8);
+        }
+        return "[\u6587\u4ef6\u7c7b\u578b " + filename + " \u6682\u4e0d\u652f\u6301\u6587\u672c\u63d0\u53d6]";
+    }
+
+    private String safeFilename(String filename) {
+        return filename == null || filename.isBlank() ? "\u672a\u547d\u540d\u6587\u4ef6" : filename;
     }
 
     @Data

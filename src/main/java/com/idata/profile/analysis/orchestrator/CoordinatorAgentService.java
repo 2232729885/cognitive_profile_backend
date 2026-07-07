@@ -5,9 +5,16 @@ import com.idata.profile.analysis.tools.IdentifyTargetsTool;
 import com.idata.profile.analysis.tools.QueryGraphTool;
 import com.idata.profile.analysis.tools.SearchContentTool;
 import com.idata.profile.analysis.workflow.WorkflowTaskService;
+import com.idata.profile.entity.session.Session;
+import com.idata.profile.entity.session.SessionMessage;
+import com.idata.profile.mapper.session.SessionMapper;
+import com.idata.profile.mapper.session.SessionMessageMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.function.FunctionToolCallback;
 import org.springframework.scheduling.annotation.Async;
@@ -15,6 +22,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
+import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -46,6 +57,8 @@ public class CoordinatorAgentService {
     private final IdentifyTargetsTool identifyTargetsTool;
     private final QueryGraphTool queryGraphTool;
     private final GenerateProfileTool generateProfileTool;
+    private final SessionMapper sessionMapper;
+    private final SessionMessageMapper sessionMessageMapper;
 
     private final ConcurrentHashMap<String, SseEmitter> emitters = new ConcurrentHashMap<>();
 
@@ -62,7 +75,7 @@ public class CoordinatorAgentService {
     }
 
     @Async("pipelineThreadPool")
-    public void executeAsync(UUID taskId, String inputText) {
+    public void executeAsync(UUID taskId, UUID sessionId, String inputText) {
         long startMs = System.currentTimeMillis();
         CURRENT_TASK_ID.set(taskId.toString());
         workflowTaskService.updateStatus(taskId, "RUNNING");
@@ -71,9 +84,11 @@ public class CoordinatorAgentService {
 
         try {
             StringBuilder fullResult = new StringBuilder();
+            List<Message> historyMessages = buildHistoryMessages(sessionId);
 
             chatClient.prompt()
                     .system(SYSTEM_PROMPT)
+                    .messages(historyMessages)
                     .user(inputText)
                     .toolCallbacks(
                             searchContentCallback(),
@@ -93,6 +108,7 @@ public class CoordinatorAgentService {
                                 System.currentTimeMillis() - startMs);
                         String result = fullResult.toString();
                         workflowTaskService.completeTask(taskId, result, null, 0, totalMs);
+                        insertAssistantMessage(sessionId, taskId, result);
                         sendSseEvent(taskId.toString(), "task_completed",
                                 Map.of("taskId", taskId, "summary", safeString(result), "durationMs", totalMs));
                     })
@@ -134,6 +150,54 @@ public class CoordinatorAgentService {
 
     public String getSystemPrompt() {
         return SYSTEM_PROMPT;
+    }
+
+    private List<Message> buildHistoryMessages(UUID sessionId) {
+        if (sessionId == null) {
+            return List.of();
+        }
+        List<SessionMessage> history = new ArrayList<>(
+                sessionMessageMapper.selectRecentBySessionId(sessionId, 11));
+        Collections.reverse(history);
+        if (!history.isEmpty()) {
+            SessionMessage latest = history.get(history.size() - 1);
+            if ("user".equals(latest.getRole())) {
+                history.remove(history.size() - 1);
+            }
+        }
+
+        List<Message> messages = new ArrayList<>();
+        for (SessionMessage msg : history) {
+            if ("user".equals(msg.getRole())) {
+                messages.add(new UserMessage(safeString(msg.getContent())));
+            } else if ("assistant".equals(msg.getRole())) {
+                messages.add(new AssistantMessage(safeString(msg.getContent())));
+            }
+        }
+        return messages;
+    }
+
+    private void insertAssistantMessage(UUID sessionId, UUID taskId, String result) {
+        if (sessionId == null) {
+            return;
+        }
+        OffsetDateTime now = OffsetDateTime.now();
+        SessionMessage message = new SessionMessage();
+        message.setId(UUID.randomUUID());
+        message.setSessionId(sessionId);
+        message.setRole("assistant");
+        message.setContent(safeString(result));
+        message.setWorkflowTaskId(taskId);
+        message.setCreatedAt(now);
+        sessionMessageMapper.insert(message);
+
+        Session session = sessionMapper.selectById(sessionId);
+        if (session != null) {
+            session.setMessageCount((session.getMessageCount() == null ? 0 : session.getMessageCount()) + 1);
+            session.setLastMessageAt(now);
+            session.setUpdatedAt(now);
+            sessionMapper.updateById(session);
+        }
     }
 
     private ToolCallback searchContentCallback() {
