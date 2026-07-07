@@ -41,8 +41,11 @@ public class GenerateProfileTool implements Function<GenerateProfileTool.Request
 
     @Override
     public Response apply(Request request) {
+        return applyWithTaskId(request, currentTaskId());
+    }
+
+    public Response applyWithTaskId(Request request, String taskId) {
         long startedAt = System.currentTimeMillis();
-        String taskId = currentTaskId();
         sendStarted(taskId, "generate_profile", request, startedAt);
 
         try {

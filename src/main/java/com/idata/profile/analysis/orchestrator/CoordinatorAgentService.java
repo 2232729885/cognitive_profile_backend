@@ -80,9 +80,10 @@ public class CoordinatorAgentService {
     @Async("pipelineThreadPool")
     public void executeAsync(UUID taskId, UUID sessionId, String inputText) {
         long startMs = System.currentTimeMillis();
-        CURRENT_TASK_ID.set(taskId.toString());
+        String taskIdStr = taskId.toString();
+        CURRENT_TASK_ID.set(taskIdStr);
         workflowTaskService.updateStatus(taskId, "RUNNING");
-        sendSseEvent(taskId.toString(), "task_started",
+        sendSseEvent(taskIdStr, "task_started",
                 Map.of("taskId", taskId, "message", "\u5206\u6790\u4efb\u52a1\u5df2\u542f\u52a8"));
 
         try {
@@ -95,39 +96,39 @@ public class CoordinatorAgentService {
                     .messages(historyMessages)
                     .user(inputText)
                     .toolCallbacks(
-                            searchContentCallback(),
-                            identifyTargetsCallback(),
-                            queryGraphCallback(),
-                            generateProfileCallback()
+                            searchContentCallback(taskIdStr),
+                            identifyTargetsCallback(taskIdStr),
+                            queryGraphCallback(taskIdStr),
+                            generateProfileCallback(taskIdStr)
                     )
                     .stream()
                     .content()
                     .doOnNext(token -> {
                         fullResult.append(token);
-                        sendSseEvent(taskId.toString(), "token",
+                        sendSseEvent(taskIdStr, "token",
                                 Map.of("token", token));
                     })
                     .doOnComplete(() -> {
-                        runningTasks.remove(taskId.toString());
+                        runningTasks.remove(taskIdStr);
                         finished.set(true);
                         int totalMs = (int) Math.min(Integer.MAX_VALUE,
                                 System.currentTimeMillis() - startMs);
                         String result = fullResult.toString();
                         workflowTaskService.completeTask(taskId, result, null, 0, totalMs);
                         insertAssistantMessage(sessionId, taskId, result);
-                        sendSseEvent(taskId.toString(), "task_completed",
+                        sendSseEvent(taskIdStr, "task_completed",
                                 Map.of("taskId", taskId, "summary", safeString(result), "durationMs", totalMs));
                     })
                     .doOnError(e -> {
-                        runningTasks.remove(taskId.toString());
+                        runningTasks.remove(taskIdStr);
                         finished.set(true);
                         log.error("??????????, taskId={}", taskId, e);
                         workflowTaskService.failTask(taskId, e.getMessage());
-                        sendSseEvent(taskId.toString(), "task_failed",
+                        sendSseEvent(taskIdStr, "task_failed",
                                 Map.of("taskId", taskId, "error", safeString(e.getMessage())));
                     })
                     .doOnCancel(() -> {
-                        runningTasks.remove(taskId.toString());
+                        runningTasks.remove(taskIdStr);
                         finished.set(true);
                         int totalMs = (int) Math.min(Integer.MAX_VALUE,
                                 System.currentTimeMillis() - startMs);
@@ -136,13 +137,13 @@ public class CoordinatorAgentService {
                         if (!partialResult.isBlank()) {
                             insertAssistantMessage(sessionId, taskId, partialResult);
                         }
-                        sendSseEvent(taskId.toString(), "task_cancelled",
+                        sendSseEvent(taskIdStr, "task_cancelled",
                                 Map.of("taskId", taskId, "partial", safeString(partialResult)));
                     })
                     .subscribe();
 
             if (!finished.get()) {
-                runningTasks.put(taskId.toString(), disposable);
+                runningTasks.put(taskIdStr, disposable);
             }
             try {
                 while (!finished.get() && !disposable.isDisposed()) {
@@ -151,13 +152,13 @@ public class CoordinatorAgentService {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             } finally {
-                runningTasks.remove(taskId.toString(), disposable);
+                runningTasks.remove(taskIdStr, disposable);
             }
         } catch (Exception e) {
-            runningTasks.remove(taskId.toString());
+            runningTasks.remove(taskIdStr);
             log.error("????????, taskId={}", taskId, e);
             workflowTaskService.failTask(taskId, e.getMessage());
-            sendSseEvent(taskId.toString(), "task_failed",
+            sendSseEvent(taskIdStr, "task_failed",
                     Map.of("taskId", taskId, "error", safeString(e.getMessage())));
         } finally {
             CURRENT_TASK_ID.remove();
@@ -245,29 +246,33 @@ public class CoordinatorAgentService {
         }
     }
 
-    private ToolCallback searchContentCallback() {
-        return FunctionToolCallback.builder("searchContent", searchContentTool)
+    private ToolCallback searchContentCallback(String taskId) {
+        return FunctionToolCallback.builder("searchContent",
+                        (SearchContentTool.Request request) -> searchContentTool.applyWithTaskId(request, taskId))
                 .description("检索与分析主题相关的社交媒体内容和新闻")
                 .inputType(SearchContentTool.Request.class)
                 .build();
     }
 
-    private ToolCallback identifyTargetsCallback() {
-        return FunctionToolCallback.builder("identifyTargets", identifyTargetsTool)
+    private ToolCallback identifyTargetsCallback(String taskId) {
+        return FunctionToolCallback.builder("identifyTargets",
+                        (IdentifyTargetsTool.Request request) -> identifyTargetsTool.applyWithTaskId(request, taskId))
                 .description("识别信息操控的重点目标账号，分析BEND手法分布")
                 .inputType(IdentifyTargetsTool.Request.class)
                 .build();
     }
 
-    private ToolCallback queryGraphCallback() {
-        return FunctionToolCallback.builder("queryGraph", queryGraphTool)
+    private ToolCallback queryGraphCallback(String taskId) {
+        return FunctionToolCallback.builder("queryGraph",
+                        (QueryGraphTool.Request request) -> queryGraphTool.applyWithTaskId(request, taskId))
                 .description("查询某个实体在知识图谱中的关联关系网络")
                 .inputType(QueryGraphTool.Request.class)
                 .build();
     }
 
-    private ToolCallback generateProfileCallback() {
-        return FunctionToolCallback.builder("generateProfile", generateProfileTool)
+    private ToolCallback generateProfileCallback(String taskId) {
+        return FunctionToolCallback.builder("generateProfile",
+                        (GenerateProfileTool.Request request) -> generateProfileTool.applyWithTaskId(request, taskId))
                 .description("对指定人物生成全息画像，包含15个维度的深度分析")
                 .inputType(GenerateProfileTool.Request.class)
                 .build();

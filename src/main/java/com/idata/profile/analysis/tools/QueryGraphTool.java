@@ -45,8 +45,11 @@ public class QueryGraphTool implements Function<QueryGraphTool.Request, QueryGra
 
     @Override
     public Response apply(Request request) {
+        return applyWithTaskId(request, currentTaskId());
+    }
+
+    public Response applyWithTaskId(Request request, String taskId) {
         long startedAt = System.currentTimeMillis();
-        String taskId = currentTaskId();
         sendStarted(taskId, "query_graph", request, startedAt);
 
         try {
