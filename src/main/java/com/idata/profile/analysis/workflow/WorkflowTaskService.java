@@ -91,6 +91,22 @@ public class WorkflowTaskService {
         workflowTaskMapper.updateById(task);
     }
 
+    @Transactional
+    public void cancelTask(UUID taskId, String partialResult, String resultData,
+                           int llmTokensUsed, int totalDurationMs) {
+        WorkflowTask task = workflowTaskMapper.selectById(taskId);
+        if (task == null) {
+            return;
+        }
+        task.setStatus("CANCELLED");
+        task.setResultSummary(partialResult);
+        task.setResultData(resultData);
+        task.setLlmTokensUsed(llmTokensUsed);
+        task.setTotalDurationMs(totalDurationMs);
+        task.setCompletedAt(OffsetDateTime.now());
+        workflowTaskMapper.updateById(task);
+    }
+
     public WorkflowTask findById(UUID taskId) {
         return workflowTaskMapper.selectById(taskId);
     }

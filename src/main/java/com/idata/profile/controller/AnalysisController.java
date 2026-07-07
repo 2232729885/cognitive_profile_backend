@@ -116,6 +116,15 @@ public class AnalysisController {
         return Result.ok(task);
     }
 
+    @PostMapping("/tasks/{taskId}/cancel")
+    public Result<Void> cancelTask(@PathVariable UUID taskId) {
+        boolean cancelled = coordinatorAgentService.cancelTask(taskId.toString());
+        if (cancelled) {
+            return Result.ok(null);
+        }
+        return Result.fail("NOT_RUNNING", "\u4efb\u52a1\u672a\u5728\u8fd0\u884c\u4e2d");
+    }
+
     @GetMapping("/sessions")
     public Result<List<Session>> listSessions(HttpServletRequest request) {
         UUID userId = (UUID) request.getAttribute(JwtAuthFilter.ATTR_USER_ID);

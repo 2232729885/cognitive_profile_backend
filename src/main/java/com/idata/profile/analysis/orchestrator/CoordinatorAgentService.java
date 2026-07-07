@@ -20,6 +20,7 @@ import org.springframework.ai.tool.function.FunctionToolCallback;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import reactor.core.Disposable;
 
 import java.io.IOException;
 import java.time.OffsetDateTime;
@@ -29,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Slf4j
 @Service
@@ -61,6 +63,7 @@ public class CoordinatorAgentService {
     private final SessionMessageMapper sessionMessageMapper;
 
     private final ConcurrentHashMap<String, SseEmitter> emitters = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Disposable> runningTasks = new ConcurrentHashMap<>();
 
     public SseEmitter registerEmitter(String taskId) {
         SseEmitter emitter = new SseEmitter(30 * 60 * 1000L);
@@ -85,8 +88,9 @@ public class CoordinatorAgentService {
         try {
             StringBuilder fullResult = new StringBuilder();
             List<Message> historyMessages = buildHistoryMessages(sessionId);
+            AtomicBoolean finished = new AtomicBoolean(false);
 
-            chatClient.prompt()
+            Disposable disposable = chatClient.prompt()
                     .system(SYSTEM_PROMPT)
                     .messages(historyMessages)
                     .user(inputText)
@@ -104,6 +108,8 @@ public class CoordinatorAgentService {
                                 Map.of("token", token));
                     })
                     .doOnComplete(() -> {
+                        runningTasks.remove(taskId.toString());
+                        finished.set(true);
                         int totalMs = (int) Math.min(Integer.MAX_VALUE,
                                 System.currentTimeMillis() - startMs);
                         String result = fullResult.toString();
@@ -113,14 +119,43 @@ public class CoordinatorAgentService {
                                 Map.of("taskId", taskId, "summary", safeString(result), "durationMs", totalMs));
                     })
                     .doOnError(e -> {
+                        runningTasks.remove(taskId.toString());
+                        finished.set(true);
                         log.error("??????????, taskId={}", taskId, e);
                         workflowTaskService.failTask(taskId, e.getMessage());
                         sendSseEvent(taskId.toString(), "task_failed",
                                 Map.of("taskId", taskId, "error", safeString(e.getMessage())));
                     })
-                    .blockLast();
+                    .doOnCancel(() -> {
+                        runningTasks.remove(taskId.toString());
+                        finished.set(true);
+                        int totalMs = (int) Math.min(Integer.MAX_VALUE,
+                                System.currentTimeMillis() - startMs);
+                        String partialResult = fullResult.toString();
+                        workflowTaskService.cancelTask(taskId, partialResult, null, 0, totalMs);
+                        if (!partialResult.isBlank()) {
+                            insertAssistantMessage(sessionId, taskId, partialResult);
+                        }
+                        sendSseEvent(taskId.toString(), "task_cancelled",
+                                Map.of("taskId", taskId, "partial", safeString(partialResult)));
+                    })
+                    .subscribe();
+
+            if (!finished.get()) {
+                runningTasks.put(taskId.toString(), disposable);
+            }
+            try {
+                while (!finished.get() && !disposable.isDisposed()) {
+                    Thread.sleep(100);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } finally {
+                runningTasks.remove(taskId.toString(), disposable);
+            }
         } catch (Exception e) {
-            log.error("分析任务执行失败, taskId={}", taskId, e);
+            runningTasks.remove(taskId.toString());
+            log.error("????????, taskId={}", taskId, e);
             workflowTaskService.failTask(taskId, e.getMessage());
             sendSseEvent(taskId.toString(), "task_failed",
                     Map.of("taskId", taskId, "error", safeString(e.getMessage())));
@@ -146,6 +181,16 @@ public class CoordinatorAgentService {
 
     public String currentTaskId() {
         return CURRENT_TASK_ID.get();
+    }
+
+    public boolean cancelTask(String taskId) {
+        Disposable disposable = runningTasks.get(taskId);
+        if (disposable != null && !disposable.isDisposed()) {
+            disposable.dispose();
+            runningTasks.remove(taskId);
+            return true;
+        }
+        return false;
     }
 
     public String getSystemPrompt() {
