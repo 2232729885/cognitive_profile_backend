@@ -68,6 +68,12 @@ public interface NarrativeMapper extends BaseMapper<Narrative> {
     @Select("SELECT id FROM narratives WHERE canonical_label = #{canonicalLabel} LIMIT 1")
     UUID selectIdByCanonicalLabel(@Param("canonicalLabel") String canonicalLabel);
 
+    @Select("SELECT id FROM narratives " +
+            "WHERE canonical_label ILIKE #{label} " +
+            "AND dedup_status = 'canonical' " +
+            "LIMIT 1")
+    UUID findIdByCanonicalLabel(@Param("label") String label);
+
     @Select("SELECT id FROM narratives WHERE canonical_label = #{label} " +
             "ORDER BY CASE dedup_status WHEN 'canonical' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END, " +
             "created_at ASC LIMIT 1")

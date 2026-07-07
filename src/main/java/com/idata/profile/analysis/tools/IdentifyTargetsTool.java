@@ -8,6 +8,7 @@ import com.idata.profile.analysis.workflow.WorkflowTaskService;
 import com.idata.profile.entity.task.IdentificationResult;
 import com.idata.profile.entity.task.IdentificationTask;
 import com.idata.profile.identification.IdentificationTaskService;
+import com.idata.profile.mapper.graph.NarrativeMapper;
 import com.idata.profile.mapper.task.IdentificationResultMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationContext;
@@ -26,6 +27,7 @@ public class IdentifyTargetsTool implements Function<IdentifyTargetsTool.Request
 
     private final IdentificationTaskService identificationTaskService;
     private final IdentificationResultMapper identificationResultMapper;
+    private final NarrativeMapper narrativeMapper;
     private final ApplicationContext applicationContext;
 
     public record Request(
@@ -33,7 +35,9 @@ public class IdentifyTargetsTool implements Function<IdentifyTargetsTool.Request
             @JsonPropertyDescription("触发方式：narrative（以叙事为入口）或 account_list（直接指定账号列表）")
             String triggerType,
 
-            @JsonPropertyDescription("叙事ID，triggerType=narrative时必填")
+            @JsonPropertyDescription("叙事ID（UUID格式），triggerType=narrative时必填。"
+                    + "如果不知道叙事ID，请先调用 searchContent 工具检索内容，从返回结果里获取叙事相关的ID，"
+                    + "或者将 triggerType 改为 account_list 并传入账号ID列表")
             String narrativeId,
 
             @JsonPropertyDescription("账号ID列表，triggerType=account_list时必填")
@@ -65,7 +69,15 @@ public class IdentifyTargetsTool implements Function<IdentifyTargetsTool.Request
         try {
             IdentificationTask task;
             if ("narrative".equals(request.triggerType())) {
-                task = identificationTaskService.identifyByNarrative(UUID.fromString(request.narrativeId()));
+                UUID narrativeId = tryParseUuid(request.narrativeId());
+                if (narrativeId == null) {
+                    narrativeId = narrativeMapper.findIdByCanonicalLabel(request.narrativeId());
+                }
+                if (narrativeId == null) {
+                    throw new IllegalArgumentException(
+                            "找不到叙事：" + request.narrativeId() + "，请先用 searchContent 查找相关叙事ID");
+                }
+                task = identificationTaskService.identifyByNarrative(narrativeId);
             } else if ("account_list".equals(request.triggerType())) {
                 UUID[] accountIds = request.accountIds() == null ? new UUID[0] : request.accountIds().stream()
                         .map(UUID::fromString)
@@ -100,6 +112,17 @@ public class IdentifyTargetsTool implements Function<IdentifyTargetsTool.Request
                 confidence == null ? 0D : confidence.doubleValue(),
                 result.getEvidenceText()
         );
+    }
+
+    private UUID tryParseUuid(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(value.trim());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     private String currentTaskId() {
