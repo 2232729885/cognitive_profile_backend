@@ -211,6 +211,82 @@ public class Neo4jGraphService {
      * 返回路径上的节点和关系列表，最大深度5跳
      * 找不到路径时返回空 Map
      */
+    /**
+     * 查询全量图谱概览，限制节点数量避免数据量过大。
+     * 优先返回 importanceScore 高的节点。
+     */
+    public Map<String, Object> getOverviewGraph(int nodeLimit) {
+        if (nodeLimit <= 0) {
+            return Map.of("nodes", List.of(), "relations", List.of());
+        }
+
+        String nodeQuery = """
+                MATCH (n)
+                WHERE n.id IS NOT NULL
+                RETURN n.id AS id,
+                       labels(n)[0] AS label,
+                       properties(n) AS properties
+                ORDER BY coalesce(n.importanceScore, 0) DESC
+                LIMIT $limit
+                """;
+
+        List<Map<String, Object>> nodeRows = neo4jClient.query(nodeQuery)
+                .bindAll(Map.of("limit", nodeLimit))
+                .fetch()
+                .all()
+                .stream()
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+
+        List<String> nodeIds = nodeRows.stream()
+                .map(row -> stringValue(row.get("id")))
+                .filter(this::hasText)
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+
+        if (nodeIds.isEmpty()) {
+            return Map.of("nodes", List.of(), "relations", List.of());
+        }
+
+        String relQuery = """
+                MATCH (a)-[r]->(b)
+                WHERE a.id IN $nodeIds AND b.id IN $nodeIds
+                RETURN a.id AS sourceId,
+                       b.id AS targetId,
+                       type(r) AS type,
+                       properties(r) AS properties
+                """;
+
+        List<Map<String, Object>> relationRows = neo4jClient.query(relQuery)
+                .bindAll(Map.of("nodeIds", nodeIds))
+                .fetch()
+                .all()
+                .stream()
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+
+        List<Map<String, Object>> nodes = new ArrayList<>();
+        for (Map<String, Object> row : nodeRows) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("id", stringValue(row.get("id")));
+            item.put("label", stringValue(row.get("label")));
+            item.put("properties", relationProperties(row.get("properties")));
+            nodes.add(item);
+        }
+
+        List<Map<String, Object>> relations = new ArrayList<>();
+        for (Map<String, Object> row : relationRows) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("sourceId", stringValue(row.get("sourceId")));
+            item.put("targetId", stringValue(row.get("targetId")));
+            item.put("type", stringValue(row.get("type")));
+            item.put("properties", relationProperties(row.get("properties")));
+            relations.add(item);
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("nodes", nodes);
+        result.put("relations", relations);
+        return result;
+    }
+
     public Map<String, Object> findShortestPath(String fromNodeId, String toNodeId) {
         String cypher = """
                 MATCH path = shortestPath(

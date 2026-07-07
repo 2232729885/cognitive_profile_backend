@@ -103,6 +103,11 @@ public class SearchController {
         return Result.ok(searchService.searchByImage(imageUrl, targetModalities, topK));
     }
 
+    @GetMapping("/graph/overview")
+    public Result<Map<String, Object>> getOverviewGraph(@RequestParam(defaultValue = "300") int limit) {
+        return Result.ok(neo4jGraphService.getOverviewGraph(Math.min(limit, 500)));
+    }
+
     @GetMapping("/graph/{label}/{nodeId}")
     public Result<Map<String, Object>> findTwoHopGraph(@PathVariable String label,
                                                        @PathVariable String nodeId) {
