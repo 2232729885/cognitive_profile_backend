@@ -40,25 +40,34 @@ public class T4IndexingStep {
 
         MediaContent mc = mediaContentMapper.selectById(task.getContentId());
 
-        T4EmbeddingRequest request = new T4EmbeddingRequest();
-        request.setText(mc.getBodyText());
-        T4EmbeddingResponse embeddingResponse = agentProxyClient.call(
-                "T4", "generate_text_embedding", request, T4EmbeddingResponse.class);
-        float[] embedding = embeddingResponse == null ? null : embeddingResponse.getEmbedding();
+        String textVectorId = null;
+        boolean textEmbeddingSkipped = !hasText(mc.getBodyText());
+        if (textEmbeddingSkipped) {
+            log.info("[T4] 跳过文本向量化：bodyText为空, contentId={}", mc.getId());
+        } else {
+            T4EmbeddingRequest request = new T4EmbeddingRequest();
+            request.setText(mc.getBodyText());
+            T4EmbeddingResponse embeddingResponse = agentProxyClient.call(
+                    "T4", "generate_text_embedding", request, T4EmbeddingResponse.class);
+            float[] embedding = embeddingResponse == null ? null : embeddingResponse.getEmbedding();
+            if (embedding == null) {
+                throw new IllegalStateException("T4 text embedding is null, contentId=" + mc.getId());
+            }
 
-        String textVectorId = milvusVectorService.insertTextEmbedding(
-                mc.getId().toString(),
-                "media_content",
-                mc.getPlatform(),
-                mc.getLanguage(),
-                mc.getPublishedAt() != null ? mc.getPublishedAt().toEpochSecond() : 0L,
-                0f,
-                embedding);
+            textVectorId = milvusVectorService.insertTextEmbedding(
+                    mc.getId().toString(),
+                    "media_content",
+                    mc.getPlatform(),
+                    mc.getLanguage(),
+                    mc.getPublishedAt() != null ? mc.getPublishedAt().toEpochSecond() : 0L,
+                    0f,
+                    embedding);
+        }
 
         mediaContentEsService.index(mc.getId().toString(), buildEsDocument(mc));
 
         RawRecord rawRecord = rawRecordMapper.selectById(task.getRawRecordId());
-        rawRecord.setT4Output("{\"textVectorId\":\"" + textVectorId + "\"}");
+        rawRecord.setT4Output(buildT4Output(textVectorId, textEmbeddingSkipped));
         rawRecord.setPipelineStatus(PipelineStatus.T4_INDEXED.name());
         rawRecordMapper.updateById(rawRecord);
 
@@ -102,5 +111,15 @@ public class T4IndexingStep {
         document.put("narrative_hint", mc.getNarrativeHint());
         document.put("updated_at", mc.getUpdatedAt() != null ? mc.getUpdatedAt().toString() : null);
         return document;
+    }
+
+    private String buildT4Output(String textVectorId, boolean textEmbeddingSkipped) {
+        String vectorValue = textVectorId != null ? "\"" + textVectorId + "\"" : "null";
+        return "{\"textVectorId\":" + vectorValue
+                + ",\"textEmbeddingSkipped\":" + textEmbeddingSkipped + "}";
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
     }
 }
