@@ -36,10 +36,13 @@ public class CoordinatorAgentService {
     private final ConcurrentHashMap<String, SseEmitter> emitters = new ConcurrentHashMap<>();
 
     public SseEmitter registerEmitter(String taskId) {
-        SseEmitter emitter = new SseEmitter(5 * 60 * 1000L);
+        SseEmitter emitter = new SseEmitter(30 * 60 * 1000L);
         emitters.put(taskId, emitter);
         emitter.onCompletion(() -> emitters.remove(taskId));
-        emitter.onTimeout(() -> emitters.remove(taskId));
+        emitter.onTimeout(() -> {
+            emitters.remove(taskId);
+            emitter.complete();
+        });
         emitter.onError(e -> emitters.remove(taskId));
         return emitter;
     }

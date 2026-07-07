@@ -444,9 +444,9 @@ public class Neo4jGraphService {
         String nameExpression = nameExpression(label);
         String cypher = String.format("""
                 MATCH (n:%s)
-                WITH n, %s AS name
+                WITH n, %s AS name, coalesce(n['aliases'], []) AS aliases
                 WHERE toLower(coalesce(toString(name), '')) CONTAINS toLower($keyword)
-                   OR any(alias IN coalesce(n.aliases, [])
+                   OR any(alias IN aliases
                           WHERE toLower(toString(alias)) CONTAINS toLower($keyword))
                 RETURN n.id AS id, '%s' AS label, name,
                        coalesce(n.importanceScore, 0) AS importanceScore
