@@ -56,7 +56,9 @@ public class CoordinatorAgentService {
                 Map.of("taskId", taskId, "message", "\u5206\u6790\u4efb\u52a1\u5df2\u542f\u52a8"));
 
         try {
-            String result = chatClient.prompt()
+            StringBuilder fullResult = new StringBuilder();
+
+            chatClient.prompt()
                     .user(inputText)
                     .toolCallbacks(
                             searchContentCallback(),
@@ -64,13 +66,28 @@ public class CoordinatorAgentService {
                             queryGraphCallback(),
                             generateProfileCallback()
                     )
-                    .call()
-                    .content();
-
-            int totalMs = (int) Math.min(Integer.MAX_VALUE, System.currentTimeMillis() - startMs);
-            workflowTaskService.completeTask(taskId, result, null, 0, totalMs);
-            sendSseEvent(taskId.toString(), "task_completed",
-                    Map.of("taskId", taskId, "summary", safeString(result), "durationMs", totalMs));
+                    .stream()
+                    .content()
+                    .doOnNext(token -> {
+                        fullResult.append(token);
+                        sendSseEvent(taskId.toString(), "token",
+                                Map.of("token", token));
+                    })
+                    .doOnComplete(() -> {
+                        int totalMs = (int) Math.min(Integer.MAX_VALUE,
+                                System.currentTimeMillis() - startMs);
+                        String result = fullResult.toString();
+                        workflowTaskService.completeTask(taskId, result, null, 0, totalMs);
+                        sendSseEvent(taskId.toString(), "task_completed",
+                                Map.of("taskId", taskId, "summary", safeString(result), "durationMs", totalMs));
+                    })
+                    .doOnError(e -> {
+                        log.error("??????????, taskId={}", taskId, e);
+                        workflowTaskService.failTask(taskId, e.getMessage());
+                        sendSseEvent(taskId.toString(), "task_failed",
+                                Map.of("taskId", taskId, "error", safeString(e.getMessage())));
+                    })
+                    .blockLast();
         } catch (Exception e) {
             log.error("分析任务执行失败, taskId={}", taskId, e);
             workflowTaskService.failTask(taskId, e.getMessage());

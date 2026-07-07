@@ -33,8 +33,8 @@ public class PersonProfileGenerationJob {
     private final PersonProfileMapper personProfileMapper;
     private final AgentProxyClient agentProxyClient;
 
-//    @Scheduled(cron = "0 0 2 * * *")  // 每日凌晨2点
-    @Scheduled(fixedDelay = 2 * 60 * 1000)
+    @Scheduled(cron = "0 0 2 * * *")  // 每日凌晨2点
+//    @Scheduled(fixedDelay = 2 * 60 * 1000)
     public void run() {
         List<Person> candidates = personMapper.selectCandidatesForProfileGeneration(BATCH_LIMIT);
         log.info("本轮画像生成候选人数: {}", candidates.size());
