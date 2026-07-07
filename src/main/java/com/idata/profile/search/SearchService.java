@@ -186,7 +186,12 @@ public class SearchService {
 
     private List<String> imageAssetIdsToContentIds(List<String> assetIds) {
         List<UUID> uuidIds = assetIds.stream()
-                .map(this::parseUuid)
+                .map(id -> {
+                    String raw = id != null && id.startsWith("image_")
+                            ? id.substring("image_".length())
+                            : id;
+                    return parseUuid(raw);
+                })
                 .filter(java.util.Objects::nonNull)
                 .toList();
         if (uuidIds.isEmpty()) {
