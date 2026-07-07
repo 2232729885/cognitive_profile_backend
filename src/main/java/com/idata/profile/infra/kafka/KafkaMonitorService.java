@@ -13,9 +13,11 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -99,9 +101,14 @@ public class KafkaMonitorService {
     }
 
     private Map<TopicPartition, Long> getEndOffsets(AdminClient adminClient) throws Exception {
+        List<String> existingTopics = existingMonitoredTopics(adminClient);
+        if (existingTopics.isEmpty()) {
+            return Map.of();
+        }
+
         List<TopicPartition> partitions = new ArrayList<>();
         Map<String, TopicDescription> descriptions = adminClient
-                .describeTopics(MONITORED_TOPICS)
+                .describeTopics(existingTopics)
                 .allTopicNames()
                 .get(5, TimeUnit.SECONDS);
 
@@ -121,6 +128,15 @@ public class KafkaMonitorService {
                 .entrySet()
                 .stream()
                 .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().offset()));
+    }
+
+    private List<String> existingMonitoredTopics(AdminClient adminClient) throws Exception {
+        Set<String> existingTopicNames = new HashSet<>(adminClient.listTopics()
+                .names()
+                .get(5, TimeUnit.SECONDS));
+        return MONITORED_TOPICS.stream()
+                .filter(existingTopicNames::contains)
+                .collect(Collectors.toList());
     }
 
     private Map<TopicPartition, Long> getCommittedOffsets(AdminClient adminClient) {
