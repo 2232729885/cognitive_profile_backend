@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,7 +24,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class KafkaMonitorService {
 
-    @Value("${spring.kafka.bootstrap-servers:localhost:9092}")
+    @Value("${spring.kafka.bootstrap-servers}")
     private String bootstrapServers;
 
     @Value("${spring.kafka.consumer.group-id:cognitive-profile-ingestion}")
@@ -90,7 +91,11 @@ public class KafkaMonitorService {
     }
 
     private Map<String, Object> adminConfig() {
-        return Map.of(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        Map<String, Object> config = new HashMap<>();
+        config.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        config.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, "5000");
+        config.put(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, "5000");
+        return config;
     }
 
     private Map<TopicPartition, Long> getEndOffsets(AdminClient adminClient) throws Exception {
@@ -98,7 +103,7 @@ public class KafkaMonitorService {
         Map<String, TopicDescription> descriptions = adminClient
                 .describeTopics(MONITORED_TOPICS)
                 .allTopicNames()
-                .get(10, TimeUnit.SECONDS);
+                .get(5, TimeUnit.SECONDS);
 
         for (Map.Entry<String, TopicDescription> entry : descriptions.entrySet()) {
             for (TopicPartitionInfo partitionInfo : entry.getValue().partitions()) {
@@ -112,7 +117,7 @@ public class KafkaMonitorService {
         return adminClient.listOffsets(
                         partitions.stream().collect(Collectors.toMap(tp -> tp, tp -> OffsetSpec.latest())))
                 .all()
-                .get(10, TimeUnit.SECONDS)
+                .get(5, TimeUnit.SECONDS)
                 .entrySet()
                 .stream()
                 .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().offset()));
@@ -122,7 +127,7 @@ public class KafkaMonitorService {
         try {
             return adminClient.listConsumerGroupOffsets(consumerGroupId)
                     .partitionsToOffsetAndMetadata()
-                    .get(10, TimeUnit.SECONDS)
+                    .get(5, TimeUnit.SECONDS)
                     .entrySet()
                     .stream()
                     .collect(Collectors.toMap(
