@@ -4,6 +4,7 @@ import com.idata.profile.entity.system.SubAgentRegistry;
 import com.idata.profile.mapper.system.SubAgentRegistryMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
@@ -30,6 +31,7 @@ import java.time.Duration;
 public class AgentProxyClient {
 
     private final SubAgentRegistryMapper subAgentRegistryMapper;
+    private final ObjectProvider<AgentProxyClient> selfProvider;
 
     /**
      * 调用指定Agent的指定action。
@@ -39,8 +41,23 @@ public class AgentProxyClient {
      * @param request   请求体，由各 agentproxy.dto.tN 包下DTO序列化
      * @param responseType 响应体类型
      */
-    @Retryable(retryFor = Exception.class, maxAttempts = 2, backoff = @Backoff(delay = 500))
     public <T> T call(String agentCode, String action, Object request, Class<T> responseType) {
+        if ("T6".equals(agentCode)) {
+            return callOnce(agentCode, action, request, responseType);
+        }
+        return selfProvider.getObject().callWithRetry(agentCode, action, request, responseType);
+    }
+
+    @Retryable(retryFor = Exception.class, maxAttempts = 2, backoff = @Backoff(delay = 500))
+    public <T> T callWithRetry(String agentCode, String action, Object request, Class<T> responseType) {
+        return doCall(agentCode, action, request, responseType);
+    }
+
+    public <T> T callOnce(String agentCode, String action, Object request, Class<T> responseType) {
+        return doCall(agentCode, action, request, responseType);
+    }
+
+    private <T> T doCall(String agentCode, String action, Object request, Class<T> responseType) {
         SubAgentRegistry agent = subAgentRegistryMapper.selectByAgentCode(agentCode);
         if (agent == null || !Boolean.TRUE.equals(agent.getIsActive())) {
             throw new IllegalStateException("Agent未注册或未启用: " + agentCode);

@@ -399,7 +399,7 @@ public class LlmAgentController {
 
         String userPrompt = buildT6UserPrompt(request);
         try {
-            String raw = callJsonLlm(T6_SYSTEM_PROMPT, userPrompt, 4096);
+            String raw = callJsonLlm(T6_SYSTEM_PROMPT, userPrompt, 8192);
 
             T6IdentifyResponse response = parseT6Response(raw, request);
             normalizeT6Summary(response, request, startedAt);

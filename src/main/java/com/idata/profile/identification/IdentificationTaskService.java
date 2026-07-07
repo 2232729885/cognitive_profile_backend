@@ -23,6 +23,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.time.OffsetDateTime;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -36,7 +37,8 @@ public class IdentificationTaskService {
     private static final String TRIGGER_NARRATIVE = "narrative";
     private static final String TRIGGER_ACCOUNT_LIST = "account_list";
     private static final String TRIGGER_MANUAL = "manual";
-    private static final int MAX_MEDIA_CONTENTS_PER_REQUEST = 500;
+    private static final int MAX_ACCOUNTS_PER_REQUEST = 10;
+    private static final int MAX_MEDIA_CONTENTS_PER_REQUEST = 20;
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final IdentificationTaskMapper identificationTaskMapper;
@@ -136,12 +138,11 @@ public class IdentificationTaskService {
             log.warn("No social accounts found for narrativeId={} in Neo4j", task.getNarrativeId());
         }
 
-        List<SocialAccount> accounts = accountUuids.isEmpty()
+        List<SocialAccount> accounts = selectLimitedAccounts(accountUuids);
+        List<UUID> selectedAccountUuids = extractAccountIds(accounts);
+        List<MediaContent> contents = selectedAccountUuids.isEmpty()
                 ? List.of()
-                : socialAccountMapper.selectBatchIds(accountUuids);
-        List<MediaContent> contents = accountUuids.isEmpty()
-                ? List.of()
-                : mediaContentMapper.selectByAuthorAccountIds(accountUuids, MAX_MEDIA_CONTENTS_PER_REQUEST);
+                : mediaContentMapper.selectByAuthorAccountIds(selectedAccountUuids, MAX_MEDIA_CONTENTS_PER_REQUEST);
 
         T6IdentifyRequest request = new T6IdentifyRequest();
         request.setNarrativeId(task.getNarrativeId().toString());
@@ -163,10 +164,11 @@ public class IdentificationTaskService {
         }
 
         List<UUID> accountUuids = Arrays.asList(task.getInputAccountIds());
-        List<SocialAccount> accounts = socialAccountMapper.selectBatchIds(accountUuids);
-        List<MediaContent> contents = accountUuids.isEmpty()
+        List<SocialAccount> accounts = selectLimitedAccounts(accountUuids);
+        List<UUID> selectedAccountUuids = extractAccountIds(accounts);
+        List<MediaContent> contents = selectedAccountUuids.isEmpty()
                 ? List.of()
-                : mediaContentMapper.selectByAuthorAccountIds(accountUuids, MAX_MEDIA_CONTENTS_PER_REQUEST);
+                : mediaContentMapper.selectByAuthorAccountIds(selectedAccountUuids, MAX_MEDIA_CONTENTS_PER_REQUEST);
 
         T6IdentifyRequest request = new T6IdentifyRequest();
         request.setNarrativeId(null);
@@ -179,6 +181,25 @@ public class IdentificationTaskService {
                 .map(this::toMediaContentRef)
                 .collect(Collectors.toList()));
         return request;
+    }
+
+    private List<SocialAccount> selectLimitedAccounts(List<UUID> accountUuids) {
+        if (accountUuids == null || accountUuids.isEmpty()) {
+            return List.of();
+        }
+        return socialAccountMapper.selectBatchIds(accountUuids).stream()
+                .sorted(Comparator.comparingLong((SocialAccount sa) ->
+                                sa.getFollowersCount() == null ? 0L : sa.getFollowersCount())
+                        .reversed())
+                .limit(MAX_ACCOUNTS_PER_REQUEST)
+                .collect(Collectors.toList());
+    }
+
+    private List<UUID> extractAccountIds(List<SocialAccount> accounts) {
+        return accounts.stream()
+                .map(SocialAccount::getId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
     }
 
     private T6IdentifyRequest.SocialAccountRef toSocialAccountRef(SocialAccount sa) {
