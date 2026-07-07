@@ -174,11 +174,43 @@ public class Neo4jGraphService {
      * 每个 node：{"id": "...", "label": "...", "properties": {...}}
      * 每个 relation：{"fromId": "...", "toId": "...", "type": "...", "properties": {...}}
      */
-    public Map<String, Object> findTwoHopGraph(String nodeId, String nodeLabel) {
+    public Map<String, Object> findHopGraph(String nodeId, String nodeLabel, int hops) {
+        if (hops == 2) {
+            String cypher = """
+                    MATCH (n {id: $nodeId})-[r1]-(m)-[r2]-(k)
+                    WHERE labels(n)[0] = $nodeLabel
+                    RETURN n, r1, m, r2, k LIMIT 100
+                    """;
+            List<Map<String, Object>> rows = neo4jClient.query(cypher)
+                    .bind(nodeId).to("nodeId")
+                    .bind(nodeLabel).to("nodeLabel")
+                    .fetch()
+                    .all()
+                    .stream()
+                    .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+
+            Map<String, Map<String, Object>> nodes = new LinkedHashMap<>();
+            List<Map<String, Object>> relations = new ArrayList<>();
+            Set<String> relationKeys = new LinkedHashSet<>();
+
+            for (Map<String, Object> row : rows) {
+                Node n = asNode(row.get("n"));
+                Node m = asNode(row.get("m"));
+                Node k = asNode(row.get("k"));
+                addNode(nodes, n);
+                addNode(nodes, m);
+                addNode(nodes, k);
+
+                addRelation(relations, relationKeys, asRelationship(row.get("r1")), nodes);
+                addRelation(relations, relationKeys, asRelationship(row.get("r2")), nodes);
+            }
+            return graphResult(nodes, relations);
+        }
+
         String cypher = """
-                MATCH (n {id: $nodeId})-[r1]-(m)-[r2]-(k)
+                MATCH (n {id: $nodeId})-[r1]-(m)
                 WHERE labels(n)[0] = $nodeLabel
-                RETURN n, r1, m, r2, k LIMIT 100
+                RETURN n, r1, m LIMIT 100
                 """;
         List<Map<String, Object>> rows = neo4jClient.query(cypher)
                 .bind(nodeId).to("nodeId")
@@ -195,15 +227,16 @@ public class Neo4jGraphService {
         for (Map<String, Object> row : rows) {
             Node n = asNode(row.get("n"));
             Node m = asNode(row.get("m"));
-            Node k = asNode(row.get("k"));
             addNode(nodes, n);
             addNode(nodes, m);
-            addNode(nodes, k);
 
             addRelation(relations, relationKeys, asRelationship(row.get("r1")), nodes);
-            addRelation(relations, relationKeys, asRelationship(row.get("r2")), nodes);
         }
         return graphResult(nodes, relations);
+    }
+
+    public Map<String, Object> findTwoHopGraph(String nodeId, String nodeLabel) {
+        return findHopGraph(nodeId, nodeLabel, 2);
     }
 
     /**
