@@ -22,7 +22,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.OffsetDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -87,6 +89,43 @@ public class AnalysisController {
     @GetMapping("/sessions/{sessionId}/messages")
     public Result<List<SessionMessage>> listMessages(@PathVariable UUID sessionId) {
         return Result.ok(sessionMessageMapper.selectBySessionIdOrderByCreatedAt(sessionId));
+    }
+
+    @GetMapping("/agent-info")
+    public Result<Map<String, Object>> getAgentInfo() {
+        Map<String, Object> info = new LinkedHashMap<>();
+
+        info.put("tools", List.of(
+                Map.of(
+                        "name", "searchContent",
+                        "description", "检索与分析主题相关的社交媒体内容和新闻",
+                        "icon", "🔍",
+                        "params", List.of("query（查询关键词）", "platform（平台过滤）", "language（语言过滤）", "topK（返回数量）")
+                ),
+                Map.of(
+                        "name", "identifyTargets",
+                        "description", "识别信息操控的重点目标账号，分析 BEND 手法分布",
+                        "icon", "🎯",
+                        "params", List.of("triggerType（narrative/account_list）", "narrativeId（叙事ID）", "accountIds（账号UUID列表）")
+                ),
+                Map.of(
+                        "name", "queryGraph",
+                        "description", "查询某个实体在知识图谱中的关联关系网络",
+                        "icon", "🕸️",
+                        "params", List.of("nodeId（节点UUID）", "nodeLabel（节点类型）")
+                ),
+                Map.of(
+                        "name", "generateProfile",
+                        "description", "对指定人物生成全息画像，包含 15 个维度的深度分析",
+                        "icon", "👤",
+                        "params", List.of("personId（人物UUID）")
+                )
+        ));
+        info.put("systemPrompt", coordinatorAgentService.getSystemPrompt());
+        info.put("model", "Qwen3-VL-32B");
+        info.put("maxTokens", 4096);
+
+        return Result.ok(info);
     }
 
     private Session resolveSession(UUID sessionId, UUID userId, String inputText) {

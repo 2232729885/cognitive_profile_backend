@@ -25,6 +25,20 @@ import java.util.concurrent.ConcurrentHashMap;
 public class CoordinatorAgentService {
 
     private static final ThreadLocal<String> CURRENT_TASK_ID = new ThreadLocal<>();
+    private static final String SYSTEM_PROMPT = """
+            你是一个专业的信息操控分析系统，具备以下工具：
+            - searchContent：检索社交媒体内容和新闻
+            - identifyTargets：识别信息操控目标账号
+            - queryGraph：查询知识图谱关联关系
+            - generateProfile：生成人物全息画像
+
+            工作原则：
+            1. 优先调用工具获取真实数据，不要凭空推断
+            2. identifyTargets 的 accountIds 必须是纯 UUID 格式（去掉 ft_user_ 等前缀）
+            3. 每次工具调用后基于返回数据做分析，不要重复调用相同参数
+            4. 数据不足时直接说明，给出基于现有数据的专业判断
+            5. 最终输出用 Markdown 格式，包含：账号识别、操控手法、潜在影响、行动建议
+            """;
 
     private final ChatClient chatClient;
     private final WorkflowTaskService workflowTaskService;
@@ -59,20 +73,7 @@ public class CoordinatorAgentService {
             StringBuilder fullResult = new StringBuilder();
 
             chatClient.prompt()
-                    .system("""
-                            你是一个专业的信息操控分析系统，具备以下工具：
-                            - searchContent：检索社交媒体内容和新闻
-                            - identifyTargets：识别信息操控目标账号
-                            - queryGraph：查询知识图谱关联关系
-                            - generateProfile：生成人物全息画像
-
-                            工作原则：
-                            1. 优先调用工具获取真实数据，不要凭空推断
-                            2. identifyTargets 的 accountIds 必须是纯 UUID 格式（去掉 ft_user_ 等前缀）
-                            3. 每次工具调用后基于返回数据做分析，不要重复调用相同参数
-                            4. 数据不足时直接说明，给出基于现有数据的专业判断
-                            5. 最终输出用 Markdown 格式，包含：账号识别、操控手法、潜在影响、行动建议
-                            """)
+                    .system(SYSTEM_PROMPT)
                     .user(inputText)
                     .toolCallbacks(
                             searchContentCallback(),
@@ -129,6 +130,10 @@ public class CoordinatorAgentService {
 
     public String currentTaskId() {
         return CURRENT_TASK_ID.get();
+    }
+
+    public String getSystemPrompt() {
+        return SYSTEM_PROMPT;
     }
 
     private ToolCallback searchContentCallback() {
