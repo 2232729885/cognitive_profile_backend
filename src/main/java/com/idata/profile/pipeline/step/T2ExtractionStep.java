@@ -183,6 +183,9 @@ public class T2ExtractionStep {
                     Map<String, Object> props = new HashMap<>();
                     String nameKey = "narrative".equals(entityType) ? "canonicalLabel" : "canonicalName";
                     props.put(nameKey, entity.getCanonicalName());
+                    if (entity.getAliases() != null && !entity.getAliases().isEmpty()) {
+                        props.put("aliases", entity.getAliases().toArray(new String[0]));
+                    }
                     if (entity.getImportanceScore() != null) {
                         props.put("importanceScore", entity.getImportanceScore().doubleValue());
                     }
@@ -206,6 +209,15 @@ public class T2ExtractionStep {
                     props.put("canonicalName", event.getCanonicalName());
                     putIfHasText(props, "eventType", event.getEventType());
                     putIfHasText(props, "eventTimeStart", event.getEventTimeStart());
+                    if (event.getParticipants() != null && !event.getParticipants().isEmpty()) {
+                        String[] participantNames = event.getParticipants().stream()
+                                .map(T2ExtractResponse.ExtractedEvent.EventParticipant::getName)
+                                .filter(n -> n != null && !n.isBlank())
+                                .toArray(String[]::new);
+                        if (participantNames.length > 0) {
+                            props.put("participantNames", participantNames);
+                        }
+                    }
                     if (event.getConfidence() != null) {
                         props.put("confidence", event.getConfidence());
                         props.put("importanceScore", event.getConfidence() * 100D);

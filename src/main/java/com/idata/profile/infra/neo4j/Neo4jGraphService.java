@@ -413,6 +413,8 @@ public class Neo4jGraphService {
                 MATCH (n:%s)
                 WITH n, %s AS name
                 WHERE toLower(coalesce(toString(name), '')) CONTAINS toLower($keyword)
+                   OR any(alias IN coalesce(n.aliases, [])
+                          WHERE toLower(toString(alias)) CONTAINS toLower($keyword))
                 RETURN n.id AS id, '%s' AS label, name,
                        coalesce(n.importanceScore, 0) AS importanceScore
                 ORDER BY importanceScore DESC LIMIT $limit
