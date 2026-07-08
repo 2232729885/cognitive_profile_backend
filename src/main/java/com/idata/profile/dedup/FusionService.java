@@ -11,6 +11,7 @@ import com.idata.profile.mapper.graph.NarrativeMapper;
 import com.idata.profile.mapper.graph.OrganizationMapper;
 import com.idata.profile.mapper.graph.PersonMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
@@ -21,6 +22,7 @@ import java.util.Set;
 import java.util.UUID;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class FusionService {
 
@@ -39,6 +41,32 @@ public class FusionService {
                 .orderByDesc(EntityFusionRecord::getCreatedAt);
         return entityFusionRecordMapper.selectPage(
                 new Page<>(Math.max(page, 0) + 1L, normalizeSize(size)), wrapper);
+    }
+
+    public IPage<EntityFusionRecord> listPendingReview(String entityType, int page, int size) {
+        LambdaQueryWrapper<EntityFusionRecord> wrapper = new LambdaQueryWrapper<EntityFusionRecord>()
+                .eq(EntityFusionRecord::getFusionMethod, "t3_pending_review")
+                .eq(hasText(entityType), EntityFusionRecord::getEntityType, entityType)
+                .orderByDesc(EntityFusionRecord::getCreatedAt);
+        return entityFusionRecordMapper.selectPage(
+                new Page<>(Math.max(page, 0) + 1L, normalizeSize(size)), wrapper);
+    }
+
+    public void reviewFusionRecord(UUID recordId, String action) {
+        EntityFusionRecord record = entityFusionRecordMapper.selectById(recordId);
+        if (record == null) {
+            throw new RuntimeException("记录不存在: " + recordId);
+        }
+
+        if ("approve".equals(action)) {
+            record.setFusionMethod("t3_human_approved");
+            entityFusionRecordMapper.updateById(record);
+            log.info("[DedupController] human approved merge, recordId={}", recordId);
+        } else {
+            record.setFusionMethod("t3_human_rejected");
+            entityFusionRecordMapper.updateById(record);
+            log.info("[DedupController] human rejected merge, recordId={}", recordId);
+        }
     }
 
     public List<EntityFusionRecord> listByJobRunId(UUID jobRunId) {

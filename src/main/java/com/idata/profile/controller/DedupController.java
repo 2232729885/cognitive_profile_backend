@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -32,6 +33,29 @@ public class DedupController {
             return Result.fail("INVALID_PARAM", "entityType只能是person/organization/event/narrative");
         }
         return Result.ok(fusionService.listFusionRecords(entityType, page, size));
+    }
+
+    @GetMapping("/fusion-records/pending-review")
+    public Result<IPage<EntityFusionRecord>> listPendingReview(
+            @RequestParam(required = false) String entityType,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        if (!fusionService.isValidEntityType(entityType)) {
+            return Result.fail("INVALID_PARAM", "entityType只能是person/organization/event/narrative");
+        }
+        return Result.ok(fusionService.listPendingReview(entityType, page, size));
+    }
+
+    @PostMapping("/fusion-records/{recordId}/review")
+    public Result<Void> reviewFusionRecord(
+            @PathVariable UUID recordId,
+            @RequestBody Map<String, String> body) {
+        String action = body == null ? null : body.get("action");
+        if (!"approve".equals(action) && !"reject".equals(action)) {
+            return Result.fail("INVALID_PARAM", "action 只能是 approve 或 reject");
+        }
+        fusionService.reviewFusionRecord(recordId, action);
+        return Result.ok(null);
     }
 
     @GetMapping("/fusion-records/{jobRunId}")
