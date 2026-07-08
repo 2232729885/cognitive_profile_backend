@@ -1,5 +1,7 @@
 package com.idata.profile.llmagent;
 
+import com.idata.profile.agentproxy.dto.t1.T1AnnotateAccountRequest;
+import com.idata.profile.agentproxy.dto.t1.T1AnnotateAccountResponse;
 import com.idata.profile.agentproxy.dto.t1.T1AnnotateRequest;
 import com.idata.profile.agentproxy.dto.t1.T1AnnotateResponse;
 import com.idata.profile.agentproxy.dto.t2.T2ExtractRequest;
@@ -57,49 +59,94 @@ public class LlmAgentController {
     private static final String MODEL_VERSION = "qwen3-vl-32b";
 
     private static final String T1_SYSTEM_PROMPT = """
-            你是一个专业的信息标注系统。对输入的社交媒体文本进行多维度分析，严格按照 JSON 格式输出，不要输出任何其他内容，不要有 markdown 代码块，不要有解释说明。
+            You are a professional content annotation system. Analyze the input text and return only
+            one valid JSON object matching the T1_annotation_v0.5 schema. Do not output markdown code
+            fences, <think> tags, or any explanation.
 
-            输出 JSON 结构如下：
+            Required JSON shape:
             {
+              "schemaVersion": "t1_annotation_v0.5",
+              "language": "same as input language",
+              "aigcDetection": {
+                "overallAigcLabel": "ai_generated|human_generated|mixed|suspicious|unclear",
+                "overallAigcScore": 0.0,
+                "textAigcDetection": {
+                  "textAigcLabel": "ai_generated|human_generated|mixed|suspicious|unclear|not_applicable",
+                  "textAigcScore": 0.0,
+                  "textAigcSignalLabels": ["ai_self_disclosure|template_like_structure|generic_over_polished|repetitive_phrasing|unnatural_transition|instruction_following_trace|mixed_style|none|unclear"],
+                  "textAigcConfidence": 0.0,
+                  "evidenceIds": ["ev_001"]
+                },
+                "imageAigcDetection": {"imageAigcLabel": "not_applicable", "imageAigcSignalLabels": ["none"], "evidenceIds": []},
+                "videoAigcDetection": {"videoAigcLabel": "not_applicable", "videoAigcSignalLabels": ["none"], "evidenceIds": []},
+                "multimodalAigcDetection": {"multimodalAigcLabel": "not_applicable", "modalityCombination": "not_applicable", "multimodalSignalLabels": ["none"], "evidenceIds": []},
+                "aigcDetectionConfidence": 0.0
+              },
               "annotations": {
-                "topics": ["主题1", "主题2"],
-                "keywords": ["关键词1", "关键词2"],
-                "summary": "一句话摘要（原文语言）",
-                "languageStyle": {
-                  "formality": "formal|informal|mixed|unknown",
-                  "emotionalIntensity": "none|low|medium|high|unclear"
+                "highValueSubjective": {
+                  "ideology": {"ideologyLabel": "left_leaning|right_leaning|liberal|conservative|nationalist|populist|pro_government|anti_government|pro_western|anti_western|neutral|unclear|other", "targetEntityHintIds": [], "ideologyConfidence": 0.0, "evidenceIds": []},
+                  "coreStance": {"stanceLabel": "support|oppose|neutral|mixed|unclear", "stanceStrength": "weak|medium|strong|unclear", "coreStanceConfidence": 0.0, "evidenceIds": []},
+                  "entitiesHintStance": [{"stanceUnitId": "stance_001", "stanceHolder": {"stanceHolderId": "ent_001", "text": "..."}, "stanceTarget": {"stanceTargetId": "ent_002", "text": "..."}, "stanceLabel": "support|oppose|neutral|mixed|unclear", "evidenceIds": []}],
+                  "publicAttitude": {"publicGroup": "general_public|netizens|local_residents|protesters|supporters|opponents|consumers|voters|community_members|unclear|not_applicable", "attitudeLabel": "supportive|approving|critical|distrustful|hostile|sympathetic|concerned|dissatisfied|fearful|mocking|indifferent|mixed|unclear|not_applicable", "attitudeIntensity": "low|medium|high|unclear|not_applicable", "publicAttitudeConfidence": 0.0, "evidenceIds": []},
+                  "opinionEmotion": {"sentimentPolarity": "positive|negative|neutral|mixed|unclear", "emotionLabels": ["anger|fear|sadness|anxiety|disgust|contempt|joy|hope|sympathy|surprise|sarcasm|none|unclear"], "emotionIntensity": "low|medium|high|unclear", "opinionEmotionConfidence": 0.0, "evidenceIds": []},
+                  "eventHeat": {"heatLevel": "low|medium|high|explosive|unclear", "heatScore": 0.0, "heatSignalTypes": ["textual_heat_signal|engagement_metrics|platform_trending_signal|media_coverage_signal|temporal_burst_signal|unclear"], "eventHeatConfidence": 0.0, "evidenceIds": []},
+                  "languageStyle": {"styleLabels": ["neutral|aggressive|sarcastic|mocking|alarmist|threatening|sensationalized|emotional|conspiratorial|accusatory|slogan_like|rhetorical_questioning|rational_analytical|unclear"], "languageStyleConfidence": 0.0, "evidenceIds": []},
+                  "contentPurpose": {"primaryPurpose": "information_sharing|opinion_expression|persuasion|mobilization|propaganda|attack_or_smear|debunking|warning|attention_seeking|rumor_spreading|unclear", "secondaryPurposes": [], "contentPurposeConfidence": 0.0, "evidenceIds": []},
+                  "riskLevel": {"riskLabel": "none|low|medium|high|severe|unclear", "riskTypes": ["misinformation|rumor|polarization|hostility|panic_amplification|mobilization_risk|reputation_attack|manipulation|aigc_deception|none|unclear"], "riskLevelConfidence": 0.0, "evidenceIds": []}
                 },
-                "sentiment": {
-                  "label": "positive|negative|neutral",
-                  "score": 0.0（-1.0到1.0）
-                },
-                "eventType": "事件类型或null",
-                "contentPurpose": "目的（如criticism/news/propaganda/opinion）",
-                "aigcSuspicion": "none|low|medium|high",
-                "entitiesHint": [
-                  {
-                    "text": "实体文本",
-                    "typeHint": "person|organization|event|location|narrative|other",
-                    "stance": "support|oppose|neutral",
-                    "emotionExpression": "情感表达或null",
-                    "emotionIntensity": "none|low|medium|high"
-                  }
-                ]
+                "basicObjective": {
+                  "topicTags": {"primaryDomain": "politics|military|economy_finance|technology_cyber|public_health|social_livelihood|ethnic_religious|energy_environment|disaster_accident|crime_public_safety|culture_education|migration_refugee|other|unclear", "subtopicTags": [], "topicTagsConfidence": 0.0, "evidenceIds": []},
+                  "accountType": {"primaryAccountCategory": "unknown", "accountSubtypeTags": [], "automationSuspicion": "unclear", "accountTypeConfidence": null, "evidenceIds": []},
+                  "entitiesHint": [{"entityHintId": "ent_001", "text": "...", "typeHint": "persons|organizations|events|locations|media_contents|social_accounts|narratives|others|unknown", "span": [0,10], "entityHintConfidence": 0.0, "evidenceIds": []}],
+                  "keywords": [{"keywordText": "...", "source": "text", "span": [0,10], "keywordConfidence": 0.0, "evidenceIds": []}],
+                  "summary": {"summaryText": "...", "summaryConfidence": 0.0},
+                  "eventType": {"eventTypeLabel": "military_conflict|diplomatic_dispute|policy_announcement|election_campaign|protest_demonstration|economic_sanction|cyber_incident|public_health_event|disaster_accident|crime_public_safety|social_livelihood_event|public_opinion_event|other|unclear|not_applicable", "eventTypeConfidence": 0.0, "evidenceIds": []}
+                }
               },
-              "qualityControl": {
-                "autoLabelStatus": "success",
-                "needHumanReview": false,
-                "modelVersion": "qwen3-vl-32b"
-              },
-              "confidence": 0.85
+              "evidenceClues": [{"evidenceId": "ev_001", "evidenceType": "text_span", "source": "text", "evidenceText": "...", "span": [0,10]}],
+              "qualityControl": {"needHumanReview": false, "reviewReasons": ["none"], "failedModules": ["none"]},
+              "overallConfidence": 0.0
             }
 
-            要求：
-            1. topics 字段用英文小写，如 politics/military/economics/social/technology/culture
-            2. keywords 保留原文语言
-            3. summary 用原文语言写一句话（不超过100字）
-            4. entitiesHint 只列出文本中明确提到的实体，不推断
-            5. aigcSuspicion 基于语言风格、重复模式、语义连贯性判断
+            Rules:
+            1. Input is text only: imageAigcDetection/videoAigcDetection/multimodalAigcDetection must use
+               "not_applicable" and evidenceIds: [].
+            2. accountType here is only a lightweight best-effort guess from weak signals (e.g. platform).
+               If no account profile info is available, use primaryAccountCategory="unknown",
+               automationSuspicion="unclear", accountTypeConfidence=null. The authoritative account
+               classification happens elsewhere, not here.
+            3. Every evidenceId referenced anywhere in the output must have a matching entry in evidenceClues.
+            4. Return empty arrays, not null, when a list has no items.
+            5. Use "unclear"/"not_applicable" per the field's own enum when signal is insufficient - never guess
+               or invent a confident label without support.
+            6. entities_hint / keywords / evidence_clues: keep to at most 10 items each.
+            """;
+
+    private static final String T1_ACCOUNT_SYSTEM_PROMPT = """
+            You are an account classification system. Given a social media account profile, return only
+            one valid JSON object. Do not output markdown code fences or explanation.
+
+            Required JSON shape:
+            {
+              "schemaVersion": "t1_account_annotation_v0.5",
+              "accountType": {
+                "primaryAccountCategory": "ordinary_user|news_media|state_affiliated_media|government_agency|political_actor|political_party_or_campaign|military_security_agency|international_organization|ngo_or_civil_society|academic_or_expert|commercial_brand|platform_official|influencer_kol|community_group|anonymous_account|suspected_bot_or_automated|unknown|other",
+                "accountSubtypeTags": [],
+                "automationSuspicion": "none|low|medium|high|unclear",
+                "accountTypeConfidence": 0.0,
+                "evidenceIds": ["ev_acc_001"]
+              },
+              "evidenceClues": [{"evidenceId": "ev_acc_001", "evidenceType": "metadata", "source": "metadata", "evidenceText": "..."}],
+              "qualityControl": {"needHumanReview": false, "reviewReasons": ["none"], "failedModules": ["none"]},
+              "overallConfidence": 0.0
+            }
+
+            Rules:
+            1. Base your judgment on bio, verified status, verifiedType, follower/following/post counts,
+               platform, and any recent post samples provided. If the profile is too sparse to judge
+               confidently, use primaryAccountCategory="unknown" and automationSuspicion="unclear" rather
+               than guessing.
+            2. Every evidenceId referenced must have a matching entry in evidenceClues.
             """;
 
     private static final String T2_SYSTEM_PROMPT_V11 = """
@@ -287,16 +334,59 @@ public class LlmAgentController {
         try {
             String raw = callJsonLlm(T1_SYSTEM_PROMPT, userPrompt);
 
-            T1AnnotateResponse response = parseT1Response(raw);
+            T1AnnotateResponse response = parseT1Response(raw, request, "text");
             response.setProcessedAt(java.time.OffsetDateTime.now().toString());
             response.setLanguage(request.getLanguage());
             return response;
 
         } catch (Exception e) {
-            logLlmFailure("[LLM-T1] annotate_text失败，返回fallback", e);
-            T1AnnotateResponse response = buildFallbackT1Response(request.getText());
+            logLlmFailure("[LLM-T1] annotate_text failed, returning fallback", e);
+            T1AnnotateResponse response = buildFallbackT1Response(request, "text");
             response.setLanguage(request.getLanguage());
             return response;
+        }
+    }
+
+    @PostMapping("/t1/annotate_image")
+    public T1AnnotateResponse annotateImage(@RequestBody T1AnnotateRequest request) {
+        log.info("[LLM-T1] annotate_image, imageUrl={}, hasImageData={}",
+                request.getImageUrl(), request.getImageData() != null);
+
+        String userPrompt = buildT1ImageUserPrompt(request);
+
+        try {
+            String raw = callJsonLlm(T1_SYSTEM_PROMPT, userPrompt);
+
+            T1AnnotateResponse response = parseT1Response(raw, request, "image");
+            response.setProcessedAt(java.time.OffsetDateTime.now().toString());
+            response.setLanguage(request.getLanguage());
+            return response;
+
+        } catch (Exception e) {
+            logLlmFailure("[LLM-T1] annotate_image failed, returning fallback", e);
+            T1AnnotateResponse response = buildFallbackT1Response(request, "image");
+            response.setLanguage(request.getLanguage());
+            return response;
+        }
+    }
+
+    @PostMapping("/t1/annotate_account")
+    public T1AnnotateAccountResponse annotateAccount(@RequestBody T1AnnotateAccountRequest request) {
+        log.info("[LLM-T1] annotate_account, platform={}, handle={}", request.getPlatform(), request.getHandle());
+
+        String userPrompt = buildT1AccountUserPrompt(request);
+
+        try {
+            String raw = callJsonLlm(T1_ACCOUNT_SYSTEM_PROMPT, userPrompt);
+            T1AnnotateAccountResponse response = objectMapper.readValue(cleanJson(raw), T1AnnotateAccountResponse.class);
+            if (response.getSchemaVersion() == null) {
+                response.setSchemaVersion("t1_account_annotation_v0.5");
+            }
+            response.setProcessedAt(java.time.OffsetDateTime.now().toString());
+            return response;
+        } catch (Exception e) {
+            logLlmFailure("[LLM-T1] annotate_account failed, returning fallback", e);
+            return buildFallbackT1AccountResponse();
         }
     }
 
@@ -390,26 +480,116 @@ public class LlmAgentController {
 
     private String buildT1UserPrompt(T1AnnotateRequest request) {
         StringBuilder sb = new StringBuilder();
-        sb.append("请标注以下文本：\n\n");
-        sb.append("文本语言：").append(request.getLanguage() != null ? request.getLanguage() : "未知").append("\n");
-        sb.append("平台来源：社交媒体\n\n");
-        sb.append("文本内容：\n").append(request.getText());
+        sb.append("Annotate the following content.\n\n");
+        sb.append("Language: ").append(request.getLanguage() != null ? request.getLanguage() : "unknown").append("\n");
+        if (request.getContext() != null) {
+            T1AnnotateRequest.Context context = request.getContext();
+            if (context.getPlatform() != null) {
+                sb.append("Platform: ").append(context.getPlatform()).append("\n");
+            }
+            if (context.getHashtags() != null && !context.getHashtags().isEmpty()) {
+                sb.append("Hashtags: ").append(String.join(", ", context.getHashtags())).append("\n");
+            }
+        }
+        sb.append("\nText content:\n").append(request.getText());
         return sb.toString();
     }
 
-    private T1AnnotateResponse parseT1Response(String raw) throws Exception {
-        return objectMapper.readValue(cleanJson(raw), T1AnnotateResponse.class);
+    private String buildT1ImageUserPrompt(T1AnnotateRequest request) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Annotate the following image. This input has no text content, only an image.\n\n");
+        sb.append("Image URL: ").append(request.getImageUrl() != null ? request.getImageUrl() : "(inline data)").append("\n");
+        sb.append("\nSince there is no text, textAigcDetection must be not_applicable, and any subjective ")
+                .append("dimensions with insufficient visual signal (ideology, coreStance, publicAttitude, ")
+                .append("languageStyle, contentPurpose) should use unclear/not_applicable rather than guessing. ")
+                .append("Use image_ocr as the keyword source for any text visible in the image, and image_region ")
+                .append("as the evidence_type for visual evidence.");
+        return sb.toString();
     }
 
-    private T1AnnotateResponse buildFallbackT1Response(String text) {
+    private String buildT1AccountUserPrompt(T1AnnotateAccountRequest request) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Classify the following account:\n\n");
+        sb.append("Platform: ").append(request.getPlatform()).append("\n");
+        sb.append("Handle: ").append(request.getHandle()).append("\n");
+        sb.append("Display name: ").append(request.getDisplayName()).append("\n");
+        sb.append("Bio: ").append(request.getBio() != null ? request.getBio() : "(none)").append("\n");
+        sb.append("Verified: ").append(request.getVerified()).append(", type: ").append(request.getVerifiedType()).append("\n");
+        sb.append("Followers: ").append(request.getFollowersCount())
+                .append(", Following: ").append(request.getFollowingCount())
+                .append(", Posts: ").append(request.getPostCount()).append("\n");
+        if (request.getRecentPostSamples() != null && !request.getRecentPostSamples().isEmpty()) {
+            sb.append("Recent posts:\n");
+            for (String sample : request.getRecentPostSamples()) {
+                sb.append("- ").append(sample).append("\n");
+            }
+        }
+        return sb.toString();
+    }
+
+    private T1AnnotateResponse parseT1Response(String raw, T1AnnotateRequest request, String contentType)
+            throws Exception {
+        T1AnnotateResponse response = objectMapper.readValue(cleanJson(raw), T1AnnotateResponse.class);
+        if (response.getSchemaVersion() == null) {
+            response.setSchemaVersion("t1_annotation_v0.5");
+        }
+        if (response.getInputReference() == null) {
+            response.setInputReference(buildT1InputReference(request, contentType));
+        }
+        return response;
+    }
+
+    private T1AnnotateResponse.InputReference buildT1InputReference(T1AnnotateRequest request, String contentType) {
+        T1AnnotateResponse.InputReference ref = new T1AnnotateResponse.InputReference();
+        T1AnnotateRequest.Context context = request.getContext();
+        ref.setContentId(context != null ? context.getDocId() : null);
+        ref.setContentType(contentType);
+        ref.setPlatform(context != null ? context.getPlatform() : null);
+        ref.setUrl(context != null ? context.getUrl() : null);
+        ref.setAuthorId(context != null ? context.getAuthorHandle() : null);
+        ref.setCreatedAt(context != null ? context.getPublishedAt() : null);
+        return ref;
+    }
+
+    private T1AnnotateResponse buildFallbackT1Response(T1AnnotateRequest request, String contentType) {
         T1AnnotateResponse resp = new T1AnnotateResponse();
+        resp.setSchemaVersion("t1_annotation_v0.5");
+        resp.setInputReference(buildT1InputReference(request, contentType));
+        resp.setEvidenceClues(List.of());
+
         T1AnnotateResponse.QualityControl qc = new T1AnnotateResponse.QualityControl();
         qc.setNeedHumanReview(true);
         qc.setReviewReasons(List.of("module_failure"));
-
-        resp.setSchemaVersion("t1_annotation_v0.5");
-        resp.setEvidenceClues(List.of());
+        qc.setFailedModules(List.of(
+                "text_aigc_detection", "ideology", "core_stance", "entities_hint_stance", "public_attitude",
+                "opinion_emotion", "event_heat", "language_style", "content_purpose", "risk_level",
+                "topic_tags", "account_type", "entities_hint", "keywords", "summary", "event_type"));
         resp.setQualityControl(qc);
+
+        resp.setOverallConfidence(0.0);
+        resp.setProcessedAt(java.time.OffsetDateTime.now().toString());
+        return resp;
+    }
+
+    private T1AnnotateAccountResponse buildFallbackT1AccountResponse() {
+        T1AnnotateResponse.Annotations.BasicObjective.AccountType accountType =
+                new T1AnnotateResponse.Annotations.BasicObjective.AccountType();
+        accountType.setPrimaryAccountCategory("unknown");
+        accountType.setAccountSubtypeTags(List.of());
+        accountType.setAutomationSuspicion("unclear");
+        accountType.setEvidenceIds(List.of());
+
+        T1AnnotateAccountResponse resp = new T1AnnotateAccountResponse();
+        resp.setSchemaVersion("t1_account_annotation_v0.5");
+        resp.setAccountType(accountType);
+        resp.setEvidenceClues(List.of());
+
+        T1AnnotateResponse.QualityControl qc = new T1AnnotateResponse.QualityControl();
+        qc.setNeedHumanReview(true);
+        qc.setReviewReasons(List.of("module_failure"));
+        qc.setFailedModules(List.of("account_type"));
+        resp.setQualityControl(qc);
+
         resp.setOverallConfidence(0.0);
         resp.setProcessedAt(java.time.OffsetDateTime.now().toString());
         return resp;
