@@ -290,7 +290,6 @@ public class LlmAgentController {
             T1AnnotateResponse response = parseT1Response(raw);
             response.setProcessedAt(java.time.OffsetDateTime.now().toString());
             response.setLanguage(request.getLanguage());
-            response.setRaw(raw);
             return response;
 
         } catch (Exception e) {
@@ -404,34 +403,14 @@ public class LlmAgentController {
 
     private T1AnnotateResponse buildFallbackT1Response(String text) {
         T1AnnotateResponse resp = new T1AnnotateResponse();
-        T1AnnotateResponse.Annotations ann = new T1AnnotateResponse.Annotations();
-        ann.setTopics(List.of("unknown"));
-        ann.setKeywords(List.of());
-        ann.setSummary(text != null && !text.isBlank() ? text.substring(0, Math.min(text.length(), 100)) : null);
-        ann.setAigcSuspicion("low");
-
-        T1AnnotateResponse.Annotations.LanguageStyle languageStyle =
-                new T1AnnotateResponse.Annotations.LanguageStyle();
-        languageStyle.setFormality("unknown");
-        languageStyle.setEmotionalIntensity("unclear");
-        ann.setLanguageStyle(languageStyle);
-
-        T1AnnotateResponse.Annotations.Sentiment sentiment =
-                new T1AnnotateResponse.Annotations.Sentiment();
-        sentiment.setLabel("neutral");
-        sentiment.setScore(0.0);
-        ann.setSentiment(sentiment);
-        ann.setEntitiesHint(List.of());
-
         T1AnnotateResponse.QualityControl qc = new T1AnnotateResponse.QualityControl();
-        qc.setAutoLabelStatus("failed");
         qc.setNeedHumanReview(true);
-        qc.setModelVersion(MODEL_VERSION);
+        qc.setReviewReasons(List.of("module_failure"));
 
-        resp.setAnnotations(ann);
+        resp.setSchemaVersion("t1_annotation_v0.5");
         resp.setEvidenceClues(List.of());
         resp.setQualityControl(qc);
-        resp.setConfidence(0.0);
+        resp.setOverallConfidence(0.0);
         resp.setProcessedAt(java.time.OffsetDateTime.now().toString());
         return resp;
     }

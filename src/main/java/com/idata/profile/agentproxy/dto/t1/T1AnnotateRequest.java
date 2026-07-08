@@ -35,6 +35,7 @@ public class T1AnnotateRequest {
         private String docId;
         /** 来源平台，辅助账户类别判断 */
         private String platform;
+        private String url;
         /** post/comment/reply/article */
         private String contentType;
         private String authorHandle;

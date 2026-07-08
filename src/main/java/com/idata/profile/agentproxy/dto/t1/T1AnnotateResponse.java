@@ -7,177 +7,386 @@ import java.util.List;
 @Data
 public class T1AnnotateResponse {
 
+    /** 固定为 "t1_annotation_v0.5" */
+    private String schemaVersion;
+
+    /** 输入引用信息 */
+    private InputReference inputReference;
+
     /** 回传输入的语言 */
     private String language;
 
-    /** 标注结果，嵌套对象，子字段由 annotationTypes 控制 */
+    /** AIGC 检测结果，覆盖文本/图像/视频/多模态一致性 */
+    private AigcDetection aigcDetection;
+
+    /** 自动标注结果（高价值主观 + 基础客观） */
     private Annotations annotations;
 
-    /** 证据线索池 */
+    /** 原始证据池 */
     private List<EvidenceClue> evidenceClues;
 
-    /** 质量控制信息 */
+    /** 质量控制 */
     private QualityControl qualityControl;
 
-    /** 本次标注整体置信度 0-1 */
-    private Double confidence;
+    /** T1 对整条输出的总体置信度 */
+    private Double overallConfidence;
 
-    /** T1 处理完成的 ISO 时间戳 */
+    /** T1 处理完成时间，ISO 8601 */
     private String processedAt;
 
-    /** 完整原始响应，存入 raw_records.t1_output */
-    private String raw;
+    // ==================== input_reference ====================
+
+    @Data
+    public static class InputReference {
+        private String contentId;
+        /** text | image | video | text_image_mixed */
+        private String contentType;
+        private String platform;
+        private String url;
+        private String authorId;
+        private String createdAt;
+    }
+
+    // ==================== aigc_detection ====================
+
+    @Data
+    public static class AigcDetection {
+        /** ai_generated | human_generated | mixed | suspicious | unclear */
+        private String overallAigcLabel;
+        private Double overallAigcScore;
+        private TextAigcDetection textAigcDetection;
+        private ImageAigcDetection imageAigcDetection;
+        private VideoAigcDetection videoAigcDetection;
+        private MultimodalAigcDetection multimodalAigcDetection;
+        private Double aigcDetectionConfidence;
+
+        @Data
+        public static class TextAigcDetection {
+            /** ai_generated | human_generated | mixed | suspicious | unclear | not_applicable */
+            private String textAigcLabel;
+            private Double textAigcScore;
+            /** ai_self_disclosure/template_like_structure/generic_over_polished/repetitive_phrasing/
+             *  unnatural_transition/instruction_following_trace/mixed_style/none/unclear */
+            private List<String> textAigcSignalLabels;
+            private Double textAigcConfidence;
+            private List<String> evidenceIds;
+        }
+
+        @Data
+        public static class ImageAigcDetection {
+            /** ai_generated | human_generated | edited_or_manipulated | mixed | suspicious | unclear | not_applicable */
+            private String imageAigcLabel;
+            private Double imageAigcScore;
+            /** visual_artifact/face_inconsistency/hand_or_body_anomaly/text_rendering_anomaly/
+             *  lighting_shadow_inconsistency/background_distortion/object_boundary_anomaly/
+             *  metadata_anomaly/deepfake_signal/local_manipulation_signal/none/unclear */
+            private List<String> imageAigcSignalLabels;
+            private Double imageAigcConfidence;
+            private List<String> evidenceIds;
+        }
+
+        @Data
+        public static class VideoAigcDetection {
+            /** ai_generated | human_generated | deepfake | edited_or_manipulated | mixed | suspicious | unclear | not_applicable */
+            private String videoAigcLabel;
+            private Double videoAigcScore;
+            /** deepfake_signal/face_swap_signal/lip_sync_inconsistency/audio_visual_mismatch/
+             *  voice_synthesis_signal/temporal_inconsistency/frame_artifact/motion_anomaly/
+             *  lighting_shadow_inconsistency/background_distortion/scene_boundary_anomaly/
+             *  metadata_anomaly/local_manipulation_signal/none/unclear */
+            private List<String> videoAigcSignalLabels;
+            private Double videoAigcConfidence;
+            private List<String> evidenceIds;
+        }
+
+        @Data
+        public static class MultimodalAigcDetection {
+            /** consistent | inconsistent | mixed_generated | suspicious | unclear | not_applicable */
+            private String multimodalAigcLabel;
+            /** text_image | text_video | image_text_ocr | video_audio | video_subtitle | text_image_video | other | not_applicable */
+            private String modalityCombination;
+            /** text_image_mismatch/text_video_mismatch/image_ocr_mismatch/audio_visual_mismatch/
+             *  subtitle_visual_mismatch/caption_context_mismatch/cross_modal_source_mismatch/
+             *  mixed_generation_signal/none/unclear */
+            private List<String> multimodalSignalLabels;
+            private Double multimodalAigcConfidence;
+            private List<String> evidenceIds;
+        }
+    }
+
+    // ==================== annotations ====================
 
     @Data
     public static class Annotations {
-        private List<String> topics;
-        private List<String> keywords;
-        private String summary;
-        private LanguageStyle languageStyle;
-        private Sentiment sentiment;
-        /** 维度9：事件类型/议题归属细化 */
-        private String eventType;
-        /** 维度7：内容目的 */
-        private String contentPurpose;
-        /**
-         * AI生成嫌疑：none/low/medium/high
-         *
-         * @deprecated v1.1 起并入 {@link Risk#aigcSuspicion}，此字段仅为兼容旧数据保留
-         */
-        @Deprecated
-        private String aigcSuspicion;
-        /** 维度8：风险等级（v1.1 新增，替代原 aigcSuspicion 独立字段） */
-        private Risk risk;
-        /** 维度1：意识形态（v1.1 新增，无明显倾向时为 null） */
-        private Ideology ideology;
-        /** 维度2：内容级核心立场（v1.1 新增）：support/oppose/neutral/mixed/unknown */
-        private String overallStance;
-        /** 维度4：事件热度（v1.1 新增）：low/medium/high/breaking/unknown */
-        private String eventHeat;
-        /** 维度5：账户类别（v1.1 新增）：official/media/journalist/individual/kol/organization/bot/unknown */
-        private String accountTypeHint;
-        /** 维度10：BEND 叙事操纵手法（v1.1 新增） */
-        private List<BendTactic> bendTactics;
-        /** T2的实体提示列表 */
-        private List<EntityHint> entitiesHint;
-        /** 物体检测结果，annotate_image 时返回 */
-        private List<DetectedObject> objects;
-        /** 场景分类，如 outdoor/indoor/protest/military/text_heavy */
-        private String scene;
-        /** OCR 提取的文字，无文字时为 null */
-        private String textOcr;
+        private HighValueSubjective highValueSubjective;
+        private BasicObjective basicObjective;
 
         @Data
-        public static class DetectedObject {
-            /** 物体标签，如 person/vehicle/weapon/flag/building */
-            private String label;
-            /** 置信度 0-1 */
-            private Double confidence;
-            /** 边界框 [x, y, width, height]，像素坐标 */
-            private List<Integer> bbox;
-        }
+        public static class HighValueSubjective {
+            private Ideology ideology;
+            private CoreStance coreStance;
+            private List<EntityHintStance> entitiesHintStance;
+            private PublicAttitude publicAttitude;
+            private OpinionEmotion opinionEmotion;
+            private EventHeat eventHeat;
+            private LanguageStyle languageStyle;
+            private ContentPurpose contentPurpose;
+            private RiskLevel riskLevel;
 
-        @Data
-        public static class LanguageStyle {
-            /** formal/informal/mixed/unknown */
-            private String formality;
-            /** none/low/medium/high/unclear */
-            private String emotionalIntensity;
-            /**
-             * 风格标签（多选，v1.1 新增）：
-             * neutral/rational/critical/emotional/aggressive/sarcastic/slogan/sensational/mobilization/panic_inducing
-             */
-            private List<String> styleTags;
-        }
-
-        @Data
-        public static class Sentiment {
-            /** positive/negative/neutral/mixed */
-            private String label;
-            /** -1.0 ~ 1.0 或 0.0~1.0（按算法组实际口径） */
-            private Double score;
-            /** 主要情绪类型（v1.1 新增）：anger/fear/sadness/joy/pride/anxiety/calm/contempt/null */
-            private String primaryEmotion;
-            /** 情绪极性（v1.1 新增，与 label 对应）：positive/negative/neutral/mixed */
-            private String emotionPolarity;
-            /** 情绪强度（v1.1 新增）：low/medium/high */
-            private String emotionIntensity;
-        }
-
-        /** 维度1：意识形态（v1.1 新增） */
-        @Data
-        public static class Ideology {
-            /** nationalist/conservative/liberal/religious/anti_establishment/pro_west/anti_west/neutral/unclear */
-            private String label;
-            /** weak/moderate/strong */
-            private String intensity;
-            /** 支撑证据片段 */
-            private String evidence;
-        }
-
-        /** 维度8：风险等级（v1.1 新增，综合维度） */
-        @Data
-        public static class Risk {
-            /** low/medium/high */
-            private String level;
-            /** 风险类型（多选）：misinformation/rumor/polarization/panic_inducing/mobilization/aigc_deception */
-            private List<String> types;
-            /** 触发风险的原文证据 */
-            private String evidence;
-            /** AIGC 嫌疑（v1.1 合并进 risk）：none/low/medium/high */
-            private String aigcSuspicion;
-        }
-
-        /** 维度10：BEND 叙事操纵手法条目（v1.1 新增） */
-        @Data
-        public static class BendTactic {
-            /** Engage/Explain/Excite/Enhance/Dismiss/Distort/Dismay/Distract */
-            private String tactic;
-            /** 置信度 0-1 */
-            private Double confidence;
-            /** 对应证据片段 */
-            private String evidence;
-            /** 判定理由 */
-            private String reason;
-        }
-
-        @Data
-        public static class EntityHint {
-            private String text;
-            /** person/organization/event/location/narrative/social_account/other/unknown */
-            private String typeHint;
-            private Span span;
-            /** support/oppose/neutral */
-            private String stance;
-            private String emotionExpression;
-            private String emotionIntensity;
-            private List<String> evidenceIds;
-
+            /** 维度1：意识形态倾向 */
             @Data
-            public static class Span {
-                private Integer start;
-                private Integer end;
+            public static class Ideology {
+                /** left_leaning/right_leaning/liberal/conservative/nationalist/populist/
+                 *  pro_government/anti_government/pro_western/anti_western/neutral/unclear/other */
+                private String ideologyLabel;
+                private List<String> targetEntityHintIds;
+                private Double ideologyConfidence;
+                private List<String> evidenceIds;
+            }
+
+            /** 维度2：内容级总体立场 */
+            @Data
+            public static class CoreStance {
+                /** support | oppose | neutral | mixed | unclear */
+                private String stanceLabel;
+                /** weak | medium | strong | unclear */
+                private String stanceStrength;
+                private Double coreStanceConfidence;
+                private List<String> evidenceIds;
+            }
+
+            /** 维度3：实体/对象级立场标注（数组，一条内容可以有多条） */
+            @Data
+            public static class EntityHintStance {
+                private String stanceUnitId;
+                private StanceHolder stanceHolder;
+                private StanceTarget stanceTarget;
+                /** support | oppose | neutral | mixed | unclear */
+                private String stanceLabel;
+                private List<String> evidenceIds;
+
+                @Data
+                public static class StanceHolder {
+                    /** 建议优先引用 basic_objective.entitiesHint[].entityHintId */
+                    private String stanceHolderId;
+                    private String text;
+                }
+
+                @Data
+                public static class StanceTarget {
+                    private String stanceTargetId;
+                    private String text;
+                }
+            }
+
+            /** 维度4：民众态度 */
+            @Data
+            public static class PublicAttitude {
+                /** general_public/netizens/local_residents/protesters/supporters/opponents/
+                 *  consumers/voters/community_members/unclear/not_applicable */
+                private String publicGroup;
+                /** supportive/approving/critical/distrustful/hostile/sympathetic/concerned/
+                 *  dissatisfied/fearful/mocking/indifferent/mixed/unclear/not_applicable */
+                private String attitudeLabel;
+                /** low | medium | high | unclear | not_applicable */
+                private String attitudeIntensity;
+                private Double publicAttitudeConfidence;
+                private List<String> evidenceIds;
+            }
+
+            /** 维度5：观点情绪 */
+            @Data
+            public static class OpinionEmotion {
+                /** positive | negative | neutral | mixed | unclear */
+                private String sentimentPolarity;
+                /** anger/fear/sadness/anxiety/disgust/contempt/joy/hope/sympathy/surprise/sarcasm/none/unclear */
+                private List<String> emotionLabels;
+                /** low | medium | high | unclear */
+                private String emotionIntensity;
+                private Double opinionEmotionConfidence;
+                private List<String> evidenceIds;
+            }
+
+            /** 维度6：事件热度 */
+            @Data
+            public static class EventHeat {
+                /** low | medium | high | explosive | unclear */
+                private String heatLevel;
+                private Double heatScore;
+                /** textual_heat_signal/engagement_metrics/platform_trending_signal/
+                 *  media_coverage_signal/temporal_burst_signal/unclear */
+                private List<String> heatSignalTypes;
+                private Double eventHeatConfidence;
+                private List<String> evidenceIds;
+            }
+
+            /** 维度7：语言表达方式 */
+            @Data
+            public static class LanguageStyle {
+                /** neutral/aggressive/sarcastic/mocking/alarmist/threatening/sensationalized/
+                 *  emotional/conspiratorial/accusatory/slogan_like/rhetorical_questioning/
+                 *  rational_analytical/unclear */
+                private List<String> styleLabels;
+                private Double languageStyleConfidence;
+                private List<String> evidenceIds;
+            }
+
+            /** 维度8：内容目的 */
+            @Data
+            public static class ContentPurpose {
+                /** information_sharing/opinion_expression/persuasion/mobilization/propaganda/
+                 *  attack_or_smear/debunking/warning/attention_seeking/rumor_spreading/unclear */
+                private String primaryPurpose;
+                private List<String> secondaryPurposes;
+                private Double contentPurposeConfidence;
+                private List<String> evidenceIds;
+            }
+
+            /** 维度9：风险等级 */
+            @Data
+            public static class RiskLevel {
+                /** none | low | medium | high | severe | unclear */
+                private String riskLabel;
+                /** misinformation/rumor/polarization/hostility/panic_amplification/
+                 *  mobilization_risk/reputation_attack/manipulation/aigc_deception/none/unclear */
+                private List<String> riskTypes;
+                private Double riskLevelConfidence;
+                private List<String> evidenceIds;
+            }
+        }
+
+        @Data
+        public static class BasicObjective {
+            private TopicTags topicTags;
+            private AccountType accountType;
+            private List<EntityHint> entitiesHint;
+            private List<Keyword> keywords;
+            private Summary summary;
+            private EventType eventType;
+
+            /** 维度10：话题标签 */
+            @Data
+            public static class TopicTags {
+                /** politics/military/economy_finance/technology_cyber/public_health/
+                 *  social_livelihood/ethnic_religious/energy_environment/disaster_accident/
+                 *  crime_public_safety/culture_education/migration_refugee/other/unclear */
+                private String primaryDomain;
+                private List<String> subtopicTags;
+                private Double topicTagsConfidence;
+                private List<String> evidenceIds;
+            }
+
+            /**
+             * 维度11：账号类别。
+             * 注意：这是每条内容标注时的"轻量级/兜底"账号类别判断，用现有的弱信号（比如 platform）尽力判断，
+             * 信息不够就老实标 unknown/unclear。权威的、基于完整账号画像的账号类别判断走独立的
+             * annotate_account 接口（下一轮实现），结果落在 SocialAccount.accountType 上。
+             * 这里不是重复实现，是两个不同精度/不同数据来源的判断。
+             */
+            @Data
+            public static class AccountType {
+                /** ordinary_user/news_media/state_affiliated_media/government_agency/political_actor/
+                 *  political_party_or_campaign/military_security_agency/international_organization/
+                 *  ngo_or_civil_society/academic_or_expert/commercial_brand/platform_official/
+                 *  influencer_kol/community_group/anonymous_account/suspected_bot_or_automated/
+                 *  unknown/other */
+                private String primaryAccountCategory;
+                private List<String> accountSubtypeTags;
+                /** none | low | medium | high | unclear */
+                private String automationSuspicion;
+                private Double accountTypeConfidence;
+                private List<String> evidenceIds;
+            }
+
+            /** 维度12：实体线索 */
+            @Data
+            public static class EntityHint {
+                private String entityHintId;
+                private String text;
+                /** persons/organizations/events/locations/media_contents/social_accounts/narratives/others/unknown */
+                private String typeHint;
+                private List<Integer> span;
+                private Double entityHintConfidence;
+                private List<String> evidenceIds;
+            }
+
+            /** 维度13：关键词 */
+            @Data
+            public static class Keyword {
+                private String keywordText;
+                /** text | image_ocr | video_transcript | metadata | unknown */
+                private String source;
+                private List<Integer> span;
+                private Double keywordConfidence;
+                private List<String> evidenceIds;
+            }
+
+            /** 维度14：摘要（不挂 evidenceIds） */
+            @Data
+            public static class Summary {
+                private String summaryText;
+                private Double summaryConfidence;
+            }
+
+            /** 维度15：事件类型 */
+            @Data
+            public static class EventType {
+                /** military_conflict/diplomatic_dispute/policy_announcement/election_campaign/
+                 *  protest_demonstration/economic_sanction/cyber_incident/public_health_event/
+                 *  disaster_accident/crime_public_safety/social_livelihood_event/
+                 *  public_opinion_event/other/unclear/not_applicable */
+                private String eventTypeLabel;
+                private Double eventTypeConfidence;
+                private List<String> evidenceIds;
             }
         }
     }
 
+    // ==================== evidence_clues ====================
+
     @Data
     public static class EvidenceClue {
         private String evidenceId;
-        /** text_span/image_region/video_segment */
+        /** text_span | image_region | video_segment | video_frame_region | metadata | model_signal */
         private String evidenceType;
-        private String rawContent;
-        private Object span;
-        private Double confidence;
+        /** text | image | video | audio | ocr | subtitle | metadata | aigc_detector */
+        private String source;
+        private String evidenceText;
+        private List<Integer> span;
+        private String mediaId;
+        private Region region;
+        private TimeRange timeRange;
+        private Object metadataSnapshot;
+        private Object modelSignal;
+
+        @Data
+        public static class Region {
+            private Double x;
+            private Double y;
+            private Double width;
+            private Double height;
+        }
+
+        @Data
+        public static class TimeRange {
+            private Double start;
+            private Double end;
+        }
     }
+
+    // ==================== quality_control ====================
 
     @Data
     public static class QualityControl {
-        /** success/failed/partial */
-        private String autoLabelStatus;
         private Boolean needHumanReview;
-        private String reviewReason;
-        private String schemaVersion;
-        private String modelVersion;
+        /** low_confidence/insufficient_context/conflicting_signals/multimodal_inconsistency/
+         *  aigc_suspicious/high_risk_content/missing_metadata/module_failure/too_short_input/
+         *  manual_policy_required/none/other */
+        private List<String> reviewReasons;
+        /** text_aigc_detection/image_aigc_detection/video_aigc_detection/multimodal_aigc_detection/
+         *  ideology/core_stance/entities_hint_stance/public_attitude/opinion_emotion/event_heat/
+         *  language_style/content_purpose/risk_level/topic_tags/account_type/entities_hint/
+         *  keywords/summary/event_type/none/other */
+        private List<String> failedModules;
     }
 }

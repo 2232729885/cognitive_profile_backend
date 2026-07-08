@@ -38,149 +38,14 @@ public class MockAgentController {
     public T1AnnotateResponse annotateText(@RequestBody T1AnnotateRequest request) {
         log.info("[MOCK-T1] annotate_text, textLength={}",
                 request.getText() != null ? request.getText().length() : 0);
-
-        T1AnnotateResponse.Annotations.Sentiment sentiment =
-                new T1AnnotateResponse.Annotations.Sentiment();
-        sentiment.setLabel("negative");
-        sentiment.setScore(-0.680);
-        sentiment.setPrimaryEmotion("fear");
-        sentiment.setEmotionPolarity("negative");
-        sentiment.setEmotionIntensity("medium");
-
-        T1AnnotateResponse.Annotations.LanguageStyle languageStyle =
-                new T1AnnotateResponse.Annotations.LanguageStyle();
-        languageStyle.setFormality("formal");
-        languageStyle.setEmotionalIntensity("medium");
-        languageStyle.setStyleTags(List.of("critical", "rational"));
-
-        T1AnnotateResponse.Annotations.EntityHint.Span span =
-                new T1AnnotateResponse.Annotations.EntityHint.Span();
-        span.setStart(0);
-        span.setEnd(12);
-
-        T1AnnotateResponse.Annotations.EntityHint entityHint =
-                new T1AnnotateResponse.Annotations.EntityHint();
-        entityHint.setText("Leila Farzan");
-        entityHint.setTypeHint("person");
-        entityHint.setSpan(span);
-        entityHint.setStance("oppose");
-        entityHint.setEmotionExpression("worry");
-        entityHint.setEmotionIntensity("medium");
-        entityHint.setEvidenceIds(List.of("ev_001"));
-
-        T1AnnotateResponse.EvidenceClue evidenceClue = new T1AnnotateResponse.EvidenceClue();
-        evidenceClue.setEvidenceId("ev_001");
-        evidenceClue.setEvidenceType("text_span");
-        evidenceClue.setRawContent("Leila Farzan");
-        evidenceClue.setSpan(Map.of("start", 0, "end", 12));
-        evidenceClue.setConfidence(0.92);
-
-        T1AnnotateResponse.Annotations.Risk risk = new T1AnnotateResponse.Annotations.Risk();
-        risk.setLevel("medium");
-        risk.setTypes(List.of("polarization"));
-        risk.setEvidence("对外部势力行为表达质疑和反对，存在对立放大表述");
-        risk.setAigcSuspicion("low");
-
-        T1AnnotateResponse.Annotations.Ideology ideology = new T1AnnotateResponse.Annotations.Ideology();
-        ideology.setLabel("anti_west");
-        ideology.setIntensity("moderate");
-        ideology.setEvidence("对外部势力行为表达质疑和反对");
-
-        T1AnnotateResponse.Annotations.BendTactic bendTactic1 =
-                new T1AnnotateResponse.Annotations.BendTactic();
-        bendTactic1.setTactic("Distort");
-        bendTactic1.setConfidence(0.68);
-        bendTactic1.setEvidence("对外部势力行为表达质疑和反对");
-        bendTactic1.setReason("对军事对峙的责任归属进行单方面定性表述");
-
-        T1AnnotateResponse.Annotations annotations = new T1AnnotateResponse.Annotations();
-        annotations.setTopics(List.of("politics", "gulf_security"));
-        annotations.setKeywords(List.of("霍尔木兹海峡", "军事对峙", "叙事操控"));
-        annotations.setSummary("该内容围绕霍尔木兹海峡军事对峙议题，对外部势力行为表达质疑和反对。");
-        annotations.setEventType("military_confrontation");
-        annotations.setContentPurpose("criticism");
-        annotations.setAigcSuspicion("low");
-        annotations.setRisk(risk);
-        annotations.setIdeology(ideology);
-        annotations.setOverallStance("oppose");
-        annotations.setEventHeat("medium");
-        annotations.setAccountTypeHint("unknown");
-        annotations.setBendTactics(List.of(bendTactic1));
-        annotations.setSentiment(sentiment);
-        annotations.setLanguageStyle(languageStyle);
-        annotations.setEntitiesHint(List.of(entityHint));
-
-        T1AnnotateResponse.QualityControl qualityControl = new T1AnnotateResponse.QualityControl();
-        qualityControl.setAutoLabelStatus("success");
-        qualityControl.setNeedHumanReview(false);
-        qualityControl.setReviewReason("");
-        qualityControl.setSchemaVersion("t1_annotation_v0.3");
-        qualityControl.setModelVersion("mock-t1-v1.0");
-
-        T1AnnotateResponse resp = new T1AnnotateResponse();
-        resp.setLanguage(request.getLanguage() != null ? request.getLanguage() : "zh");
-        resp.setAnnotations(annotations);
-        resp.setEvidenceClues(List.of(evidenceClue));
-        resp.setQualityControl(qualityControl);
-        resp.setConfidence(0.82);
-        resp.setProcessedAt(java.time.OffsetDateTime.now().toString());
-        resp.setRaw(toJson(resp));
-        return resp;
+        return placeholderT1Response(request.getLanguage());
     }
-
     @PostMapping("/mock/t1/annotate_image")
     public T1AnnotateResponse annotateImage(@RequestBody T1AnnotateRequest request) {
         log.info("[MOCK-T1] annotate_image, imageUrl={}, hasImageData={}",
                 request.getImageUrl(), request.getImageData() != null);
-
-        T1AnnotateResponse.Annotations.DetectedObject obj1 =
-                new T1AnnotateResponse.Annotations.DetectedObject();
-        obj1.setLabel("person");
-        obj1.setConfidence(0.95);
-        obj1.setBbox(List.of(10, 20, 100, 200));
-
-        T1AnnotateResponse.Annotations.DetectedObject obj2 =
-                new T1AnnotateResponse.Annotations.DetectedObject();
-        obj2.setLabel("military_vehicle");
-        obj2.setConfidence(0.82);
-        obj2.setBbox(List.of(150, 30, 80, 250));
-
-        T1AnnotateResponse.Annotations annotations = new T1AnnotateResponse.Annotations();
-        annotations.setObjects(List.of(obj1, obj2));
-        annotations.setScene("outdoor_military");
-        annotations.setTextOcr(null);
-        annotations.setAigcSuspicion("low");
-
-        T1AnnotateResponse.EvidenceClue clue1 = new T1AnnotateResponse.EvidenceClue();
-        clue1.setEvidenceId("ev_img_001");
-        clue1.setEvidenceType("image_region");
-        clue1.setRawContent("person");
-        clue1.setSpan(Map.of("bbox", List.of(10, 20, 100, 200)));
-        clue1.setConfidence(0.95);
-
-        T1AnnotateResponse.EvidenceClue clue2 = new T1AnnotateResponse.EvidenceClue();
-        clue2.setEvidenceId("ev_img_002");
-        clue2.setEvidenceType("image_region");
-        clue2.setRawContent("military_vehicle");
-        clue2.setSpan(Map.of("bbox", List.of(150, 30, 80, 250)));
-        clue2.setConfidence(0.82);
-
-        T1AnnotateResponse.QualityControl qualityControl = new T1AnnotateResponse.QualityControl();
-        qualityControl.setAutoLabelStatus("success");
-        qualityControl.setNeedHumanReview(false);
-        qualityControl.setSchemaVersion("t1_annotation_v0.3");
-        qualityControl.setModelVersion("mock-t1-image-v1.0");
-
-        T1AnnotateResponse resp = new T1AnnotateResponse();
-        resp.setAnnotations(annotations);
-        resp.setEvidenceClues(List.of(clue1, clue2));
-        resp.setQualityControl(qualityControl);
-        resp.setConfidence(0.88);
-        resp.setProcessedAt(java.time.OffsetDateTime.now().toString());
-        resp.setRaw(null);
-        return resp;
+        return placeholderT1Response(null);
     }
-
     @PostMapping("/mock/t2/extract_entities")
     public T2ExtractResponse extractEntities(@RequestBody T2ExtractRequest request) {
         log.info("[MOCK-T2] extract_entities, textLength={}, hasAnnotation={}",
@@ -328,6 +193,21 @@ public class MockAgentController {
     public T4EmbeddingResponse generateImageEmbedding(@RequestBody T4EmbeddingRequest request) {
         log.info("[MOCK-T4] generate_image_embedding, imageUrl={}", request.getImageUrl());
         return buildEmbeddingResponse(request.getImageUrl());
+    }
+
+    private T1AnnotateResponse placeholderT1Response(String language) {
+        T1AnnotateResponse resp = new T1AnnotateResponse();
+        resp.setSchemaVersion("t1_annotation_v0.5");
+        resp.setLanguage(language != null ? language : "zh");
+        resp.setEvidenceClues(List.of());
+        T1AnnotateResponse.QualityControl qualityControl = new T1AnnotateResponse.QualityControl();
+        qualityControl.setNeedHumanReview(false);
+        qualityControl.setReviewReasons(List.of("none"));
+        qualityControl.setFailedModules(List.of("none"));
+        resp.setQualityControl(qualityControl);
+        resp.setOverallConfidence(0.0D);
+        resp.setProcessedAt(java.time.OffsetDateTime.now().toString());
+        return resp;
     }
 
     @PostMapping("/mock/t5/complete_profile")

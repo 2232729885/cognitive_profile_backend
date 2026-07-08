@@ -37,30 +37,7 @@ public class ImageAnnotationUtil {
     }
 
     public void applyImageAnnotations(MediaAsset asset, T1AnnotateResponse response) {
-        T1AnnotateResponse.Annotations annotations = response.getAnnotations();
-        if (annotations == null) {
-            return;
-        }
-
-        if (annotations.getTextOcr() != null) {
-            asset.setOcrText(annotations.getTextOcr());
-        }
-
-        if (annotations.getAigcSuspicion() != null) {
-            asset.setAigcScore(toAigcScore(annotations.getAigcSuspicion()));
-        }
-
-        if (annotations.getObjects() != null) {
-            try {
-                asset.setObjectAnnotations(OBJECT_MAPPER.writeValueAsString(annotations.getObjects()));
-            } catch (JacksonException e) {
-                log.warn("Failed to serialize objects annotation, assetId={}", asset.getId(), e);
-            }
-        }
-
-        if (annotations.getScene() != null) {
-            asset.setSceneLabel(annotations.getScene());
-        }
+        // T1 v0.5 image-field mapping will be implemented in the follow-up migration round.
     }
 
     public void updateNeo4jAnnotations(MediaAsset asset) {
