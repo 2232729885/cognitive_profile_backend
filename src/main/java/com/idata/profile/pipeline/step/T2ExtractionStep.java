@@ -41,14 +41,27 @@ public class T2ExtractionStep {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final Set<String> ALLOWED_RELATION_TYPES = Set.of(
+            // 身份归一类
             "SAME_AS", "HAS_ACCOUNT", "ALIAS_OF", "MERGED_INTO",
-            "AFFILIATED_WITH", "PART_OF", "CONTROLS", "OWNS", "MEMBER_OF", "ADMIN_OF", "PUBLISHED_IN",
-            "AUTHORED", "REPLY_TO", "COMMENT_ON", "REPOSTS", "QUOTES", "SHARES", "REFERENCES_URL", "MENTIONS", "HAS_MEDIA",
+            // 组织/社群类
+            "AFFILIATED_WITH", "PART_OF", "CONTROLS", "OWNS", "MEMBER_OF",
+            "ADMIN_OF", "PUBLISHED_IN",
+            // 内容链路类
+            "AUTHORED", "REPLY_TO", "COMMENT_ON", "REPOSTS", "QUOTES",
+            "SHARES", "REFERENCES_URL", "MENTIONS",
+            // 事件地点类
             "DESCRIBES", "REPORTS", "EVENT_OCCURRED_AT", "EVENT_INVOLVES_ENTITY", "LOCATED_IN", "POSTS_FROM",
+            // 叙事认知类（保留历史名称）
             "CONTENT_EXPRESSES_NARRATIVE", "NARRATIVE_TARGETS_ENTITY", "NARRATIVE_ABOUT_EVENT",
-            "SUPPORTS", "OPPOSES", "HAS_EMOTION",
+            "SUPPORTS", "OPPOSES", "INCITES", "DE_ESCALATES",
+            "BELONGS_TO", "HAS_EMOTION",
+            // 传播协同类
             "AMPLIFIES", "BRIDGES_COMMUNITY", "COORDINATES_WITH", "POTENTIAL_SUBORDINATE_TO", "INFLUENCES",
-            "ASSERTED_BY", "DERIVED_FROM", "CONFLICTS_WITH", "REVIEWED_BY");
+            // 证据治理类
+            "ASSERTED_BY", "DERIVED_FROM", "CONFLICTS_WITH", "REVIEWED_BY",
+            // 保留兼容旧数据
+            "HAS_MEDIA"
+    );
 
     private final AgentProxyClient agentProxyClient;
     private final MediaContentMapper mediaContentMapper;

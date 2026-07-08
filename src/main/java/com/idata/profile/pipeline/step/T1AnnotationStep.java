@@ -9,6 +9,7 @@ import com.idata.profile.entity.content.MediaAsset;
 import com.idata.profile.entity.content.MediaContent;
 import com.idata.profile.entity.raw.RawRecord;
 import com.idata.profile.entity.task.PipelineTask;
+import com.idata.profile.infra.neo4j.Neo4jGraphService;
 import com.idata.profile.mapper.content.MediaAssetMapper;
 import com.idata.profile.mapper.content.MediaContentMapper;
 import com.idata.profile.mapper.raw.RawRecordMapper;
@@ -21,7 +22,9 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Slf4j
@@ -38,6 +41,7 @@ public class T1AnnotationStep {
     private final RawRecordMapper rawRecordMapper;
     private final PipelineTaskMapper pipelineTaskMapper;
     private final ImageAnnotationUtil imageAnnotationUtil;
+    private final Neo4jGraphService neo4jGraphService;
 
     public void run(PipelineTask task) {
         OffsetDateTime startedAt = OffsetDateTime.now();
@@ -56,6 +60,9 @@ public class T1AnnotationStep {
             textResponse = agentProxyClient.call("T1", "annotate_text", request, T1AnnotateResponse.class);
             applyAnnotations(mc, textResponse);
             mediaContentMapper.updateById(mc);
+            if (textResponse != null) {
+                syncT1AnnotationsToNeo4j(mc, textResponse);
+            }
         } else {
             log.info("[T1] 跳过文本标注：bodyText为空, contentId={}", mc.getId());
         }
@@ -133,6 +140,90 @@ public class T1AnnotationStep {
             case "high" -> new BigDecimal("0.85");
             default -> null;
         };
+    }
+
+    private void syncT1AnnotationsToNeo4j(MediaContent mc, T1AnnotateResponse response) {
+        try {
+            Map<String, Object> props = new LinkedHashMap<>();
+            T1AnnotateResponse.Annotations ann = response.getAnnotations();
+
+            if (ann != null) {
+                // topics / topicCategory / topicSubcategory
+                if (ann.getTopics() != null && !ann.getTopics().isEmpty()) {
+                    props.put("topics", ann.getTopics().toArray(new String[0]));
+                    props.put("topicCategory", ann.getTopics().get(0));
+                    if (ann.getTopics().size() > 1) {
+                        props.put("topicSubcategory", ann.getTopics().get(1));
+                    }
+                }
+                // keywords / summary
+                putStrArray(props, "keywords", ann.getKeywords());
+                putStr(props, "summary", ann.getSummary());
+                // sentiment
+                if (ann.getSentiment() != null) {
+                    putStr(props, "sentimentLabel", ann.getSentiment().getLabel());
+                    if (ann.getSentiment().getScore() != null) {
+                        props.put("sentimentScore", ann.getSentiment().getScore());
+                    }
+                }
+                // languageStyle
+                if (ann.getLanguageStyle() != null) {
+                    putStr(props, "languageStyleFormality",
+                            ann.getLanguageStyle().getFormality());
+                    putStr(props, "languageStyleEmotionalIntensity",
+                            ann.getLanguageStyle().getEmotionalIntensity());
+                }
+                // eventType / contentPurpose / aigcSuspicion
+                putStr(props, "eventType", ann.getEventType());
+                putStr(props, "contentPurpose", ann.getContentPurpose());
+                putStr(props, "aigcSuspicion", ann.getAigcSuspicion());
+                // entitiesHint -> entityTypeHints
+                if (ann.getEntitiesHint() != null && !ann.getEntitiesHint().isEmpty()) {
+                    String[] typeHints = ann.getEntitiesHint().stream()
+                            .map(T1AnnotateResponse.Annotations.EntityHint::getTypeHint)
+                            .filter(t -> t != null && !t.isBlank())
+                            .distinct()
+                            .toArray(String[]::new);
+                    if (typeHints.length > 0) {
+                        props.put("entityTypeHints", typeHints);
+                    }
+                }
+                // image annotations
+                putStr(props, "sceneLabel", ann.getScene());
+                putStr(props, "textOcr", ann.getTextOcr());
+            }
+            // qualityControl
+            if (response.getQualityControl() != null) {
+                putStr(props, "t1ModelVersion",
+                        response.getQualityControl().getModelVersion());
+                if (Boolean.TRUE.equals(response.getQualityControl().getNeedHumanReview())) {
+                    props.put("needHumanReview", true);
+                }
+            }
+            if (response.getConfidence() != null) {
+                props.put("t1Confidence", response.getConfidence());
+            }
+
+            if (!props.isEmpty()) {
+                neo4jGraphService.mergeNode("MediaContent", mc.getId().toString(), props);
+                log.debug("[T1] Neo4j同步成功, contentId={}, fields={}",
+                        mc.getId(), props.keySet());
+            }
+        } catch (Exception e) {
+            log.warn("[T1] Neo4j同步失败, contentId={}", mc.getId(), e);
+        }
+    }
+
+    private void putStr(Map<String, Object> m, String k, String v) {
+        if (v != null && !v.isBlank()) {
+            m.put(k, v);
+        }
+    }
+
+    private void putStrArray(Map<String, Object> m, String k, List<String> list) {
+        if (list != null && !list.isEmpty()) {
+            m.put(k, list.toArray(new String[0]));
+        }
     }
 
     private void annotateImages(UUID[] assetIds) {
