@@ -35,10 +35,29 @@ public class T1AnnotateResponse {
         private String summary;
         private LanguageStyle languageStyle;
         private Sentiment sentiment;
+        /** 维度9：事件类型/议题归属细化 */
         private String eventType;
+        /** 维度7：内容目的 */
         private String contentPurpose;
-        /** AI生成嫌疑：none/low/medium/high */
+        /**
+         * AI生成嫌疑：none/low/medium/high
+         *
+         * @deprecated v1.1 起并入 {@link Risk#aigcSuspicion}，此字段仅为兼容旧数据保留
+         */
+        @Deprecated
         private String aigcSuspicion;
+        /** 维度8：风险等级（v1.1 新增，替代原 aigcSuspicion 独立字段） */
+        private Risk risk;
+        /** 维度1：意识形态（v1.1 新增，无明显倾向时为 null） */
+        private Ideology ideology;
+        /** 维度2：内容级核心立场（v1.1 新增）：support/oppose/neutral/mixed/unknown */
+        private String overallStance;
+        /** 维度4：事件热度（v1.1 新增）：low/medium/high/breaking/unknown */
+        private String eventHeat;
+        /** 维度5：账户类别（v1.1 新增）：official/media/journalist/individual/kol/organization/bot/unknown */
+        private String accountTypeHint;
+        /** 维度10：BEND 叙事操纵手法（v1.1 新增） */
+        private List<BendTactic> bendTactics;
         /** T2的实体提示列表 */
         private List<EntityHint> entitiesHint;
         /** 物体检测结果，annotate_image 时返回 */
@@ -64,14 +83,62 @@ public class T1AnnotateResponse {
             private String formality;
             /** none/low/medium/high/unclear */
             private String emotionalIntensity;
+            /**
+             * 风格标签（多选，v1.1 新增）：
+             * neutral/rational/critical/emotional/aggressive/sarcastic/slogan/sensational/mobilization/panic_inducing
+             */
+            private List<String> styleTags;
         }
 
         @Data
         public static class Sentiment {
-            /** positive/negative/neutral */
+            /** positive/negative/neutral/mixed */
             private String label;
-            /** -1.0 ~ 1.0 */
+            /** -1.0 ~ 1.0 或 0.0~1.0（按算法组实际口径） */
             private Double score;
+            /** 主要情绪类型（v1.1 新增）：anger/fear/sadness/joy/pride/anxiety/calm/contempt/null */
+            private String primaryEmotion;
+            /** 情绪极性（v1.1 新增，与 label 对应）：positive/negative/neutral/mixed */
+            private String emotionPolarity;
+            /** 情绪强度（v1.1 新增）：low/medium/high */
+            private String emotionIntensity;
+        }
+
+        /** 维度1：意识形态（v1.1 新增） */
+        @Data
+        public static class Ideology {
+            /** nationalist/conservative/liberal/religious/anti_establishment/pro_west/anti_west/neutral/unclear */
+            private String label;
+            /** weak/moderate/strong */
+            private String intensity;
+            /** 支撑证据片段 */
+            private String evidence;
+        }
+
+        /** 维度8：风险等级（v1.1 新增，综合维度） */
+        @Data
+        public static class Risk {
+            /** low/medium/high */
+            private String level;
+            /** 风险类型（多选）：misinformation/rumor/polarization/panic_inducing/mobilization/aigc_deception */
+            private List<String> types;
+            /** 触发风险的原文证据 */
+            private String evidence;
+            /** AIGC 嫌疑（v1.1 合并进 risk）：none/low/medium/high */
+            private String aigcSuspicion;
+        }
+
+        /** 维度10：BEND 叙事操纵手法条目（v1.1 新增） */
+        @Data
+        public static class BendTactic {
+            /** Engage/Explain/Excite/Enhance/Dismiss/Distort/Dismay/Distract */
+            private String tactic;
+            /** 置信度 0-1 */
+            private Double confidence;
+            /** 对应证据片段 */
+            private String evidence;
+            /** 判定理由 */
+            private String reason;
         }
 
         @Data

@@ -76,6 +76,34 @@ public class MediaContent {
     @TableField(typeHandler = JsonbStringTypeHandler.class)
     private String entitiesHint;
     private String narrativeHint;
+
+    // ---- T1 标注接口规约 v1.1 新增字段 ----
+    @TableField(typeHandler = StringArrayTypeHandler.class)
+    private String[] keywords;
+    private String summary;
+    /** 维度1：意识形态标签 */
+    private String ideologyLabel;
+    /** 维度1：意识形态倾向强度 */
+    private String ideologyIntensity;
+    /** 维度2：内容级核心立场 */
+    private String overallStance;
+    /** 维度4：事件热度感知 */
+    private String eventHeat;
+    /** 维度5：账户类别提示 */
+    private String accountTypeHint;
+    /** 维度8：综合风险等级 */
+    private String riskLevel;
+    @TableField(typeHandler = StringArrayTypeHandler.class)
+    private String[] riskTypes;
+    private String riskEvidence;
+    @TableField(typeHandler = StringArrayTypeHandler.class)
+    private String[] languageStyleTags;
+    /** 维度3：主要情绪类型 */
+    private String sentimentPrimaryEmotion;
+    /** 维度10：BEND 叙事操纵手法数组（JSONB） */
+    @TableField(typeHandler = JsonbStringTypeHandler.class)
+    private String bendTactics;
+
     private Boolean needHumanReview;
     private String humanReviewStatus;
     private Boolean propagationSyncedToNeo4j;

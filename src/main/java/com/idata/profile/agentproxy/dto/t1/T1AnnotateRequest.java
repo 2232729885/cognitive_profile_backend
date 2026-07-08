@@ -25,4 +25,22 @@ public class T1AnnotateRequest {
 
     /** 图像 base64，imageUrl 不可用时传此字段（可选）*/
     private String imageData;
+
+    /** 内容上下文，辅助提升标注质量（v1.1 新增，可选） */
+    private Context context;
+
+    @Data
+    public static class Context {
+        /** 内容ID，用于日志追踪 */
+        private String docId;
+        /** 来源平台，辅助账户类别判断 */
+        private String platform;
+        /** post/comment/reply/article */
+        private String contentType;
+        private String authorHandle;
+        private String publishedAt;
+        /** 话题标签，辅助话题判断 */
+        private List<String> hashtags;
+        private String parentContentId;
+    }
 }

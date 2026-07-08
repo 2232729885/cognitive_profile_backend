@@ -56,6 +56,15 @@ public class T1AnnotationStep {
             T1AnnotateRequest request = new T1AnnotateRequest();
             request.setText(mc.getBodyText());
             request.setLanguage(mc.getLanguage());
+            T1AnnotateRequest.Context context = new T1AnnotateRequest.Context();
+            context.setDocId(mc.getId().toString());
+            context.setPlatform(mc.getPlatform());
+            context.setContentType(mc.getContentType());
+            context.setAuthorHandle(mc.getAuthorPlatformUserId());
+            context.setPublishedAt(mc.getPublishedAt() != null ? mc.getPublishedAt().toString() : null);
+            context.setHashtags(mc.getHashtags() != null ? List.of(mc.getHashtags()) : null);
+            context.setParentContentId(mc.getParentContentId());
+            request.setContext(context);
 
             textResponse = agentProxyClient.call("T1", "annotate_text", request, T1AnnotateResponse.class);
             applyAnnotations(mc, textResponse);
@@ -101,12 +110,51 @@ public class T1AnnotationStep {
                 if (annotations.getSentiment().getScore() != null) {
                     mc.setSentimentScore(BigDecimal.valueOf(annotations.getSentiment().getScore()));
                 }
+                mc.setSentimentPrimaryEmotion(annotations.getSentiment().getPrimaryEmotion());
             }
 
-            BigDecimal aigcScore = toAigcScore(annotations.getAigcSuspicion());
+            String aigcSuspicion = annotations.getRisk() != null && annotations.getRisk().getAigcSuspicion() != null
+                    ? annotations.getRisk().getAigcSuspicion()
+                    : annotations.getAigcSuspicion();
+            BigDecimal aigcScore = toAigcScore(aigcSuspicion);
             if (aigcScore != null) {
                 mc.setAigcScore(aigcScore);
                 mc.setNeedHumanReview(aigcScore.compareTo(AIGC_REVIEW_THRESHOLD) > 0);
+            }
+
+            if (annotations.getKeywords() != null && !annotations.getKeywords().isEmpty()) {
+                mc.setKeywords(annotations.getKeywords().toArray(new String[0]));
+            }
+            mc.setSummary(annotations.getSummary());
+            mc.setOverallStance(annotations.getOverallStance());
+            mc.setEventHeat(annotations.getEventHeat());
+            mc.setAccountTypeHint(annotations.getAccountTypeHint());
+
+            if (annotations.getIdeology() != null) {
+                mc.setIdeologyLabel(annotations.getIdeology().getLabel());
+                mc.setIdeologyIntensity(annotations.getIdeology().getIntensity());
+            }
+
+            if (annotations.getRisk() != null) {
+                mc.setRiskLevel(annotations.getRisk().getLevel());
+                mc.setRiskEvidence(annotations.getRisk().getEvidence());
+                if (annotations.getRisk().getTypes() != null && !annotations.getRisk().getTypes().isEmpty()) {
+                    mc.setRiskTypes(annotations.getRisk().getTypes().toArray(new String[0]));
+                }
+            }
+
+            if (annotations.getLanguageStyle() != null
+                    && annotations.getLanguageStyle().getStyleTags() != null
+                    && !annotations.getLanguageStyle().getStyleTags().isEmpty()) {
+                mc.setLanguageStyleTags(annotations.getLanguageStyle().getStyleTags().toArray(new String[0]));
+            }
+
+            if (annotations.getBendTactics() != null && !annotations.getBendTactics().isEmpty()) {
+                try {
+                    mc.setBendTactics(OBJECT_MAPPER.writeValueAsString(annotations.getBendTactics()));
+                } catch (JacksonException e) {
+                    log.warn("Failed to serialize T1 bend tactics, contentId={}", mc.getId(), e);
+                }
             }
 
             if (annotations.getEntitiesHint() != null && !annotations.getEntitiesHint().isEmpty()) {
@@ -165,6 +213,7 @@ public class T1AnnotationStep {
                     if (ann.getSentiment().getScore() != null) {
                         props.put("sentimentScore", ann.getSentiment().getScore());
                     }
+                    putStr(props, "sentimentPrimaryEmotion", ann.getSentiment().getPrimaryEmotion());
                 }
                 // languageStyle
                 if (ann.getLanguageStyle() != null) {
@@ -172,11 +221,35 @@ public class T1AnnotationStep {
                             ann.getLanguageStyle().getFormality());
                     putStr(props, "languageStyleEmotionalIntensity",
                             ann.getLanguageStyle().getEmotionalIntensity());
+                    putStrArray(props, "languageStyleTags", ann.getLanguageStyle().getStyleTags());
                 }
                 // eventType / contentPurpose / aigcSuspicion
                 putStr(props, "eventType", ann.getEventType());
                 putStr(props, "contentPurpose", ann.getContentPurpose());
-                putStr(props, "aigcSuspicion", ann.getAigcSuspicion());
+                putStr(props, "aigcSuspicion",
+                        ann.getRisk() != null && ann.getRisk().getAigcSuspicion() != null
+                                ? ann.getRisk().getAigcSuspicion()
+                                : ann.getAigcSuspicion());
+                if (ann.getIdeology() != null) {
+                    putStr(props, "ideologyLabel", ann.getIdeology().getLabel());
+                    putStr(props, "ideologyIntensity", ann.getIdeology().getIntensity());
+                }
+                putStr(props, "overallStance", ann.getOverallStance());
+                putStr(props, "eventHeat", ann.getEventHeat());
+                putStr(props, "accountTypeHint", ann.getAccountTypeHint());
+                if (ann.getRisk() != null) {
+                    putStr(props, "riskLevel", ann.getRisk().getLevel());
+                    putStrArray(props, "riskTypes", ann.getRisk().getTypes());
+                }
+                if (ann.getBendTactics() != null && !ann.getBendTactics().isEmpty()) {
+                    String[] tactics = ann.getBendTactics().stream()
+                            .map(T1AnnotateResponse.Annotations.BendTactic::getTactic)
+                            .filter(t -> t != null && !t.isBlank())
+                            .toArray(String[]::new);
+                    if (tactics.length > 0) {
+                        props.put("bendTactics", tactics);
+                    }
+                }
                 // entitiesHint -> entityTypeHints
                 if (ann.getEntitiesHint() != null && !ann.getEntitiesHint().isEmpty()) {
                     String[] typeHints = ann.getEntitiesHint().stream()

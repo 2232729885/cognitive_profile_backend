@@ -55,11 +55,15 @@ public class MockAgentController {
                 new T1AnnotateResponse.Annotations.Sentiment();
         sentiment.setLabel("negative");
         sentiment.setScore(-0.680);
+        sentiment.setPrimaryEmotion("fear");
+        sentiment.setEmotionPolarity("negative");
+        sentiment.setEmotionIntensity("medium");
 
         T1AnnotateResponse.Annotations.LanguageStyle languageStyle =
                 new T1AnnotateResponse.Annotations.LanguageStyle();
         languageStyle.setFormality("formal");
         languageStyle.setEmotionalIntensity("medium");
+        languageStyle.setStyleTags(List.of("critical", "rational"));
 
         T1AnnotateResponse.Annotations.EntityHint.Span span =
                 new T1AnnotateResponse.Annotations.EntityHint.Span();
@@ -72,7 +76,27 @@ public class MockAgentController {
         entityHint.setTypeHint("person");
         entityHint.setSpan(span);
         entityHint.setStance("oppose");
+        entityHint.setEmotionExpression("worry");
+        entityHint.setEmotionIntensity("medium");
         entityHint.setEvidenceIds(List.of("ev_001"));
+
+        T1AnnotateResponse.Annotations.Risk risk = new T1AnnotateResponse.Annotations.Risk();
+        risk.setLevel("medium");
+        risk.setTypes(List.of("polarization"));
+        risk.setEvidence("对外部势力行为表达质疑和反对，存在对立放大表述");
+        risk.setAigcSuspicion("low");
+
+        T1AnnotateResponse.Annotations.Ideology ideology = new T1AnnotateResponse.Annotations.Ideology();
+        ideology.setLabel("anti_west");
+        ideology.setIntensity("moderate");
+        ideology.setEvidence("对外部势力行为表达质疑和反对");
+
+        T1AnnotateResponse.Annotations.BendTactic bendTactic1 =
+                new T1AnnotateResponse.Annotations.BendTactic();
+        bendTactic1.setTactic("Distort");
+        bendTactic1.setConfidence(0.68);
+        bendTactic1.setEvidence("对外部势力行为表达质疑和反对");
+        bendTactic1.setReason("对军事对峙的责任归属进行单方面定性表述");
 
         T1AnnotateResponse.Annotations annotations = new T1AnnotateResponse.Annotations();
         annotations.setTopics(List.of("politics", "gulf_security"));
@@ -81,6 +105,12 @@ public class MockAgentController {
         annotations.setEventType("military_confrontation");
         annotations.setContentPurpose("criticism");
         annotations.setAigcSuspicion("low");
+        annotations.setRisk(risk);
+        annotations.setIdeology(ideology);
+        annotations.setOverallStance("oppose");
+        annotations.setEventHeat("medium");
+        annotations.setAccountTypeHint("unknown");
+        annotations.setBendTactics(List.of(bendTactic1));
         annotations.setSentiment(sentiment);
         annotations.setLanguageStyle(languageStyle);
         annotations.setEntitiesHint(List.of(entityHint));
@@ -88,6 +118,7 @@ public class MockAgentController {
         T1AnnotateResponse.QualityControl qualityControl = new T1AnnotateResponse.QualityControl();
         qualityControl.setAutoLabelStatus("success");
         qualityControl.setNeedHumanReview(false);
+        qualityControl.setReviewReason("");
         qualityControl.setSchemaVersion("t1_annotation_v0.3");
         qualityControl.setModelVersion("mock-t1-v1.0");
 
@@ -166,26 +197,31 @@ public class MockAgentController {
         person.setCanonicalName("Leila Farzan");
         person.setImportanceScore(new BigDecimal("88.00"));
         person.setMatchedAccountId(null);
+        person.setAliases(List.of("L. Farzan", "莱拉·法尔赞"));
 
         T2ExtractResponse.ExtractedEntity narrative = new T2ExtractResponse.ExtractedEntity();
         narrative.setType("narrative");
         narrative.setCanonicalName("Hormuz Strait escalation narrative");
         narrative.setImportanceScore(new BigDecimal("76.00"));
+        narrative.setAliases(List.of());
 
         T2ExtractResponse.ExtractedEntity organization = new T2ExtractResponse.ExtractedEntity();
         organization.setType("organization");
         organization.setCanonicalName("U.S. Central Command");
         organization.setImportanceScore(new BigDecimal("84.00"));
+        organization.setAliases(List.of("CENTCOM"));
 
         T2ExtractResponse.ExtractedEntity location = new T2ExtractResponse.ExtractedEntity();
         location.setType("location");
         location.setCanonicalName("Strait of Hormuz");
         location.setImportanceScore(new BigDecimal("85.00"));
+        location.setAliases(List.of("霍尔木兹海峡"));
 
         T2ExtractResponse.ExtractedEntity event = new T2ExtractResponse.ExtractedEntity();
         event.setType("event");
         event.setCanonicalName("2026 Persian Gulf Military Standoff");
         event.setImportanceScore(new BigDecimal("90.00"));
+        event.setAliases(List.of());
 
         T2ExtractResponse.ExtractedRelation rel1 = new T2ExtractResponse.ExtractedRelation();
         rel1.setSourceName("Leila Farzan");
