@@ -38,14 +38,468 @@ public class MockAgentController {
     public T1AnnotateResponse annotateText(@RequestBody T1AnnotateRequest request) {
         log.info("[MOCK-T1] annotate_text, textLength={}",
                 request.getText() != null ? request.getText().length() : 0);
-        return placeholderT1Response(request.getLanguage());
+
+        T1AnnotateResponse resp = new T1AnnotateResponse();
+        resp.setSchemaVersion("t1_annotation_v0.5");
+        resp.setInputReference(buildInputReference(request, "text"));
+        resp.setLanguage(request.getLanguage() != null ? request.getLanguage() : "zh");
+
+        T1AnnotateResponse.AigcDetection.TextAigcDetection textAigc =
+                new T1AnnotateResponse.AigcDetection.TextAigcDetection();
+        textAigc.setTextAigcLabel("human_generated");
+        textAigc.setTextAigcScore(0.15);
+        textAigc.setTextAigcSignalLabels(List.of("none"));
+        textAigc.setTextAigcConfidence(0.80);
+        textAigc.setEvidenceIds(List.of("ev_001"));
+
+        T1AnnotateResponse.AigcDetection.ImageAigcDetection imageAigcNa =
+                new T1AnnotateResponse.AigcDetection.ImageAigcDetection();
+        imageAigcNa.setImageAigcLabel("not_applicable");
+        imageAigcNa.setImageAigcSignalLabels(List.of("none"));
+        imageAigcNa.setEvidenceIds(List.of());
+
+        T1AnnotateResponse.AigcDetection.VideoAigcDetection videoAigcNa =
+                new T1AnnotateResponse.AigcDetection.VideoAigcDetection();
+        videoAigcNa.setVideoAigcLabel("not_applicable");
+        videoAigcNa.setVideoAigcSignalLabels(List.of("none"));
+        videoAigcNa.setEvidenceIds(List.of());
+
+        T1AnnotateResponse.AigcDetection.MultimodalAigcDetection multimodalNa =
+                new T1AnnotateResponse.AigcDetection.MultimodalAigcDetection();
+        multimodalNa.setMultimodalAigcLabel("not_applicable");
+        multimodalNa.setModalityCombination("not_applicable");
+        multimodalNa.setMultimodalSignalLabels(List.of("none"));
+        multimodalNa.setEvidenceIds(List.of());
+
+        T1AnnotateResponse.AigcDetection aigcDetection = new T1AnnotateResponse.AigcDetection();
+        aigcDetection.setOverallAigcLabel("human_generated");
+        aigcDetection.setOverallAigcScore(0.15);
+        aigcDetection.setTextAigcDetection(textAigc);
+        aigcDetection.setImageAigcDetection(imageAigcNa);
+        aigcDetection.setVideoAigcDetection(videoAigcNa);
+        aigcDetection.setMultimodalAigcDetection(multimodalNa);
+        aigcDetection.setAigcDetectionConfidence(0.80);
+        resp.setAigcDetection(aigcDetection);
+
+        T1AnnotateResponse.Annotations.HighValueSubjective.Ideology ideology =
+                new T1AnnotateResponse.Annotations.HighValueSubjective.Ideology();
+        ideology.setIdeologyLabel("anti_western");
+        ideology.setTargetEntityHintIds(List.of("ent_002"));
+        ideology.setIdeologyConfidence(0.75);
+        ideology.setEvidenceIds(List.of("ev_002"));
+
+        T1AnnotateResponse.Annotations.HighValueSubjective.CoreStance coreStance =
+                new T1AnnotateResponse.Annotations.HighValueSubjective.CoreStance();
+        coreStance.setStanceLabel("oppose");
+        coreStance.setStanceStrength("strong");
+        coreStance.setCoreStanceConfidence(0.85);
+        coreStance.setEvidenceIds(List.of("ev_002"));
+
+        T1AnnotateResponse.Annotations.HighValueSubjective.EntityHintStance.StanceHolder stanceHolder =
+                new T1AnnotateResponse.Annotations.HighValueSubjective.EntityHintStance.StanceHolder();
+        stanceHolder.setStanceHolderId("ent_001");
+        stanceHolder.setText("Leila Farzan");
+
+        T1AnnotateResponse.Annotations.HighValueSubjective.EntityHintStance.StanceTarget stanceTarget =
+                new T1AnnotateResponse.Annotations.HighValueSubjective.EntityHintStance.StanceTarget();
+        stanceTarget.setStanceTargetId("ent_002");
+        stanceTarget.setText("U.S. Central Command");
+
+        T1AnnotateResponse.Annotations.HighValueSubjective.EntityHintStance entityHintStance =
+                new T1AnnotateResponse.Annotations.HighValueSubjective.EntityHintStance();
+        entityHintStance.setStanceUnitId("stance_001");
+        entityHintStance.setStanceHolder(stanceHolder);
+        entityHintStance.setStanceTarget(stanceTarget);
+        entityHintStance.setStanceLabel("oppose");
+        entityHintStance.setEvidenceIds(List.of("ev_002"));
+
+        T1AnnotateResponse.Annotations.HighValueSubjective.PublicAttitude publicAttitude =
+                new T1AnnotateResponse.Annotations.HighValueSubjective.PublicAttitude();
+        publicAttitude.setPublicGroup("netizens");
+        publicAttitude.setAttitudeLabel("critical");
+        publicAttitude.setAttitudeIntensity("medium");
+        publicAttitude.setPublicAttitudeConfidence(0.60);
+        publicAttitude.setEvidenceIds(List.of("ev_003"));
+
+        T1AnnotateResponse.Annotations.HighValueSubjective.OpinionEmotion opinionEmotion =
+                new T1AnnotateResponse.Annotations.HighValueSubjective.OpinionEmotion();
+        opinionEmotion.setSentimentPolarity("negative");
+        opinionEmotion.setEmotionLabels(List.of("anger", "contempt"));
+        opinionEmotion.setEmotionIntensity("medium");
+        opinionEmotion.setOpinionEmotionConfidence(0.82);
+        opinionEmotion.setEvidenceIds(List.of("ev_002"));
+
+        T1AnnotateResponse.Annotations.HighValueSubjective.EventHeat eventHeat =
+                new T1AnnotateResponse.Annotations.HighValueSubjective.EventHeat();
+        eventHeat.setHeatLevel("medium");
+        eventHeat.setHeatScore(55.0);
+        eventHeat.setHeatSignalTypes(List.of("textual_heat_signal"));
+        eventHeat.setEventHeatConfidence(0.70);
+        eventHeat.setEvidenceIds(List.of("ev_004"));
+
+        T1AnnotateResponse.Annotations.HighValueSubjective.LanguageStyle languageStyle =
+                new T1AnnotateResponse.Annotations.HighValueSubjective.LanguageStyle();
+        languageStyle.setStyleLabels(List.of("accusatory", "rational_analytical"));
+        languageStyle.setLanguageStyleConfidence(0.70);
+        languageStyle.setEvidenceIds(List.of("ev_002"));
+
+        T1AnnotateResponse.Annotations.HighValueSubjective.ContentPurpose contentPurpose =
+                new T1AnnotateResponse.Annotations.HighValueSubjective.ContentPurpose();
+        contentPurpose.setPrimaryPurpose("opinion_expression");
+        contentPurpose.setSecondaryPurposes(List.of("attack_or_smear"));
+        contentPurpose.setContentPurposeConfidence(0.72);
+        contentPurpose.setEvidenceIds(List.of("ev_002"));
+
+        T1AnnotateResponse.Annotations.HighValueSubjective.RiskLevel riskLevel =
+                new T1AnnotateResponse.Annotations.HighValueSubjective.RiskLevel();
+        riskLevel.setRiskLabel("medium");
+        riskLevel.setRiskTypes(List.of("polarization"));
+        riskLevel.setRiskLevelConfidence(0.68);
+        riskLevel.setEvidenceIds(List.of("ev_003"));
+
+        T1AnnotateResponse.Annotations.HighValueSubjective highValueSubjective =
+                new T1AnnotateResponse.Annotations.HighValueSubjective();
+        highValueSubjective.setIdeology(ideology);
+        highValueSubjective.setCoreStance(coreStance);
+        highValueSubjective.setEntitiesHintStance(List.of(entityHintStance));
+        highValueSubjective.setPublicAttitude(publicAttitude);
+        highValueSubjective.setOpinionEmotion(opinionEmotion);
+        highValueSubjective.setEventHeat(eventHeat);
+        highValueSubjective.setLanguageStyle(languageStyle);
+        highValueSubjective.setContentPurpose(contentPurpose);
+        highValueSubjective.setRiskLevel(riskLevel);
+
+        T1AnnotateResponse.Annotations.BasicObjective.TopicTags topicTags =
+                new T1AnnotateResponse.Annotations.BasicObjective.TopicTags();
+        topicTags.setPrimaryDomain("military");
+        topicTags.setSubtopicTags(List.of("geopolitics", "gulf_security"));
+        topicTags.setTopicTagsConfidence(0.90);
+        topicTags.setEvidenceIds(List.of("ev_001"));
+
+        T1AnnotateResponse.Annotations.BasicObjective.AccountType accountType =
+                new T1AnnotateResponse.Annotations.BasicObjective.AccountType();
+        accountType.setPrimaryAccountCategory("unknown");
+        accountType.setAccountSubtypeTags(List.of());
+        accountType.setAutomationSuspicion("unclear");
+        accountType.setAccountTypeConfidence(null);
+        accountType.setEvidenceIds(List.of());
+
+        T1AnnotateResponse.Annotations.BasicObjective.EntityHint entityHint1 =
+                new T1AnnotateResponse.Annotations.BasicObjective.EntityHint();
+        entityHint1.setEntityHintId("ent_001");
+        entityHint1.setText("Leila Farzan");
+        entityHint1.setTypeHint("persons");
+        entityHint1.setSpan(List.of(0, 12));
+        entityHint1.setEntityHintConfidence(0.90);
+        entityHint1.setEvidenceIds(List.of("ev_001"));
+
+        T1AnnotateResponse.Annotations.BasicObjective.EntityHint entityHint2 =
+                new T1AnnotateResponse.Annotations.BasicObjective.EntityHint();
+        entityHint2.setEntityHintId("ent_002");
+        entityHint2.setText("U.S. Central Command");
+        entityHint2.setTypeHint("organizations");
+        entityHint2.setSpan(List.of(20, 41));
+        entityHint2.setEntityHintConfidence(0.92);
+        entityHint2.setEvidenceIds(List.of("ev_001"));
+
+        T1AnnotateResponse.Annotations.BasicObjective.Keyword keyword1 =
+                new T1AnnotateResponse.Annotations.BasicObjective.Keyword();
+        keyword1.setKeywordText("霍尔木兹海峡");
+        keyword1.setSource("text");
+        keyword1.setSpan(List.of(5, 11));
+        keyword1.setKeywordConfidence(0.88);
+        keyword1.setEvidenceIds(List.of("ev_001"));
+
+        T1AnnotateResponse.Annotations.BasicObjective.Keyword keyword2 =
+                new T1AnnotateResponse.Annotations.BasicObjective.Keyword();
+        keyword2.setKeywordText("军事对峙");
+        keyword2.setSource("text");
+        keyword2.setSpan(List.of(12, 16));
+        keyword2.setKeywordConfidence(0.85);
+        keyword2.setEvidenceIds(List.of("ev_001"));
+
+        T1AnnotateResponse.Annotations.BasicObjective.Summary summary =
+                new T1AnnotateResponse.Annotations.BasicObjective.Summary();
+        summary.setSummaryText("该内容围绕霍尔木兹海峡军事对峙议题，对外部势力行为表达质疑和反对。");
+        summary.setSummaryConfidence(0.85);
+
+        T1AnnotateResponse.Annotations.BasicObjective.EventType eventType =
+                new T1AnnotateResponse.Annotations.BasicObjective.EventType();
+        eventType.setEventTypeLabel("military_conflict");
+        eventType.setEventTypeConfidence(0.80);
+        eventType.setEvidenceIds(List.of("ev_001"));
+
+        T1AnnotateResponse.Annotations.BasicObjective basicObjective =
+                new T1AnnotateResponse.Annotations.BasicObjective();
+        basicObjective.setTopicTags(topicTags);
+        basicObjective.setAccountType(accountType);
+        basicObjective.setEntitiesHint(List.of(entityHint1, entityHint2));
+        basicObjective.setKeywords(List.of(keyword1, keyword2));
+        basicObjective.setSummary(summary);
+        basicObjective.setEventType(eventType);
+
+        T1AnnotateResponse.Annotations annotations = new T1AnnotateResponse.Annotations();
+        annotations.setHighValueSubjective(highValueSubjective);
+        annotations.setBasicObjective(basicObjective);
+        resp.setAnnotations(annotations);
+
+        T1AnnotateResponse.EvidenceClue ev1 = new T1AnnotateResponse.EvidenceClue();
+        ev1.setEvidenceId("ev_001");
+        ev1.setEvidenceType("text_span");
+        ev1.setSource("text");
+        ev1.setEvidenceText("Leila Farzan, an analyst related to U.S. Central Command");
+        ev1.setSpan(List.of(0, 41));
+
+        T1AnnotateResponse.EvidenceClue ev2 = new T1AnnotateResponse.EvidenceClue();
+        ev2.setEvidenceId("ev_002");
+        ev2.setEvidenceType("text_span");
+        ev2.setSource("text");
+        ev2.setEvidenceText("对外部势力行为表达质疑和反对，存在对立放大表述");
+        ev2.setSpan(List.of(42, 66));
+
+        T1AnnotateResponse.EvidenceClue ev3 = new T1AnnotateResponse.EvidenceClue();
+        ev3.setEvidenceId("ev_003");
+        ev3.setEvidenceType("text_span");
+        ev3.setSource("text");
+        ev3.setEvidenceText("网民对此反应强烈，批评声音较多");
+        ev3.setSpan(List.of(67, 82));
+
+        T1AnnotateResponse.EvidenceClue ev4 = new T1AnnotateResponse.EvidenceClue();
+        ev4.setEvidenceId("ev_004");
+        ev4.setEvidenceType("text_span");
+        ev4.setSource("text");
+        ev4.setEvidenceText("事件在社交媒体上持续发酵");
+        ev4.setSpan(List.of(83, 95));
+
+        resp.setEvidenceClues(List.of(ev1, ev2, ev3, ev4));
+
+        T1AnnotateResponse.QualityControl qualityControl = new T1AnnotateResponse.QualityControl();
+        qualityControl.setNeedHumanReview(false);
+        qualityControl.setReviewReasons(List.of("none"));
+        qualityControl.setFailedModules(List.of("none"));
+        resp.setQualityControl(qualityControl);
+
+        resp.setOverallConfidence(0.80);
+        resp.setProcessedAt(java.time.OffsetDateTime.now().toString());
+        return resp;
     }
+
     @PostMapping("/mock/t1/annotate_image")
     public T1AnnotateResponse annotateImage(@RequestBody T1AnnotateRequest request) {
         log.info("[MOCK-T1] annotate_image, imageUrl={}, hasImageData={}",
                 request.getImageUrl(), request.getImageData() != null);
-        return placeholderT1Response(null);
+
+        T1AnnotateResponse resp = new T1AnnotateResponse();
+        resp.setSchemaVersion("t1_annotation_v0.5");
+        resp.setInputReference(buildInputReference(request, "image"));
+        resp.setLanguage(request.getLanguage() != null ? request.getLanguage() : "zh");
+
+        T1AnnotateResponse.AigcDetection.TextAigcDetection textAigcNa =
+                new T1AnnotateResponse.AigcDetection.TextAigcDetection();
+        textAigcNa.setTextAigcLabel("not_applicable");
+        textAigcNa.setTextAigcSignalLabels(List.of("none"));
+        textAigcNa.setEvidenceIds(List.of());
+
+        T1AnnotateResponse.AigcDetection.ImageAigcDetection imageAigc =
+                new T1AnnotateResponse.AigcDetection.ImageAigcDetection();
+        imageAigc.setImageAigcLabel("human_generated");
+        imageAigc.setImageAigcScore(0.20);
+        imageAigc.setImageAigcSignalLabels(List.of("none"));
+        imageAigc.setImageAigcConfidence(0.80);
+        imageAigc.setEvidenceIds(List.of("ev_img_001"));
+
+        T1AnnotateResponse.AigcDetection.VideoAigcDetection videoAigcNa =
+                new T1AnnotateResponse.AigcDetection.VideoAigcDetection();
+        videoAigcNa.setVideoAigcLabel("not_applicable");
+        videoAigcNa.setVideoAigcSignalLabels(List.of("none"));
+        videoAigcNa.setEvidenceIds(List.of());
+
+        T1AnnotateResponse.AigcDetection.MultimodalAigcDetection multimodal =
+                new T1AnnotateResponse.AigcDetection.MultimodalAigcDetection();
+        multimodal.setMultimodalAigcLabel("consistent");
+        multimodal.setModalityCombination("image_text_ocr");
+        multimodal.setMultimodalSignalLabels(List.of("none"));
+        multimodal.setMultimodalAigcConfidence(0.75);
+        multimodal.setEvidenceIds(List.of("ev_img_002"));
+
+        T1AnnotateResponse.AigcDetection aigcDetection = new T1AnnotateResponse.AigcDetection();
+        aigcDetection.setOverallAigcLabel("human_generated");
+        aigcDetection.setOverallAigcScore(0.20);
+        aigcDetection.setTextAigcDetection(textAigcNa);
+        aigcDetection.setImageAigcDetection(imageAigc);
+        aigcDetection.setVideoAigcDetection(videoAigcNa);
+        aigcDetection.setMultimodalAigcDetection(multimodal);
+        aigcDetection.setAigcDetectionConfidence(0.78);
+        resp.setAigcDetection(aigcDetection);
+
+        T1AnnotateResponse.Annotations.HighValueSubjective.Ideology ideology =
+                new T1AnnotateResponse.Annotations.HighValueSubjective.Ideology();
+        ideology.setIdeologyLabel("unclear");
+        ideology.setTargetEntityHintIds(List.of());
+        ideology.setEvidenceIds(List.of());
+
+        T1AnnotateResponse.Annotations.HighValueSubjective.CoreStance coreStance =
+                new T1AnnotateResponse.Annotations.HighValueSubjective.CoreStance();
+        coreStance.setStanceLabel("unclear");
+        coreStance.setStanceStrength("unclear");
+        coreStance.setEvidenceIds(List.of());
+
+        T1AnnotateResponse.Annotations.HighValueSubjective.PublicAttitude publicAttitude =
+                new T1AnnotateResponse.Annotations.HighValueSubjective.PublicAttitude();
+        publicAttitude.setPublicGroup("not_applicable");
+        publicAttitude.setAttitudeLabel("not_applicable");
+        publicAttitude.setAttitudeIntensity("not_applicable");
+        publicAttitude.setEvidenceIds(List.of());
+
+        T1AnnotateResponse.Annotations.HighValueSubjective.OpinionEmotion opinionEmotion =
+                new T1AnnotateResponse.Annotations.HighValueSubjective.OpinionEmotion();
+        opinionEmotion.setSentimentPolarity("neutral");
+        opinionEmotion.setEmotionLabels(List.of("none"));
+        opinionEmotion.setEmotionIntensity("unclear");
+        opinionEmotion.setOpinionEmotionConfidence(0.40);
+        opinionEmotion.setEvidenceIds(List.of("ev_img_002"));
+
+        T1AnnotateResponse.Annotations.HighValueSubjective.EventHeat eventHeat =
+                new T1AnnotateResponse.Annotations.HighValueSubjective.EventHeat();
+        eventHeat.setHeatLevel("unclear");
+        eventHeat.setHeatSignalTypes(List.of("unclear"));
+        eventHeat.setEvidenceIds(List.of());
+
+        T1AnnotateResponse.Annotations.HighValueSubjective.LanguageStyle languageStyle =
+                new T1AnnotateResponse.Annotations.HighValueSubjective.LanguageStyle();
+        languageStyle.setStyleLabels(List.of("unclear"));
+        languageStyle.setEvidenceIds(List.of());
+
+        T1AnnotateResponse.Annotations.HighValueSubjective.ContentPurpose contentPurpose =
+                new T1AnnotateResponse.Annotations.HighValueSubjective.ContentPurpose();
+        contentPurpose.setPrimaryPurpose("unclear");
+        contentPurpose.setSecondaryPurposes(List.of());
+        contentPurpose.setEvidenceIds(List.of());
+
+        T1AnnotateResponse.Annotations.HighValueSubjective.RiskLevel riskLevel =
+                new T1AnnotateResponse.Annotations.HighValueSubjective.RiskLevel();
+        riskLevel.setRiskLabel("low");
+        riskLevel.setRiskTypes(List.of("none"));
+        riskLevel.setRiskLevelConfidence(0.50);
+        riskLevel.setEvidenceIds(List.of("ev_img_001"));
+
+        T1AnnotateResponse.Annotations.HighValueSubjective highValueSubjective =
+                new T1AnnotateResponse.Annotations.HighValueSubjective();
+        highValueSubjective.setIdeology(ideology);
+        highValueSubjective.setCoreStance(coreStance);
+        highValueSubjective.setEntitiesHintStance(List.of());
+        highValueSubjective.setPublicAttitude(publicAttitude);
+        highValueSubjective.setOpinionEmotion(opinionEmotion);
+        highValueSubjective.setEventHeat(eventHeat);
+        highValueSubjective.setLanguageStyle(languageStyle);
+        highValueSubjective.setContentPurpose(contentPurpose);
+        highValueSubjective.setRiskLevel(riskLevel);
+
+        T1AnnotateResponse.Annotations.BasicObjective.TopicTags topicTags =
+                new T1AnnotateResponse.Annotations.BasicObjective.TopicTags();
+        topicTags.setPrimaryDomain("military");
+        topicTags.setSubtopicTags(List.of("maritime"));
+        topicTags.setTopicTagsConfidence(0.75);
+        topicTags.setEvidenceIds(List.of("ev_img_001"));
+
+        T1AnnotateResponse.Annotations.BasicObjective.AccountType accountType =
+                new T1AnnotateResponse.Annotations.BasicObjective.AccountType();
+        accountType.setPrimaryAccountCategory("unknown");
+        accountType.setAccountSubtypeTags(List.of());
+        accountType.setAutomationSuspicion("unclear");
+        accountType.setEvidenceIds(List.of());
+
+        T1AnnotateResponse.Annotations.BasicObjective.EntityHint shipHint =
+                new T1AnnotateResponse.Annotations.BasicObjective.EntityHint();
+        shipHint.setEntityHintId("ent_101");
+        shipHint.setText("military ship");
+        shipHint.setTypeHint("others");
+        shipHint.setEntityHintConfidence(0.85);
+        shipHint.setEvidenceIds(List.of("ev_img_001"));
+
+        T1AnnotateResponse.Annotations.BasicObjective.Keyword ocrKeyword =
+                new T1AnnotateResponse.Annotations.BasicObjective.Keyword();
+        ocrKeyword.setKeywordText("HORMUZ 2026");
+        ocrKeyword.setSource("image_ocr");
+        ocrKeyword.setKeywordConfidence(0.90);
+        ocrKeyword.setEvidenceIds(List.of("ev_img_002"));
+
+        T1AnnotateResponse.Annotations.BasicObjective.Summary summary =
+                new T1AnnotateResponse.Annotations.BasicObjective.Summary();
+        summary.setSummaryText("图像内容为一艘船只的海上画面，画面中可见文字标注 \"HORMUZ 2026\"。");
+        summary.setSummaryConfidence(0.70);
+
+        T1AnnotateResponse.Annotations.BasicObjective.EventType eventType =
+                new T1AnnotateResponse.Annotations.BasicObjective.EventType();
+        eventType.setEventTypeLabel("unclear");
+        eventType.setEvidenceIds(List.of());
+
+        T1AnnotateResponse.Annotations.BasicObjective basicObjective =
+                new T1AnnotateResponse.Annotations.BasicObjective();
+        basicObjective.setTopicTags(topicTags);
+        basicObjective.setAccountType(accountType);
+        basicObjective.setEntitiesHint(List.of(shipHint));
+        basicObjective.setKeywords(List.of(ocrKeyword));
+        basicObjective.setSummary(summary);
+        basicObjective.setEventType(eventType);
+
+        T1AnnotateResponse.Annotations annotations = new T1AnnotateResponse.Annotations();
+        annotations.setHighValueSubjective(highValueSubjective);
+        annotations.setBasicObjective(basicObjective);
+        resp.setAnnotations(annotations);
+
+        T1AnnotateResponse.EvidenceClue.Region shipRegion = new T1AnnotateResponse.EvidenceClue.Region();
+        shipRegion.setX(10.0);
+        shipRegion.setY(20.0);
+        shipRegion.setWidth(300.0);
+        shipRegion.setHeight(200.0);
+
+        T1AnnotateResponse.EvidenceClue evImg1 = new T1AnnotateResponse.EvidenceClue();
+        evImg1.setEvidenceId("ev_img_001");
+        evImg1.setEvidenceType("image_region");
+        evImg1.setSource("image");
+        evImg1.setMediaId("asset_001");
+        evImg1.setRegion(shipRegion);
+
+        T1AnnotateResponse.EvidenceClue.Region ocrRegion = new T1AnnotateResponse.EvidenceClue.Region();
+        ocrRegion.setX(0.0);
+        ocrRegion.setY(150.0);
+        ocrRegion.setWidth(640.0);
+        ocrRegion.setHeight(80.0);
+
+        T1AnnotateResponse.EvidenceClue evImg2 = new T1AnnotateResponse.EvidenceClue();
+        evImg2.setEvidenceId("ev_img_002");
+        evImg2.setEvidenceType("image_region");
+        evImg2.setSource("ocr");
+        evImg2.setEvidenceText("HORMUZ 2026");
+        evImg2.setMediaId("asset_001");
+        evImg2.setRegion(ocrRegion);
+
+        resp.setEvidenceClues(List.of(evImg1, evImg2));
+
+        T1AnnotateResponse.QualityControl qualityControl = new T1AnnotateResponse.QualityControl();
+        qualityControl.setNeedHumanReview(false);
+        qualityControl.setReviewReasons(List.of("insufficient_context"));
+        qualityControl.setFailedModules(List.of("none"));
+        resp.setQualityControl(qualityControl);
+
+        resp.setOverallConfidence(0.60);
+        resp.setProcessedAt(java.time.OffsetDateTime.now().toString());
+        return resp;
     }
+
+    private T1AnnotateResponse.InputReference buildInputReference(T1AnnotateRequest request, String contentType) {
+        T1AnnotateResponse.InputReference ref = new T1AnnotateResponse.InputReference();
+        T1AnnotateRequest.Context context = request.getContext();
+        ref.setContentId(context != null ? context.getDocId() : null);
+        ref.setContentType(contentType);
+        ref.setPlatform(context != null ? context.getPlatform() : null);
+        ref.setUrl(context != null ? context.getUrl() : null);
+        ref.setAuthorId(context != null ? context.getAuthorHandle() : null);
+        ref.setCreatedAt(context != null ? context.getPublishedAt() : null);
+        return ref;
+    }
+
     @PostMapping("/mock/t2/extract_entities")
     public T2ExtractResponse extractEntities(@RequestBody T2ExtractRequest request) {
         log.info("[MOCK-T2] extract_entities, textLength={}, hasAnnotation={}",
@@ -193,21 +647,6 @@ public class MockAgentController {
     public T4EmbeddingResponse generateImageEmbedding(@RequestBody T4EmbeddingRequest request) {
         log.info("[MOCK-T4] generate_image_embedding, imageUrl={}", request.getImageUrl());
         return buildEmbeddingResponse(request.getImageUrl());
-    }
-
-    private T1AnnotateResponse placeholderT1Response(String language) {
-        T1AnnotateResponse resp = new T1AnnotateResponse();
-        resp.setSchemaVersion("t1_annotation_v0.5");
-        resp.setLanguage(language != null ? language : "zh");
-        resp.setEvidenceClues(List.of());
-        T1AnnotateResponse.QualityControl qualityControl = new T1AnnotateResponse.QualityControl();
-        qualityControl.setNeedHumanReview(false);
-        qualityControl.setReviewReasons(List.of("none"));
-        qualityControl.setFailedModules(List.of("none"));
-        resp.setQualityControl(qualityControl);
-        resp.setOverallConfidence(0.0D);
-        resp.setProcessedAt(java.time.OffsetDateTime.now().toString());
-        return resp;
     }
 
     @PostMapping("/mock/t5/complete_profile")
