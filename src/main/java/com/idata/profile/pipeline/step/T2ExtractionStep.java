@@ -3,6 +3,8 @@ package com.idata.profile.pipeline.step;
 import com.idata.profile.agentproxy.AgentProxyClient;
 import com.idata.profile.agentproxy.dto.t2.T2ExtractRequest;
 import com.idata.profile.agentproxy.dto.t2.T2ExtractResponse;
+import com.idata.profile.agentproxy.dto.t4.T4EmbeddingRequest;
+import com.idata.profile.agentproxy.dto.t4.T4EmbeddingResponse;
 import com.idata.profile.common.constant.PipelineStatus;
 import com.idata.profile.common.util.StableUuidUtil;
 import com.idata.profile.entity.account.SocialAccount;
@@ -10,6 +12,8 @@ import com.idata.profile.entity.content.MediaAsset;
 import com.idata.profile.entity.content.MediaContent;
 import com.idata.profile.entity.raw.RawRecord;
 import com.idata.profile.entity.task.PipelineTask;
+import com.idata.profile.infra.elasticsearch.EntityEsService;
+import com.idata.profile.infra.milvus.MilvusVectorService;
 import com.idata.profile.infra.neo4j.Neo4jGraphService;
 import com.idata.profile.mapper.account.SocialAccountMapper;
 import com.idata.profile.mapper.content.MediaAssetMapper;
@@ -74,6 +78,8 @@ public class T2ExtractionStep {
     private final Neo4jGraphService neo4jGraphService;
     private final SocialAccountMapper socialAccountMapper;
     private final MediaAssetMapper mediaAssetMapper;
+    private final EntityEsService entityEsService;
+    private final MilvusVectorService milvusVectorService;
 
     public void run(PipelineTask task) {
         OffsetDateTime startedAt = OffsetDateTime.now();
@@ -204,6 +210,14 @@ public class T2ExtractionStep {
                     }
                     props.put("source", "t2_extraction");
                     neo4jGraphService.mergeNode(label, nodeId, props);
+                    entityEsService.indexEntity(
+                            nodeId,
+                            entity.getCanonicalName(),
+                            entity.getCanonicalName(),
+                            entity.getAliases(),
+                            entityType,
+                            entity.getImportanceScore() != null ? entity.getImportanceScore().doubleValue() : 0.0D);
+                    syncEntityVectorToMilvus(nodeId, entity);
                 } catch (Exception e) {
                     log.warn("T2实体写Neo4j失败, type={}, name={}",
                             entity.getType(), entity.getCanonicalName(), e);
@@ -241,6 +255,35 @@ public class T2ExtractionStep {
                     log.warn("T2事件写Neo4j失败, name={}", event.getCanonicalName(), e);
                 }
             }
+        }
+    }
+
+    private void syncEntityVectorToMilvus(String stableId,
+                                          T2ExtractResponse.ExtractedEntity entity) {
+        try {
+            if (!hasText(entity.getCanonicalName())) {
+                return;
+            }
+
+            T4EmbeddingRequest req = new T4EmbeddingRequest();
+            req.setText(entity.getCanonicalName());
+            T4EmbeddingResponse resp = agentProxyClient.call(
+                    "T4", "generate_text_embedding", req, T4EmbeddingResponse.class);
+
+            if (resp == null || resp.getEmbedding() == null) {
+                return;
+            }
+
+            milvusVectorService.insertEntityEmbedding(
+                    stableId,
+                    entity.getType().toLowerCase(),
+                    entity.getCanonicalName(),
+                    resp.getEmbedding());
+            log.debug("[T2] 实体向量化写入Milvus, entityId={}, name={}",
+                    stableId, entity.getCanonicalName());
+        } catch (Exception e) {
+            log.warn("[T2] 实体向量化失败, entityId={}, name={}",
+                    stableId, entity.getCanonicalName(), e);
         }
     }
 

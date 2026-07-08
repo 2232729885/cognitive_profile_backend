@@ -29,6 +29,7 @@ public class MilvusVectorService {
     private static final int EMBEDDING_DIMENSION = 4096;
     private static final String TEXT_COLLECTION = "text_embeddings";
     private static final String IMAGE_COLLECTION = "image_embeddings";
+    private static final String ENTITY_COLLECTION = "entity_vectors";
     private static final String VECTOR_FIELD = "embedding";
     private static final Gson GSON = new Gson();
 
@@ -59,6 +60,24 @@ public class MilvusVectorService {
     }
 
     /**
+     * 写入实体向量。
+     *
+     * @param entityId       stableUuid（如 "3f8a2b1c-..."）
+     * @param entityType     "person"/"organization"/"event"/"location"/"narrative"
+     * @param normalizedName normalizedName 的向量
+     * @param embedding      normalizedName 的向量
+     */
+    public String insertEntityEmbedding(String entityId, String entityType,
+                                        String normalizedName, float[] embedding) {
+        String vectorId = "entity_" + entityId;
+        JsonObject row = baseRow(vectorId, entityId, entityType, null, embedding);
+        row.addProperty("normalized_name", normalizedName);
+        row.addProperty("entity_type", entityType);
+        insert(ENTITY_COLLECTION, row);
+        return vectorId;
+    }
+
+    /**
      * 文本向量检索，返回最相似的 topK 个 source_id（对应 media_contents.id）
      * 支持按 platform 和 language 过滤（传 null 表示不过滤）
      */
@@ -73,6 +92,21 @@ public class MilvusVectorService {
      */
     public List<String> searchImageEmbeddings(float[] queryEmbedding, int topK) {
         return searchEmbeddings(IMAGE_COLLECTION, queryEmbedding, topK, null, "source_id");
+    }
+
+    /**
+     * 实体向量检索，返回最相似的 topK 个 entity_id。
+     */
+    public List<String> searchEntityEmbeddings(float[] queryEmbedding, int topK,
+                                               String entityType) {
+        String filter = hasText(entityType)
+                ? "entity_type == \"" + escapeFilterValue(entityType) + "\""
+                : null;
+        List<String> rawIds = searchEmbeddings(
+                ENTITY_COLLECTION, queryEmbedding, topK, filter, "source_id");
+        return rawIds.stream()
+                .map(id -> id.startsWith("entity_") ? id.substring("entity_".length()) : id)
+                .toList();
     }
 
     private JsonObject baseRow(String id, String sourceId, String sourceType, String platform, float[] embedding) {
