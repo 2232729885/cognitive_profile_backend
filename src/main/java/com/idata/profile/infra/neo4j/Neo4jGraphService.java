@@ -53,6 +53,22 @@ public class Neo4jGraphService {
                         .run());
     }
 
+    public boolean relationExists(String fromId, String toId, String relationType) {
+        if (!hasText(fromId) || !hasText(toId) || !hasText(relationType)) {
+            return false;
+        }
+        String cypher = String.format("""
+                MATCH (a {id: $fromId})-[r:%s]->(b {id: $toId})
+                RETURN count(r) > 0 AS exists
+                """, relationType);
+        return neo4jClient.query(cypher)
+                .bind(fromId).to("fromId")
+                .bind(toId).to("toId")
+                .fetchAs(Boolean.class)
+                .one()
+                .orElse(false);
+    }
+
     public void mergeRelationWithNodes(String fromLabel, String fromId, Map<String, Object> fromProperties,
                                        String toLabel, String toId, Map<String, Object> toProperties,
                                        String relationType, Map<String, Object> relationProperties) {

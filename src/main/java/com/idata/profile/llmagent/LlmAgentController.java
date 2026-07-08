@@ -4,6 +4,8 @@ import com.idata.profile.agentproxy.dto.t1.T1AnnotateRequest;
 import com.idata.profile.agentproxy.dto.t1.T1AnnotateResponse;
 import com.idata.profile.agentproxy.dto.t2.T2ExtractRequest;
 import com.idata.profile.agentproxy.dto.t2.T2ExtractResponse;
+import com.idata.profile.agentproxy.dto.t3.T3ResolveBatchRequest;
+import com.idata.profile.agentproxy.dto.t3.T3ResolveBatchResponse;
 import com.idata.profile.agentproxy.dto.t3.T3ResolveRequest;
 import com.idata.profile.agentproxy.dto.t3.T3ResolveResponse;
 import com.idata.profile.agentproxy.dto.t4.T4EmbeddingRequest;
@@ -153,6 +155,46 @@ public class LlmAgentController {
             3. importanceScore：核心实体 80-100，次要实体 50-79，背景实体 20-49
             4. 没有实体/关系/事件时对应字段返回空数组 []，不返回 null
             5. entities 数量控制在 10 个以内，relationships 控制在 15 个以内
+            """;
+
+    private static final String T2_SYSTEM_PROMPT_V11 = """
+            You are an information extraction system. Return only one valid JSON object.
+            Extract mention-level entities and relation mentions from the input text.
+
+            Required JSON shape:
+            {
+              "docId": "same docId from request or null",
+              "entities": [
+                {
+                  "mentionId": "m1",
+                  "name": "surface form in text",
+                  "normalizedName": "canonical cross-lingual name",
+                  "type": "person|organization|event|location|narrative",
+                  "aliases": [],
+                  "importanceScore": 0.0,
+                  "confidence": 0.0,
+                  "attributes": {}
+                }
+              ],
+              "relations": [
+                {
+                  "relationMentionId": "r1",
+                  "subjectMentionId": "m1",
+                  "predicate": "AFFILIATED_WITH",
+                  "objectMentionId": "m2",
+                  "confidence": 0.0,
+                  "evidence": "short evidence span"
+                }
+              ],
+              "resolvedAuthorAccountId": null,
+              "modelVersion": "qwen3-vl-32b"
+            }
+
+            Rules:
+            - relation subjectMentionId and objectMentionId must refer to entities[].mentionId.
+            - predicate must be one of the provided RelationType enum values.
+            - Events are entities with type="event"; put eventType/eventTimeStart in attributes.
+            - Return empty arrays when no entity or relation exists.
             """;
 
     private static final String T3_SYSTEM_PROMPT = """
@@ -330,7 +372,7 @@ public class LlmAgentController {
         String userPrompt = buildT2UserPrompt(request);
 
         try {
-            String raw = callJsonLlm(T2_SYSTEM_PROMPT, userPrompt);
+            String raw = callJsonLlm(T2_SYSTEM_PROMPT_V11, userPrompt);
 
             T2ExtractResponse response = parseT2Response(raw);
             filterUnsupportedRelationships(response);
@@ -357,6 +399,21 @@ public class LlmAgentController {
         } catch (Exception e) {
             logLlmFailure("[LLM-T3] resolve_entities失败，返回fallback", e);
             return buildFallbackT3Response(request);
+        }
+    }
+
+    @PostMapping("/t3/resolve_batch")
+    public T3ResolveBatchResponse resolveBatch(@RequestBody T3ResolveBatchRequest request) {
+        int itemCount = request.getItems() != null ? request.getItems().size() : 0;
+        log.info("[LLM-T3] resolve_batch, itemCount={}", itemCount);
+
+        String userPrompt = buildT3BatchUserPrompt(request);
+        try {
+            String raw = callJsonLlm(T3_SYSTEM_PROMPT, userPrompt);
+            return parseT3BatchResponse(raw, request);
+        } catch (Exception e) {
+            logLlmFailure("[LLM-T3] resolve_batch失败，返回fallback", e);
+            return buildFallbackT3BatchResponse(request);
         }
     }
 
@@ -625,6 +682,74 @@ public class LlmAgentController {
                 .map(T3ResolveRequest.EntityCandidate::getId)
                 .filter(Objects::nonNull)
                 .toList());
+        return resp;
+    }
+
+    private String buildT3BatchUserPrompt(T3ResolveBatchRequest request) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Resolve each mention against its candidate list.\n");
+        sb.append("Return JSON with results[].mentionId, action(MERGE/CREATE/REVIEW), matchedEntityId, ")
+                .append("score, confidence, matchMethod, reason and modelVersion.\n\n");
+        if (request.getItems() != null) {
+            for (T3ResolveBatchRequest.ResolveItem item : request.getItems()) {
+                T3ResolveBatchRequest.Mention mention = item.getMention();
+                sb.append("Mention: ")
+                        .append(mention != null ? mention.getMentionId() : null)
+                        .append(" | type=").append(mention != null ? mention.getType() : null)
+                        .append(" | name=").append(mention != null ? mention.getNormalizedName() : null)
+                        .append("\nCandidates: ").append(item.getCandidates())
+                        .append("\nContext: ").append(item.getContext())
+                        .append("\n\n");
+            }
+        }
+        return sb.toString();
+    }
+
+    private T3ResolveBatchResponse parseT3BatchResponse(String raw, T3ResolveBatchRequest request) throws Exception {
+        T3ResolveBatchResponse response = objectMapper.readValue(cleanJson(raw), T3ResolveBatchResponse.class);
+        normalizeT3BatchResponse(response, request);
+        return response;
+    }
+
+    private void normalizeT3BatchResponse(T3ResolveBatchResponse response, T3ResolveBatchRequest request) {
+        Set<String> mentionIds = request.getItems() == null ? Set.of() : request.getItems().stream()
+                .map(T3ResolveBatchRequest.ResolveItem::getMention)
+                .filter(Objects::nonNull)
+                .map(T3ResolveBatchRequest.Mention::getMentionId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (response.getResults() == null) {
+            response.setResults(List.of());
+        }
+        response.setResults(response.getResults().stream()
+                .filter(item -> item != null && mentionIds.contains(item.getMentionId()))
+                .peek(item -> {
+                    if (item.getAction() == null) {
+                        item.setAction("CREATE");
+                    }
+                })
+                .toList());
+        if (response.getModelVersion() == null) {
+            response.setModelVersion(MODEL_VERSION);
+        }
+    }
+
+    private T3ResolveBatchResponse buildFallbackT3BatchResponse(T3ResolveBatchRequest request) {
+        T3ResolveBatchResponse resp = new T3ResolveBatchResponse();
+        resp.setResults(request.getItems() == null ? List.of() : request.getItems().stream()
+                .map(item -> {
+                    T3ResolveBatchResponse.ResolveResult result = new T3ResolveBatchResponse.ResolveResult();
+                    T3ResolveBatchRequest.Mention mention = item.getMention();
+                    result.setMentionId(mention != null ? mention.getMentionId() : null);
+                    result.setAction("CREATE");
+                    result.setScore(0D);
+                    result.setConfidence(0D);
+                    result.setMatchMethod("fallback");
+                    result.setReason("T3 batch fallback");
+                    return result;
+                })
+                .toList());
+        resp.setModelVersion(MODEL_VERSION);
         return resp;
     }
 

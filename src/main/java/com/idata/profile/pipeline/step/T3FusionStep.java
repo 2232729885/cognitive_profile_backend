@@ -92,10 +92,14 @@ public class T3FusionStep {
             T2ExtractResponse t2Output = OBJECT_MAPPER.readValue(rawRecord.getT2Output(), T2ExtractResponse.class);
             List<T3FuseRequest.T2EntityRef> refs = new ArrayList<>();
             if (t2Output.getEntities() != null) {
-                for (T2ExtractResponse.ExtractedEntity entity : t2Output.getEntities()) {
+                for (T2ExtractResponse.ExtractedMention entity : t2Output.getEntities()) {
+                    if ("event".equalsIgnoreCase(entity.getType())) {
+                        continue;
+                    }
                     T3FuseRequest.T2EntityRef ref = new T3FuseRequest.T2EntityRef();
                     ref.setType(entity.getType());
-                    ref.setCanonicalName(entity.getCanonicalName());
+                    ref.setCanonicalName(entityName(entity));
+                    ref.setTempId(entity.getMentionId());
                     ref.setAliases(entity.getAliases());
                     refs.add(ref);
                 }
@@ -103,15 +107,18 @@ public class T3FusionStep {
             request.setEntities(refs);
 
             List<T3FuseRequest.T2RelationRef> relationRefs = new ArrayList<>();
-            if (t2Output.getRelationships() != null) {
-                for (T2ExtractResponse.ExtractedRelation relation : t2Output.getRelationships()) {
+            if (t2Output.getRelations() != null) {
+                Map<String, T2ExtractResponse.ExtractedMention> mentionsById = mentionsById(t2Output.getEntities());
+                for (T2ExtractResponse.ExtractedRelationMention relation : t2Output.getRelations()) {
+                    T2ExtractResponse.ExtractedMention source = mentionsById.get(relation.getSubjectMentionId());
+                    T2ExtractResponse.ExtractedMention target = mentionsById.get(relation.getObjectMentionId());
                     T3FuseRequest.T2RelationRef ref = new T3FuseRequest.T2RelationRef();
-                    ref.setSourceName(relation.getSourceName());
-                    ref.setSourceType(relation.getSourceType());
-                    ref.setTargetName(relation.getTargetName());
-                    ref.setTargetType(relation.getTargetType());
-                    ref.setRelationType(relation.getRelationType());
-                    ref.setRole(relation.getRole());
+                    ref.setSourceName(source != null ? entityName(source) : relation.getSubjectMentionId());
+                    ref.setSourceType(source != null ? source.getType() : null);
+                    ref.setTargetName(target != null ? entityName(target) : relation.getObjectMentionId());
+                    ref.setTargetType(target != null ? target.getType() : null);
+                    ref.setRelationType(relation.getPredicate());
+                    ref.setRole(relation.getEvidence());
                     ref.setConfidence(relation.getConfidence());
                     relationRefs.add(ref);
                 }
@@ -119,25 +126,18 @@ public class T3FusionStep {
             request.setRelationships(relationRefs);
 
             List<T3FuseRequest.T2EventRef> eventRefs = new ArrayList<>();
-            if (t2Output.getEvents() != null) {
-                for (T2ExtractResponse.ExtractedEvent event : t2Output.getEvents()) {
-                    T3FuseRequest.T2EventRef ref = new T3FuseRequest.T2EventRef();
-                    ref.setEventType(event.getEventType());
-                    ref.setCanonicalName(event.getCanonicalName());
-                    ref.setEventTimeStart(event.getEventTimeStart());
-                    ref.setConfidence(event.getConfidence());
-                    if (event.getParticipants() != null) {
-                        List<T3FuseRequest.T2EntityRef> participants = new ArrayList<>();
-                        for (T2ExtractResponse.ExtractedEvent.EventParticipant participant : event.getParticipants()) {
-                            T3FuseRequest.T2EntityRef participantRef = new T3FuseRequest.T2EntityRef();
-                            participantRef.setCanonicalName(participant.getName());
-                            participantRef.setTempId(participant.getRole());
-                            participants.add(participantRef);
-                        }
-                        ref.setParticipants(participants);
-                    } else {
-                        ref.setParticipants(Collections.emptyList());
+            if (t2Output.getEntities() != null) {
+                for (T2ExtractResponse.ExtractedMention event : t2Output.getEntities()) {
+                    if (!"event".equalsIgnoreCase(event.getType())) {
+                        continue;
                     }
+                    T3FuseRequest.T2EventRef ref = new T3FuseRequest.T2EventRef();
+                    Map<String, Object> attributes = event.getAttributes() != null ? event.getAttributes() : Map.of();
+                    ref.setEventType(stringValue(attributes.get("eventType")));
+                    ref.setCanonicalName(entityName(event));
+                    ref.setEventTimeStart(stringValue(attributes.get("eventTimeStart")));
+                    ref.setConfidence(event.getConfidence());
+                    ref.setParticipants(Collections.emptyList());
                     eventRefs.add(ref);
                 }
             }
@@ -415,6 +415,31 @@ public class T3FusionStep {
             return Collections.emptyMap();
         }
         return OBJECT_MAPPER.convertValue(properties, Map.class);
+    }
+
+    private Map<String, T2ExtractResponse.ExtractedMention> mentionsById(
+            List<T2ExtractResponse.ExtractedMention> mentions) {
+        if (mentions == null || mentions.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Map<String, T2ExtractResponse.ExtractedMention> result = new HashMap<>();
+        for (T2ExtractResponse.ExtractedMention mention : mentions) {
+            if (mention != null && hasText(mention.getMentionId())) {
+                result.put(mention.getMentionId(), mention);
+            }
+        }
+        return result;
+    }
+
+    private String entityName(T2ExtractResponse.ExtractedMention mention) {
+        if (mention == null) {
+            return null;
+        }
+        return hasText(mention.getNormalizedName()) ? mention.getNormalizedName() : mention.getName();
+    }
+
+    private String stringValue(Object value) {
+        return value == null ? null : value.toString();
     }
 
     private String resolveNodeLabel(String nodeId, Map<String, String> labelsByNodeId) {

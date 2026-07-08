@@ -1,0 +1,5 @@
+ALTER TABLE entity_fusion_records
+  ADD COLUMN IF NOT EXISTS match_method VARCHAR(50),
+  ADD COLUMN IF NOT EXISTS match_score DECIMAL(5,4),
+  ADD COLUMN IF NOT EXISTS resolver_model VARCHAR(100),
+  ADD COLUMN IF NOT EXISTS is_auto_merged BOOLEAN DEFAULT TRUE;

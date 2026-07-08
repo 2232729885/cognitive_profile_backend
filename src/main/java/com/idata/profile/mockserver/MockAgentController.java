@@ -6,6 +6,8 @@ import com.idata.profile.agentproxy.dto.t2.T2ExtractRequest;
 import com.idata.profile.agentproxy.dto.t2.T2ExtractResponse;
 import com.idata.profile.agentproxy.dto.t3.T3FuseRequest;
 import com.idata.profile.agentproxy.dto.t3.T3FuseResponse;
+import com.idata.profile.agentproxy.dto.t3.T3ResolveBatchRequest;
+import com.idata.profile.agentproxy.dto.t3.T3ResolveBatchResponse;
 import com.idata.profile.agentproxy.dto.t3.T3ResolveRequest;
 import com.idata.profile.agentproxy.dto.t3.T3ResolveResponse;
 import com.idata.profile.agentproxy.dto.t4.T4EmbeddingRequest;
@@ -192,93 +194,96 @@ public class MockAgentController {
                 request.getText() != null ? request.getText().length() : 0,
                 request.getAnnotation() != null);
 
-        T2ExtractResponse.ExtractedEntity person = new T2ExtractResponse.ExtractedEntity();
+        T2ExtractResponse.ExtractedMention person = new T2ExtractResponse.ExtractedMention();
+        person.setMentionId("m1");
+        person.setName("Leila Farzan");
         person.setType("person");
-        person.setCanonicalName("Leila Farzan");
-        person.setImportanceScore(new BigDecimal("88.00"));
-        person.setMatchedAccountId(null);
+        person.setNormalizedName("Leila Farzan");
+        person.setImportanceScore(88.0);
+        person.setConfidence(0.92);
         person.setAliases(List.of("L. Farzan", "莱拉·法尔赞"));
+        person.setAttributes(Map.of());
 
-        T2ExtractResponse.ExtractedEntity narrative = new T2ExtractResponse.ExtractedEntity();
+        T2ExtractResponse.ExtractedMention narrative = new T2ExtractResponse.ExtractedMention();
+        narrative.setMentionId("m2");
+        narrative.setName("Hormuz escalation narrative");
         narrative.setType("narrative");
-        narrative.setCanonicalName("Hormuz Strait escalation narrative");
-        narrative.setImportanceScore(new BigDecimal("76.00"));
+        narrative.setNormalizedName("Hormuz Strait escalation narrative");
+        narrative.setImportanceScore(76.0);
+        narrative.setConfidence(0.88);
         narrative.setAliases(List.of());
+        narrative.setAttributes(Map.of("frameType", "threat_escalation"));
 
-        T2ExtractResponse.ExtractedEntity organization = new T2ExtractResponse.ExtractedEntity();
+        T2ExtractResponse.ExtractedMention organization = new T2ExtractResponse.ExtractedMention();
+        organization.setMentionId("m3");
+        organization.setName("U.S. Central Command");
         organization.setType("organization");
-        organization.setCanonicalName("U.S. Central Command");
-        organization.setImportanceScore(new BigDecimal("84.00"));
+        organization.setNormalizedName("U.S. Central Command");
+        organization.setImportanceScore(84.0);
+        organization.setConfidence(0.95);
         organization.setAliases(List.of("CENTCOM"));
+        organization.setAttributes(Map.of());
 
-        T2ExtractResponse.ExtractedEntity location = new T2ExtractResponse.ExtractedEntity();
+        T2ExtractResponse.ExtractedMention location = new T2ExtractResponse.ExtractedMention();
+        location.setMentionId("m4");
+        location.setName("Strait of Hormuz");
         location.setType("location");
-        location.setCanonicalName("Strait of Hormuz");
-        location.setImportanceScore(new BigDecimal("85.00"));
+        location.setNormalizedName("Strait of Hormuz");
+        location.setImportanceScore(85.0);
+        location.setConfidence(0.95);
         location.setAliases(List.of("霍尔木兹海峡"));
+        location.setAttributes(Map.of());
 
-        T2ExtractResponse.ExtractedEntity event = new T2ExtractResponse.ExtractedEntity();
+        T2ExtractResponse.ExtractedMention event = new T2ExtractResponse.ExtractedMention();
+        event.setMentionId("e1");
+        event.setName("2026 Persian Gulf Military Standoff");
         event.setType("event");
-        event.setCanonicalName("2026 Persian Gulf Military Standoff");
-        event.setImportanceScore(new BigDecimal("90.00"));
+        event.setNormalizedName("2026 Persian Gulf Military Standoff");
+        event.setImportanceScore(90.0);
+        event.setConfidence(0.90);
         event.setAliases(List.of());
+        event.setAttributes(Map.of(
+                "eventType", "military",
+                "eventTimeStart", "2026-06-01T00:00:00Z"));
 
-        T2ExtractResponse.ExtractedRelation rel1 = new T2ExtractResponse.ExtractedRelation();
-        rel1.setSourceName("Leila Farzan");
-        rel1.setSourceType("person");
-        rel1.setTargetName("U.S. Central Command");
-        rel1.setTargetType("organization");
-        rel1.setRelationType("AFFILIATED_WITH");
-        rel1.setRole("analyst");
+        T2ExtractResponse.ExtractedRelationMention rel1 = new T2ExtractResponse.ExtractedRelationMention();
+        rel1.setRelationMentionId("r1");
+        rel1.setSubjectMentionId("m1");
+        rel1.setPredicate("AFFILIATED_WITH");
+        rel1.setObjectMentionId("m3");
         rel1.setConfidence(0.78);
+        rel1.setEvidence("Leila Farzan is described as an analyst related to U.S. Central Command");
 
-        T2ExtractResponse.ExtractedRelation rel2 = new T2ExtractResponse.ExtractedRelation();
-        rel2.setSourceName("U.S. Central Command");
-        rel2.setSourceType("organization");
-        rel2.setTargetName("Strait of Hormuz");
-        rel2.setTargetType("location");
-        rel2.setRelationType("LOCATED_IN");
+        T2ExtractResponse.ExtractedRelationMention rel2 = new T2ExtractResponse.ExtractedRelationMention();
+        rel2.setRelationMentionId("r2");
+        rel2.setSubjectMentionId("e1");
+        rel2.setPredicate("EVENT_OCCURRED_AT");
+        rel2.setObjectMentionId("m4");
         rel2.setConfidence(0.90);
+        rel2.setEvidence("The military standoff is located near the Strait of Hormuz");
 
-        T2ExtractResponse.ExtractedRelation rel3 = new T2ExtractResponse.ExtractedRelation();
-        rel3.setSourceName("2026 Persian Gulf Military Standoff");
-        rel3.setSourceType("event");
-        rel3.setTargetName("Strait of Hormuz");
-        rel3.setTargetType("location");
-        rel3.setRelationType("EVENT_OCCURRED_AT");
+        T2ExtractResponse.ExtractedRelationMention rel3 = new T2ExtractResponse.ExtractedRelationMention();
+        rel3.setRelationMentionId("r3");
+        rel3.setSubjectMentionId("e1");
+        rel3.setPredicate("EVENT_INVOLVES_ENTITY");
+        rel3.setObjectMentionId("m3");
         rel3.setConfidence(0.95);
+        rel3.setEvidence("U.S. Central Command is involved in the standoff");
 
-        T2ExtractResponse.ExtractedRelation rel4 = new T2ExtractResponse.ExtractedRelation();
-        rel4.setSourceName("Hormuz Strait escalation narrative");
-        rel4.setSourceType("narrative");
-        rel4.setTargetName("2026 Persian Gulf Military Standoff");
-        rel4.setTargetType("event");
-        rel4.setRelationType("NARRATIVE_ABOUT_EVENT");
+        T2ExtractResponse.ExtractedRelationMention rel4 = new T2ExtractResponse.ExtractedRelationMention();
+        rel4.setRelationMentionId("r4");
+        rel4.setSubjectMentionId("m2");
+        rel4.setPredicate("NARRATIVE_ABOUT_EVENT");
+        rel4.setObjectMentionId("e1");
         rel4.setConfidence(0.85);
-
-        T2ExtractResponse.ExtractedEvent extractedEvent = new T2ExtractResponse.ExtractedEvent();
-        extractedEvent.setEventType("military");
-        extractedEvent.setCanonicalName("2026 Persian Gulf Military Standoff");
-        extractedEvent.setEventTimeStart("2026-06-01T00:00:00Z");
-        extractedEvent.setConfidence(0.90);
-
-        T2ExtractResponse.ExtractedEvent.EventParticipant p1 =
-                new T2ExtractResponse.ExtractedEvent.EventParticipant();
-        p1.setName("U.S. Central Command");
-        p1.setRole("actor");
-
-        T2ExtractResponse.ExtractedEvent.EventParticipant p2 =
-                new T2ExtractResponse.ExtractedEvent.EventParticipant();
-        p2.setName("Strait of Hormuz");
-        p2.setRole("location");
-
-        extractedEvent.setParticipants(List.of(p1, p2));
+        rel4.setEvidence("The narrative is about the Persian Gulf military standoff");
 
         T2ExtractResponse resp = new T2ExtractResponse();
+        resp.setDocId(request.getDocId());
         resp.setEntities(List.of(person, organization, narrative, location, event));
-        resp.setRelationships(List.of(rel1, rel2, rel3, rel4));
-        resp.setEvents(List.of(extractedEvent));
+        resp.setRelations(List.of(rel1, rel2, rel3, rel4));
         resp.setResolvedAuthorAccountId(null);
+        resp.setModelVersion("mock-t2-v2.0");
         resp.setRaw(toJson(resp));
         return resp;
     }
@@ -443,6 +448,43 @@ public class MockAgentController {
                         .map(T3ResolveRequest.EntityCandidate::getId)
                         .filter(java.util.Objects::nonNull)
                         .collect(Collectors.toList()));
+        return resp;
+    }
+
+    @PostMapping("/mock/t3/resolve_batch")
+    public T3ResolveBatchResponse resolveBatch(@RequestBody T3ResolveBatchRequest request) {
+        int itemCount = request.getItems() != null ? request.getItems().size() : 0;
+        log.info("[MOCK-T3] resolve_batch, itemCount={}", itemCount);
+
+        List<T3ResolveBatchResponse.ResolveResult> results =
+                request.getItems() == null ? List.of() : request.getItems().stream()
+                        .map(item -> {
+                            T3ResolveBatchResponse.ResolveResult result =
+                                    new T3ResolveBatchResponse.ResolveResult();
+                            String mentionId = item.getMention() != null ? item.getMention().getMentionId() : null;
+                            result.setMentionId(mentionId);
+                            if (item.getCandidates() != null && !item.getCandidates().isEmpty()) {
+                                T3ResolveBatchRequest.Candidate top = item.getCandidates().get(0);
+                                result.setAction(top.getScore() != null && top.getScore() >= 0.9D ? "MERGE" : "REVIEW");
+                                result.setMatchedEntityId(top.getEntityId());
+                                result.setScore(top.getScore());
+                                result.setConfidence(top.getScore());
+                                result.setMatchMethod("mock_candidate_top1");
+                                result.setReason("mock resolver selected the highest ranked candidate");
+                            } else {
+                                result.setAction("CREATE");
+                                result.setScore(0.0D);
+                                result.setConfidence(0.0D);
+                                result.setMatchMethod("no_candidate");
+                                result.setReason("no candidate returned by backend retrieval");
+                            }
+                            return result;
+                        })
+                        .toList();
+
+        T3ResolveBatchResponse resp = new T3ResolveBatchResponse();
+        resp.setResults(results);
+        resp.setModelVersion("mock-t3-resolve-v2.0");
         return resp;
     }
 

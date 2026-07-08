@@ -30,5 +30,9 @@ public class EntityFusionRecord {
     private Integer contentCountAfter;
     private Boolean neo4jMerged;
     private UUID jobRunId;
+    private String matchMethod;
+    private java.math.BigDecimal matchScore;
+    private String resolverModel;
+    private Boolean isAutoMerged;
     private OffsetDateTime createdAt;
 }

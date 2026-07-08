@@ -3,54 +3,84 @@ package com.idata.profile.agentproxy.dto.t2;
 import lombok.Data;
 
 import java.util.List;
+import java.util.Map;
 
-/**
- * T2信息抽取响应。
- * entities写入PG精简实体表；relationships/events透传给T3做实体归一和Neo4j写入。
- */
 @Data
 public class T2ExtractResponse {
-    private List<ExtractedEntity> entities;
-    private List<ExtractedRelation> relationships;
-    private List<ExtractedEvent> events;
+    private String docId;
+    private List<ExtractedMention> entities;
+    private List<ExtractedRelationMention> relations;
     private String resolvedAuthorAccountId;
+    private String modelVersion;
     private String raw;
 
-    @Data
-    public static class ExtractedEntity {
-        private String type;
-        private String canonicalName;
-        private java.math.BigDecimal importanceScore;
-        private String matchedAccountId;
-        private List<String> aliases;
+    /**
+     * @deprecated Use {@link #relations}. Kept only for older internal agent prompt code.
+     */
+    @Deprecated
+    public List<ExtractedRelationMention> getRelationships() {
+        return relations;
     }
 
     /**
-     * T2抽取的文本层关系，端点还是实体名称，必须交给T3归一后才能写Neo4j。
+     * @deprecated Use {@link #relations}. Kept only for older internal agent prompt code.
      */
-    @Data
-    public static class ExtractedRelation {
-        private String sourceName;
-        private String sourceType;
-        private String targetName;
-        private String targetType;
-        private String relationType;
-        private String role;
-        private Double confidence;
+    @Deprecated
+    public void setRelationships(List<ExtractedRelationMention> relationships) {
+        this.relations = relationships;
+    }
+
+    /**
+     * @deprecated Events are represented as entity mentions with type=event.
+     */
+    @Deprecated
+    public List<Object> getEvents() {
+        return List.of();
+    }
+
+    /**
+     * @deprecated Events are represented as entity mentions with type=event.
+     */
+    @Deprecated
+    public void setEvents(List<Object> events) {
+        // no-op: v1.1 stores events in entities.
     }
 
     @Data
-    public static class ExtractedEvent {
-        private String eventType;
-        private String canonicalName;
-        private String eventTimeStart;
+    public static class ExtractedMention {
+        private String mentionId;
+        private String name;
+        private String normalizedName;
+        private String type;
+        private List<String> aliases;
+        private Double importanceScore;
         private Double confidence;
-        private List<EventParticipant> participants;
+        private Map<String, Object> attributes;
+    }
 
-        @Data
-        public static class EventParticipant {
-            private String name;
-            private String role;
+    @Data
+    public static class ExtractedRelationMention {
+        private String relationMentionId;
+        private String subjectMentionId;
+        private String predicate;
+        private String objectMentionId;
+        private Double confidence;
+        private String evidence;
+
+        /**
+         * @deprecated Use {@link #predicate}. Kept only for older internal agent prompt code.
+         */
+        @Deprecated
+        public String getRelationType() {
+            return predicate;
+        }
+
+        /**
+         * @deprecated Use {@link #predicate}. Kept only for older internal agent prompt code.
+         */
+        @Deprecated
+        public void setRelationType(String relationType) {
+            this.predicate = relationType;
         }
     }
 }

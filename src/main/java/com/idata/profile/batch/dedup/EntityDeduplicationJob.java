@@ -2,6 +2,8 @@ package com.idata.profile.batch.dedup;
 
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.idata.profile.agentproxy.AgentProxyClient;
+import com.idata.profile.agentproxy.dto.t3.T3ResolveBatchRequest;
+import com.idata.profile.agentproxy.dto.t3.T3ResolveBatchResponse;
 import com.idata.profile.agentproxy.dto.t3.T3ResolveRequest;
 import com.idata.profile.agentproxy.dto.t3.T3ResolveResponse;
 import com.idata.profile.agentproxy.dto.t4.T4EmbeddingRequest;
@@ -22,6 +24,7 @@ import com.idata.profile.mapper.graph.EventMapper;
 import com.idata.profile.mapper.graph.NarrativeMapper;
 import com.idata.profile.mapper.graph.OrganizationMapper;
 import com.idata.profile.mapper.graph.PersonMapper;
+import com.idata.profile.service.EntityCandidateRetrievalService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
@@ -29,6 +32,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -53,6 +57,7 @@ public class EntityDeduplicationJob {
     private final EntityFusionRecordMapper entityFusionRecordMapper;
     private final Neo4jGraphService neo4jGraphService;
     private final AgentProxyClient agentProxyClient;
+    private final EntityCandidateRetrievalService candidateRetrievalService;
     private final EntityEsService entityEsService;
     private final MilvusVectorService milvusVectorService;
     private final ApplicationContext applicationContext;
@@ -262,65 +267,68 @@ public class EntityDeduplicationJob {
             return 0;
         }
 
-        List<Map<String, Object>> resolveItems = new ArrayList<>();
+        List<T3ResolveBatchRequest.ResolveItem> resolveItems = new ArrayList<>();
+        Map<String, T3ResolveBatchRequest.Candidate> candidatesById = new HashMap<>();
         for (Object entity : pendingEntities) {
             T3ResolveRequest.EntityCandidate mention = toCandidate(entity, entityType);
             if (mention.getId() == null || mention.getCanonicalName() == null) {
                 continue;
             }
 
-            List<Map<String, Object>> candidates = retrieveCandidates(
+            List<T3ResolveBatchRequest.Candidate> candidates = candidateRetrievalService.retrieveCandidates(
                     mention.getCanonicalName(), entityType, 10);
             if (candidates.isEmpty()) {
                 continue;
             }
-
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("mention", mention);
-            item.put("candidates", candidates);
-            item.put("context", Map.of(
-                    "language", "zh",
-                    "textWindow", mention.getCanonicalName()
-            ));
-            resolveItems.add(item);
+            for (T3ResolveBatchRequest.Candidate candidate : candidates) {
+                if (candidate != null && hasText(candidate.getEntityId())) {
+                    candidatesById.put(candidate.getEntityId(), candidate);
+                }
+            }
+            resolveItems.add(toBatchResolveItem(mention, candidates));
         }
 
         if (resolveItems.isEmpty()) {
             return 0;
         }
 
-        T3ResolveRequest request = new T3ResolveRequest();
-        List<T3ResolveRequest.EntityCandidate> candidates = resolveItems.stream()
-                .map(item -> (T3ResolveRequest.EntityCandidate) item.get("mention"))
-                .toList();
-        request.setEntities(candidates);
+        T3ResolveBatchRequest request = new T3ResolveBatchRequest();
+        request.setItems(resolveItems);
+        T3ResolveBatchRequest.Strategy strategy = new T3ResolveBatchRequest.Strategy();
+        strategy.setAutoMergeThreshold(0.9D);
+        strategy.setReviewThreshold(0.6D);
+        request.setStrategy(strategy);
+        log.debug("[EntityDeduplicationJob] T3 resolve_batch request, entityType={}, items={}, firstCandidates={}",
+                entityType, resolveItems.size(), resolveItems.get(0).getCandidates().size());
 
-        T3ResolveResponse response;
+        T3ResolveBatchResponse response;
         try {
-            response = agentProxyClient.call("T3", "resolve_entities", request, T3ResolveResponse.class);
+            response = agentProxyClient.call("T3", "resolve_batch", request, T3ResolveBatchResponse.class);
         } catch (Exception e) {
-            log.warn("[EntityDeduplicationJob] T3 resolve_entities failed, entityType={}", entityType, e);
+            log.warn("[EntityDeduplicationJob] T3 resolve_batch failed, entityType={}", entityType, e);
             return 0;
         }
 
-        if (response == null || response.getMergeGroups() == null || response.getMergeGroups().isEmpty()) {
+        if (response == null || response.getResults() == null || response.getResults().isEmpty()) {
             return 0;
         }
 
         int merged = 0;
-        for (T3ResolveResponse.MergeGroup group : response.getMergeGroups()) {
-            if (group == null || group.getConfidence() == null
-                    || group.getMergedIds() == null || group.getMergedIds().isEmpty()) {
+        for (T3ResolveBatchResponse.ResolveResult result : response.getResults()) {
+            if (result == null || result.getConfidence() == null || !hasText(result.getMentionId())
+                    || !hasText(result.getMatchedEntityId())) {
                 continue;
             }
-            double confidence = group.getConfidence();
+            double confidence = result.getConfidence();
+            T3ResolveResponse.MergeGroup group = toMergeGroup(result, entityType, candidatesById);
             try {
-                if (confidence >= 0.9D) {
+                if ("MERGE".equalsIgnoreCase(result.getAction()) && confidence >= 0.9D) {
                     merged += executeMergeGroup(group, entityType, jobRunId);
                     log.info("[EntityDeduplicationJob] auto-merge, entityType={}, survivorId={}, confidence={}",
                             entityType, group.getSurvivorId(), confidence);
                 } else if (confidence >= 0.6D) {
-                    insertPendingReviewRecord(group, entityType, jobRunId, confidence);
+                    insertPendingReviewRecord(group, entityType, jobRunId, confidence,
+                            result.getMatchMethod(), response.getModelVersion());
                     log.info("[EntityDeduplicationJob] pending-review, entityType={}, survivorId={}, confidence={}",
                             entityType, group.getSurvivorId(), confidence);
                 }
@@ -330,6 +338,51 @@ public class EntityDeduplicationJob {
             }
         }
         return merged;
+    }
+
+    private T3ResolveBatchRequest.ResolveItem toBatchResolveItem(
+            T3ResolveRequest.EntityCandidate candidate,
+            List<T3ResolveBatchRequest.Candidate> candidates) {
+        T3ResolveBatchRequest.ResolveItem item = new T3ResolveBatchRequest.ResolveItem();
+        T3ResolveBatchRequest.Mention mention = new T3ResolveBatchRequest.Mention();
+        mention.setMentionId(candidate.getId());
+        mention.setName(candidate.getCanonicalName());
+        mention.setNormalizedName(candidate.getCanonicalName());
+        mention.setType(candidate.getEntityType());
+        mention.setAliases(candidate.getAliases());
+        mention.setAttributes(Map.of());
+        item.setMention(mention);
+        item.setCandidates(candidates);
+        T3ResolveBatchRequest.Context context = new T3ResolveBatchRequest.Context();
+        context.setLanguage("zh");
+        context.setTextWindow(candidate.getCanonicalName());
+        item.setContext(context);
+        return item;
+    }
+
+    private T3ResolveResponse.MergeGroup toMergeGroup(T3ResolveBatchResponse.ResolveResult result,
+                                                      String entityType,
+                                                      Map<String, T3ResolveBatchRequest.Candidate> candidatesById) {
+        T3ResolveResponse.MergeGroup group = new T3ResolveResponse.MergeGroup();
+        UUID survivorPgId = resolvePgId(candidatesById.get(result.getMatchedEntityId()), entityType);
+        group.setSurvivorId(survivorPgId != null ? survivorPgId.toString() : result.getMatchedEntityId());
+        group.setMergedIds(List.of(result.getMentionId()));
+        group.setConfidence(result.getConfidence());
+        group.setMatchMethod(result.getMatchMethod());
+        return group;
+    }
+
+    private UUID resolvePgId(T3ResolveBatchRequest.Candidate candidate, String entityType) {
+        if (candidate == null || !hasText(candidate.getCanonicalName())) {
+            return null;
+        }
+        return switch (entityType) {
+            case "person" -> personMapper.selectCanonicalIdByName(candidate.getCanonicalName());
+            case "organization" -> organizationMapper.selectCanonicalIdByName(candidate.getCanonicalName());
+            case "event" -> eventMapper.selectCanonicalIdByName(candidate.getCanonicalName());
+            case "narrative" -> narrativeMapper.selectCanonicalIdByLabel(candidate.getCanonicalName());
+            default -> null;
+        };
     }
 
     /**
@@ -409,7 +462,8 @@ public class EntityDeduplicationJob {
     }
 
     private void insertPendingReviewRecord(T3ResolveResponse.MergeGroup group,
-                                           String entityType, UUID jobRunId, double confidence) {
+                                           String entityType, UUID jobRunId, double confidence,
+                                           String matchMethod, String resolverModel) {
         try {
             EntityFusionRecord record = new EntityFusionRecord();
             record.setId(UUID.randomUUID());
@@ -424,6 +478,10 @@ public class EntityDeduplicationJob {
             record.setFusionMethod("t3_pending_review");
             record.setNeo4jMerged(false);
             record.setJobRunId(jobRunId);
+            record.setMatchMethod(matchMethod);
+            record.setMatchScore(BigDecimal.valueOf(confidence));
+            record.setResolverModel(resolverModel);
+            record.setIsAutoMerged(false);
             entityFusionRecordMapper.insert(record);
         } catch (Exception e) {
             log.warn("[EntityDeduplicationJob] insertPendingReviewRecord failed, survivorId={}",
@@ -747,6 +805,8 @@ public class EntityDeduplicationJob {
         record.setContentCountAfter(contentCountAfter);
         record.setNeo4jMerged(neo4jMerged);
         record.setJobRunId(jobRunId);
+        record.setMatchMethod(fusionMethod);
+        record.setIsAutoMerged(true);
         entityFusionRecordMapper.insert(record);
     }
 

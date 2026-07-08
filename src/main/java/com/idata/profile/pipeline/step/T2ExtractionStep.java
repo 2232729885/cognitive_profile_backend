@@ -3,6 +3,8 @@ package com.idata.profile.pipeline.step;
 import com.idata.profile.agentproxy.AgentProxyClient;
 import com.idata.profile.agentproxy.dto.t2.T2ExtractRequest;
 import com.idata.profile.agentproxy.dto.t2.T2ExtractResponse;
+import com.idata.profile.agentproxy.dto.t3.T3ResolveBatchRequest;
+import com.idata.profile.agentproxy.dto.t3.T3ResolveBatchResponse;
 import com.idata.profile.agentproxy.dto.t4.T4EmbeddingRequest;
 import com.idata.profile.agentproxy.dto.t4.T4EmbeddingResponse;
 import com.idata.profile.common.constant.PipelineStatus;
@@ -10,6 +12,7 @@ import com.idata.profile.common.util.StableUuidUtil;
 import com.idata.profile.entity.account.SocialAccount;
 import com.idata.profile.entity.content.MediaAsset;
 import com.idata.profile.entity.content.MediaContent;
+import com.idata.profile.entity.dedup.EntityFusionRecord;
 import com.idata.profile.entity.raw.RawRecord;
 import com.idata.profile.entity.task.PipelineTask;
 import com.idata.profile.infra.elasticsearch.EntityEsService;
@@ -18,12 +21,15 @@ import com.idata.profile.infra.neo4j.Neo4jGraphService;
 import com.idata.profile.mapper.account.SocialAccountMapper;
 import com.idata.profile.mapper.content.MediaAssetMapper;
 import com.idata.profile.mapper.content.MediaContentMapper;
+import com.idata.profile.mapper.dedup.EntityFusionRecordMapper;
 import com.idata.profile.mapper.graph.EventMapper;
 import com.idata.profile.mapper.graph.NarrativeMapper;
 import com.idata.profile.mapper.graph.OrganizationMapper;
 import com.idata.profile.mapper.graph.PersonMapper;
 import com.idata.profile.mapper.raw.RawRecordMapper;
 import com.idata.profile.mapper.task.PipelineTaskMapper;
+import com.idata.profile.service.EntityCandidateRetrievalService;
+import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -32,7 +38,9 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -44,26 +52,22 @@ import java.util.UUID;
 public class T2ExtractionStep {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final double AUTO_MERGE_THRESHOLD = 0.9D;
+    private static final double REVIEW_THRESHOLD = 0.6D;
     private static final Set<String> ALLOWED_RELATION_TYPES = Set.of(
-            // 身份归一类
             "SAME_AS", "HAS_ACCOUNT", "ALIAS_OF", "MERGED_INTO",
-            // 组织/社群类
             "AFFILIATED_WITH", "PART_OF", "CONTROLS", "OWNS", "MEMBER_OF",
             "ADMIN_OF", "PUBLISHED_IN",
-            // 内容链路类
             "AUTHORED", "REPLY_TO", "COMMENT_ON", "REPOSTS", "QUOTES",
             "SHARES", "REFERENCES_URL", "MENTIONS",
-            // 事件地点类
-            "DESCRIBES", "REPORTS", "EVENT_OCCURRED_AT", "EVENT_INVOLVES_ENTITY", "LOCATED_IN", "POSTS_FROM",
-            // 叙事认知类（保留历史名称）
-            "CONTENT_EXPRESSES_NARRATIVE", "NARRATIVE_TARGETS_ENTITY", "NARRATIVE_ABOUT_EVENT",
-            "SUPPORTS", "OPPOSES", "INCITES", "DE_ESCALATES",
-            "BELONGS_TO", "HAS_EMOTION",
-            // 传播协同类
-            "AMPLIFIES", "BRIDGES_COMMUNITY", "COORDINATES_WITH", "POTENTIAL_SUBORDINATE_TO", "INFLUENCES",
-            // 证据治理类
+            "DESCRIBES", "REPORTS", "EVENT_OCCURRED_AT", "EVENT_INVOLVES_ENTITY",
+            "LOCATED_IN", "POSTS_FROM",
+            "CONTENT_EXPRESSES_NARRATIVE", "NARRATIVE_TARGETS_ENTITY",
+            "NARRATIVE_ABOUT_EVENT", "SUPPORTS", "OPPOSES", "INCITES",
+            "DE_ESCALATES", "BELONGS_TO", "HAS_EMOTION",
+            "AMPLIFIES", "BRIDGES_COMMUNITY", "COORDINATES_WITH",
+            "POTENTIAL_SUBORDINATE_TO", "INFLUENCES",
             "ASSERTED_BY", "DERIVED_FROM", "CONFLICTS_WITH", "REVIEWED_BY",
-            // 保留兼容旧数据
             "HAS_MEDIA"
     );
 
@@ -80,6 +84,8 @@ public class T2ExtractionStep {
     private final MediaAssetMapper mediaAssetMapper;
     private final EntityEsService entityEsService;
     private final MilvusVectorService milvusVectorService;
+    private final EntityCandidateRetrievalService candidateRetrievalService;
+    private final EntityFusionRecordMapper entityFusionRecordMapper;
 
     public void run(PipelineTask task) {
         OffsetDateTime startedAt = OffsetDateTime.now();
@@ -88,47 +94,17 @@ public class T2ExtractionStep {
         pipelineTaskMapper.updateById(task);
 
         MediaContent mc = mediaContentMapper.selectById(task.getContentId());
+        T2ExtractResponse response = agentProxyClient.call(
+                "T2", "extract_entities", buildRequest(mc), T2ExtractResponse.class);
 
-        T2ExtractRequest request = new T2ExtractRequest();
-        request.setText(mc.getBodyText());
-        if (hasText(mc.getNarrativeHint())) {
-            try {
-                request.setAnnotation(OBJECT_MAPPER.readValue(mc.getNarrativeHint(), Object.class));
-            } catch (Exception e) {
-                log.warn("Failed to parse T1 entities hint for T2, contentId={}", mc.getId(), e);
-            }
-        }
-        T2ExtractRequest.SourceInfo sourceInfo = new T2ExtractRequest.SourceInfo();
-        sourceInfo.setPlatformId(mc.getPlatform());
-        sourceInfo.setContentUrl(mc.getUrl());
-        sourceInfo.setPublishTime(mc.getPublishedAt() != null ? mc.getPublishedAt().toString() : null);
-        sourceInfo.setAuthorHandle(mc.getAuthorPlatformUserId());
-        request.setSourceInfo(sourceInfo);
-        request.setHashtags(mc.getHashtags());
-        request.setMentions(mc.getMentions());
-        request.setParentContentId(mc.getParentContentId());
-        request.setRepostOfContentId(mc.getRepostOfContentId());
-        request.setQuotedContentId(mc.getQuotedContentId());
+        Map<String, ResolvedMention> resolvedMentions = processMentions(response, mc);
 
-        T2ExtractResponse response = agentProxyClient.call("T2", "extract_entities", request, T2ExtractResponse.class);
-
-        if (response.getEntities() != null) {
-            for (T2ExtractResponse.ExtractedEntity entity : response.getEntities()) {
-                insertEntity(entity);
-            }
-        }
-        if (response.getEvents() != null) {
-            for (T2ExtractResponse.ExtractedEvent event : response.getEvents()) {
-                insertEvent(event);
-            }
-        }
-
-        if (mc.getAuthorAccountId() == null && response.getResolvedAuthorAccountId() != null) {
+        if (mc.getAuthorAccountId() == null && hasText(response.getResolvedAuthorAccountId())) {
             mc.setAuthorAccountId(UUID.fromString(response.getResolvedAuthorAccountId()));
             mediaContentMapper.updateById(mc);
         }
 
-        writeToNeo4j(task, response, mc);
+        writeToNeo4j(task, response, mc, resolvedMentions);
 
         RawRecord rawRecord = rawRecordMapper.selectById(task.getRawRecordId());
         rawRecord.setT2Output(response.getRaw());
@@ -141,16 +117,171 @@ public class T2ExtractionStep {
         pipelineTaskMapper.updateById(task);
     }
 
-    private void insertEntity(T2ExtractResponse.ExtractedEntity entity) {
-        if (entity == null || !hasText(entity.getType()) || !hasText(entity.getCanonicalName())) {
-            log.warn("Skip invalid T2 extracted entity: {}", entity);
-            return;
+    private T2ExtractRequest buildRequest(MediaContent mc) {
+        T2ExtractRequest request = new T2ExtractRequest();
+        request.setDocId(mc.getId().toString());
+        request.setText(mc.getBodyText());
+        request.setLanguage(mc.getLanguage());
+        if (hasText(mc.getNarrativeHint())) {
+            try {
+                request.setAnnotation(OBJECT_MAPPER.readValue(mc.getNarrativeHint(), Object.class));
+            } catch (Exception e) {
+                log.warn("Failed to parse T1 entities hint for T2, contentId={}", mc.getId(), e);
+            }
         }
 
-        String entityType = entity.getType().toLowerCase();
-        String canonicalName = entity.getCanonicalName().trim();
+        T2ExtractRequest.SourceInfo source = new T2ExtractRequest.SourceInfo();
+        source.setPlatformId(mc.getPlatform());
+        source.setContentUrl(mc.getUrl());
+        source.setPublishTime(mc.getPublishedAt() != null ? mc.getPublishedAt().toString() : null);
+        source.setAuthorHandle(mc.getAuthorPlatformUserId());
+        source.setHashtags(mc.getHashtags());
+        source.setMentions(mc.getMentions());
+        source.setParentContentId(mc.getParentContentId());
+        source.setRepostOfContentId(mc.getRepostOfContentId());
+        source.setQuotedContentId(mc.getQuotedContentId());
+        request.setSource(source);
+        return request;
+    }
+
+    private Map<String, ResolvedMention> processMentions(T2ExtractResponse response, MediaContent content) {
+        Map<String, ResolvedMention> resolved = new LinkedHashMap<>();
+        if (response == null || response.getEntities() == null || response.getEntities().isEmpty()) {
+            return resolved;
+        }
+
+        List<T2ExtractResponse.ExtractedMention> mentions = response.getEntities().stream()
+                .map(this::normalizeMention)
+                .filter(m -> hasText(m.getMentionId()) && hasText(m.getType()) && hasText(entityName(m)))
+                .toList();
+        Map<String, T3ResolveBatchResponse.ResolveResult> results = resolveWithT3(mentions, content);
+
+        for (T2ExtractResponse.ExtractedMention mention : mentions) {
+            T3ResolveBatchResponse.ResolveResult result = results.get(mention.getMentionId());
+            ResolvedMention resolvedMention = applyResolution(mention, result, response.getModelVersion());
+            resolved.put(mention.getMentionId(), resolvedMention);
+        }
+        return resolved;
+    }
+
+    private T2ExtractResponse.ExtractedMention normalizeMention(T2ExtractResponse.ExtractedMention mention) {
+        if (mention == null) {
+            return null;
+        }
+        mention.setType(hasText(mention.getType()) ? mention.getType().trim().toLowerCase() : null);
+        mention.setName(trimToNull(mention.getName()));
+        mention.setNormalizedName(hasText(mention.getNormalizedName())
+                ? mention.getNormalizedName().trim()
+                : mention.getName());
+        mention.setAliases(distinctText(mention.getAliases()));
+        if (mention.getAttributes() == null) {
+            mention.setAttributes(Map.of());
+        }
+        return mention;
+    }
+
+    private Map<String, T3ResolveBatchResponse.ResolveResult> resolveWithT3(
+            List<T2ExtractResponse.ExtractedMention> mentions, MediaContent content) {
+        T3ResolveBatchRequest request = new T3ResolveBatchRequest();
+        request.setItems(mentions.stream()
+                .map(mention -> toResolveItem(mention, content))
+                .filter(item -> item.getCandidates() != null && !item.getCandidates().isEmpty())
+                .toList());
+        T3ResolveBatchRequest.Strategy strategy = new T3ResolveBatchRequest.Strategy();
+        strategy.setAutoMergeThreshold(AUTO_MERGE_THRESHOLD);
+        strategy.setReviewThreshold(REVIEW_THRESHOLD);
+        request.setStrategy(strategy);
+
+        if (request.getItems().isEmpty()) {
+            return Map.of();
+        }
+
+        try {
+            T3ResolveBatchResponse response = agentProxyClient.call(
+                    "T3", "resolve_batch", request, T3ResolveBatchResponse.class);
+            if (response == null || response.getResults() == null) {
+                return Map.of();
+            }
+            Map<String, T3ResolveBatchResponse.ResolveResult> result = new HashMap<>();
+            for (T3ResolveBatchResponse.ResolveResult item : response.getResults()) {
+                if (item != null && hasText(item.getMentionId())) {
+                    item.setModelVersion(response.getModelVersion());
+                    result.put(item.getMentionId(), item);
+                }
+            }
+            return result;
+        } catch (Exception e) {
+            log.warn("[T2] T3 resolve_batch failed, contentId={}", content.getId(), e);
+            return Map.of();
+        }
+    }
+
+    private T3ResolveBatchRequest.ResolveItem toResolveItem(
+            T2ExtractResponse.ExtractedMention mention, MediaContent content) {
+        T3ResolveBatchRequest.ResolveItem item = new T3ResolveBatchRequest.ResolveItem();
+        item.setMention(toT3Mention(mention));
+        item.setCandidates(candidateRetrievalService.retrieveCandidates(entityName(mention), mention.getType(), 10));
+        T3ResolveBatchRequest.Context context = new T3ResolveBatchRequest.Context();
+        context.setDocId(content.getId().toString());
+        context.setTextWindow(entityName(mention));
+        context.setLanguage(content.getLanguage());
+        item.setContext(context);
+        return item;
+    }
+
+    private T3ResolveBatchRequest.Mention toT3Mention(T2ExtractResponse.ExtractedMention mention) {
+        T3ResolveBatchRequest.Mention result = new T3ResolveBatchRequest.Mention();
+        result.setMentionId(mention.getMentionId());
+        result.setName(mention.getName());
+        result.setNormalizedName(mention.getNormalizedName());
+        result.setType(mention.getType());
+        result.setAliases(mention.getAliases());
+        result.setAttributes(mention.getAttributes());
+        return result;
+    }
+
+    private ResolvedMention applyResolution(T2ExtractResponse.ExtractedMention mention,
+                                            T3ResolveBatchResponse.ResolveResult result,
+                                            String modelVersion) {
+        String action = result != null && hasText(result.getAction()) ? result.getAction() : "CREATE";
+        double confidence = result != null && result.getConfidence() != null ? result.getConfidence() : 0D;
+        if ("MERGE".equalsIgnoreCase(action) && confidence >= AUTO_MERGE_THRESHOLD
+                && hasText(result.getMatchedEntityId())) {
+            writeEntityNode(result.getMatchedEntityId(), mention, "t2_t3_merge");
+            insertFusionRecord(mention, result, true);
+            return resolved(mention, result.getMatchedEntityId(), "MERGE");
+        }
+        if ("REVIEW".equalsIgnoreCase(action) && confidence >= REVIEW_THRESHOLD
+                && hasText(result.getMatchedEntityId())) {
+            writeEntityNode(result.getMatchedEntityId(), mention, "t2_t3_review");
+            insertFusionRecord(mention, result, false);
+            return resolved(mention, result.getMatchedEntityId(), "REVIEW");
+        }
+
+        String nodeId = stableUuid(mention.getType() + ":" + entityName(mention));
+        insertEntity(mention);
+        writeEntityNode(nodeId, mention, "t2_create");
+        indexEntity(nodeId, mention);
+        syncEntityVectorToMilvus(nodeId, mention);
+        return resolved(mention, nodeId, "CREATE");
+    }
+
+    private ResolvedMention resolved(T2ExtractResponse.ExtractedMention mention, String nodeId, String action) {
+        ResolvedMention result = new ResolvedMention();
+        result.setMentionId(mention.getMentionId());
+        result.setNodeId(nodeId);
+        result.setLabel(toNeo4jLabel(mention.getType()));
+        result.setEntityType(mention.getType());
+        result.setAction(action);
+        result.setName(entityName(mention));
+        return result;
+    }
+
+    private void insertEntity(T2ExtractResponse.ExtractedMention entity) {
+        String entityType = entity.getType();
+        String canonicalName = entityName(entity);
         BigDecimal importanceScore = entity.getImportanceScore() != null
-                ? entity.getImportanceScore() : BigDecimal.ZERO;
+                ? BigDecimal.valueOf(entity.getImportanceScore()) : BigDecimal.ZERO;
 
         switch (entityType) {
             case "person" -> personMapper.insertEntity(canonicalName, importanceScore);
@@ -158,199 +289,146 @@ public class T2ExtractionStep {
             case "event" -> eventMapper.insertEntity(canonicalName, importanceScore);
             case "narrative" -> narrativeMapper.insertEntity(
                     canonicalName, importanceScore, buildClaimAtoms(canonicalName, importanceScore));
+            case "location" -> log.debug("Location mention is stored in Neo4j only, name={}", canonicalName);
             default -> log.warn("Unknown extracted entity type: {}", entity.getType());
         }
     }
 
-    private void insertEvent(T2ExtractResponse.ExtractedEvent event) {
-        if (event == null || !hasText(event.getCanonicalName())) {
+    private void writeEntityNode(String nodeId, T2ExtractResponse.ExtractedMention entity, String source) {
+        String label = toNeo4jLabel(entity.getType());
+        if (!hasText(label)) {
             return;
         }
-
-        double confidence = event.getConfidence() != null ? event.getConfidence() : 0.5D;
-        BigDecimal importanceScore = BigDecimal.valueOf(confidence * 100D);
-        eventMapper.insertEntity(event.getCanonicalName().trim(), importanceScore);
-    }
-
-    private void writeToNeo4j(PipelineTask task, T2ExtractResponse response, MediaContent mc) {
-        try {
-            writeEntityNodes(response);
-            writeRelations(response);
-            linkAuthorAccount(response, mc);
-            writeMediaContentToNeo4j(task, mc);
-        } catch (Exception e) {
-            log.error("T2后Neo4j写入失败, taskId={}", task.getId(), e);
-        }
-    }
-
-    private void writeEntityNodes(T2ExtractResponse response) {
-        if (response == null) {
-            return;
-        }
-        if (response.getEntities() != null) {
-            for (T2ExtractResponse.ExtractedEntity entity : response.getEntities()) {
-                if (entity == null || !hasText(entity.getType()) || !hasText(entity.getCanonicalName())) {
-                    continue;
-                }
-                try {
-                    String entityType = entity.getType().toLowerCase();
-                    String label = toNeo4jLabel(entityType);
-                    if (!hasText(label)) {
-                        continue;
-                    }
-                    String nodeId = stableUuid(entityType + ":" + entity.getCanonicalName());
-                    Map<String, Object> props = new HashMap<>();
-                    String nameKey = "narrative".equals(entityType) ? "canonicalLabel" : "canonicalName";
-                    props.put(nameKey, entity.getCanonicalName());
-                    if (entity.getAliases() != null && !entity.getAliases().isEmpty()) {
-                        props.put("aliases", entity.getAliases().toArray(new String[0]));
-                    }
-                    if (entity.getImportanceScore() != null) {
-                        props.put("importanceScore", entity.getImportanceScore().doubleValue());
-                    }
-                    props.put("source", "t2_extraction");
-                    neo4jGraphService.mergeNode(label, nodeId, props);
-                    entityEsService.indexEntity(
-                            nodeId,
-                            entity.getCanonicalName(),
-                            entity.getCanonicalName(),
-                            entity.getAliases(),
-                            entityType,
-                            entity.getImportanceScore() != null ? entity.getImportanceScore().doubleValue() : 0.0D);
-                    syncEntityVectorToMilvus(nodeId, entity);
-                } catch (Exception e) {
-                    log.warn("T2实体写Neo4j失败, type={}, name={}",
-                            entity.getType(), entity.getCanonicalName(), e);
-                }
-            }
-        }
-
-        if (response.getEvents() != null) {
-            for (T2ExtractResponse.ExtractedEvent event : response.getEvents()) {
-                if (event == null || !hasText(event.getCanonicalName())) {
-                    continue;
-                }
-                try {
-                    String nodeId = stableUuid("event:" + event.getCanonicalName());
-                    Map<String, Object> props = new HashMap<>();
-                    props.put("canonicalName", event.getCanonicalName());
-                    putIfHasText(props, "eventType", event.getEventType());
-                    putIfHasText(props, "eventTimeStart", event.getEventTimeStart());
-                    if (event.getParticipants() != null && !event.getParticipants().isEmpty()) {
-                        String[] participantNames = event.getParticipants().stream()
-                                .map(T2ExtractResponse.ExtractedEvent.EventParticipant::getName)
-                                .filter(n -> n != null && !n.isBlank())
-                                .toArray(String[]::new);
-                        if (participantNames.length > 0) {
-                            props.put("participantNames", participantNames);
-                        }
-                    }
-                    if (event.getConfidence() != null) {
-                        props.put("confidence", event.getConfidence());
-                        props.put("importanceScore", event.getConfidence() * 100D);
-                    }
-                    props.put("source", "t2_extraction");
-                    neo4jGraphService.mergeNode("Event", nodeId, props);
-                } catch (Exception e) {
-                    log.warn("T2事件写Neo4j失败, name={}", event.getCanonicalName(), e);
-                }
-            }
-        }
-    }
-
-    private void syncEntityVectorToMilvus(String stableId,
-                                          T2ExtractResponse.ExtractedEntity entity) {
-        try {
-            if (!hasText(entity.getCanonicalName())) {
-                return;
-            }
-
-            T4EmbeddingRequest req = new T4EmbeddingRequest();
-            req.setText(entity.getCanonicalName());
-            T4EmbeddingResponse resp = agentProxyClient.call(
-                    "T4", "generate_text_embedding", req, T4EmbeddingResponse.class);
-
-            if (resp == null || resp.getEmbedding() == null) {
-                return;
-            }
-
-            milvusVectorService.insertEntityEmbedding(
-                    stableId,
-                    entity.getType().toLowerCase(),
-                    entity.getCanonicalName(),
-                    resp.getEmbedding());
-            log.debug("[T2] 实体向量化写入Milvus, entityId={}, name={}",
-                    stableId, entity.getCanonicalName());
-        } catch (Exception e) {
-            log.warn("[T2] 实体向量化失败, entityId={}, name={}",
-                    stableId, entity.getCanonicalName(), e);
-        }
-    }
-
-    private void writeRelations(T2ExtractResponse response) {
-        if (response == null || response.getRelationships() == null) {
-            return;
-        }
-        for (T2ExtractResponse.ExtractedRelation rel : response.getRelationships()) {
-            if (rel == null || !hasText(rel.getSourceName()) || !hasText(rel.getTargetName())
-                    || !hasText(rel.getRelationType())) {
-                continue;
-            }
-            if (!ALLOWED_RELATION_TYPES.contains(rel.getRelationType())) {
-                log.warn("Skip T2 relation with unsupported relationType={}, source={}, target={}",
-                        rel.getRelationType(), rel.getSourceName(), rel.getTargetName());
-                continue;
-            }
-            try {
-                String fromLabel = toNeo4jLabel(rel.getSourceType());
-                String toLabel = toNeo4jLabel(rel.getTargetType());
-                if (!hasText(fromLabel) || !hasText(toLabel)) {
-                    continue;
-                }
-                String fromId = stableUuid(rel.getSourceType() + ":" + rel.getSourceName());
-                String toId = stableUuid(rel.getTargetType() + ":" + rel.getTargetName());
-
-                ensureRelationEndpoint(fromLabel, fromId, rel.getSourceType(), rel.getSourceName());
-                ensureRelationEndpoint(toLabel, toId, rel.getTargetType(), rel.getTargetName());
-
-                Map<String, Object> props = new HashMap<>();
-                props.put("source", "t2_extraction");
-                props.put("extraction_method", "t2_relation");
-                if (rel.getConfidence() != null) {
-                    props.put("confidence", rel.getConfidence());
-                }
-                if (hasText(rel.getRole())) {
-                    props.put("role", rel.getRole());
-                }
-
-                neo4jGraphService.mergeRelation(fromLabel, fromId, toLabel, toId, rel.getRelationType(), props);
-            } catch (Exception e) {
-                log.warn("T2关系写Neo4j失败, relationType={}, source={}, target={}",
-                        rel.getRelationType(), rel.getSourceName(), rel.getTargetName(), e);
-            }
-        }
-    }
-
-    private void ensureRelationEndpoint(String label, String nodeId, String type, String name) {
         Map<String, Object> props = new HashMap<>();
-        String nameKey = "narrative".equals(type) ? "canonicalLabel" : "canonicalName";
-        props.put(nameKey, name);
-        props.put("source", "t2_extraction");
+        String nameKey = "narrative".equals(entity.getType()) ? "canonicalLabel" : "canonicalName";
+        props.put(nameKey, entityName(entity));
+        if (entity.getAliases() != null && !entity.getAliases().isEmpty()) {
+            props.put("aliases", entity.getAliases().toArray(new String[0]));
+        }
+        if (entity.getImportanceScore() != null) {
+            props.put("importanceScore", entity.getImportanceScore());
+        }
+        if ("event".equals(entity.getType())) {
+            putIfHasText(props, "eventType", stringValue(entity.getAttributes().get("eventType")));
+            putIfHasText(props, "eventTimeStart", stringValue(entity.getAttributes().get("eventTimeStart")));
+        }
+        props.put("source", source);
         neo4jGraphService.mergeNode(label, nodeId, props);
     }
 
-    private void linkAuthorAccount(T2ExtractResponse response, MediaContent content) {
-        if (content == null || content.getAuthorAccountId() == null || response == null || response.getEntities() == null) {
-            return;
-        }
+    private void indexEntity(String nodeId, T2ExtractResponse.ExtractedMention entity) {
+        entityEsService.indexEntity(
+                nodeId,
+                entityName(entity),
+                entity.getNormalizedName(),
+                entity.getAliases(),
+                entity.getType(),
+                entity.getImportanceScore() != null ? entity.getImportanceScore() : 0D);
+    }
 
-        String personName = firstEntityName(response, "person");
-        if (!hasText(personName)) {
+    private void syncEntityVectorToMilvus(String stableId, T2ExtractResponse.ExtractedMention entity) {
+        try {
+            T4EmbeddingRequest req = new T4EmbeddingRequest();
+            req.setText(entityName(entity));
+            T4EmbeddingResponse resp = agentProxyClient.call(
+                    "T4", "generate_text_embedding", req, T4EmbeddingResponse.class);
+            if (resp == null || resp.getEmbedding() == null) {
+                return;
+            }
+            milvusVectorService.insertEntityEmbedding(
+                    stableId, entity.getType(), entityName(entity), resp.getEmbedding());
+            log.debug("[T2] entity vector indexed, entityId={}, name={}", stableId, entityName(entity));
+        } catch (Exception e) {
+            log.warn("[T2] entity vector indexing failed, entityId={}, name={}", stableId, entityName(entity), e);
+        }
+    }
+
+    private void insertFusionRecord(T2ExtractResponse.ExtractedMention mention,
+                                    T3ResolveBatchResponse.ResolveResult result,
+                                    boolean autoMerged) {
+        try {
+            EntityFusionRecord record = new EntityFusionRecord();
+            record.setId(UUID.randomUUID());
+            record.setEntityType(mention.getType());
+            record.setSurvivorId(parseUuid(result.getMatchedEntityId()));
+            record.setSurvivorName(result.getMatchedEntityId());
+            record.setMergedIds(new UUID[0]);
+            record.setMergedNames(new String[]{entityName(mention)});
+            record.setMergedCount(0);
+            record.setFusionMethod(autoMerged ? "t3_realtime_merge" : "t3_pending_review");
+            record.setNeo4jMerged(autoMerged);
+            record.setJobRunId(UUID.randomUUID());
+            record.setMatchMethod(result.getMatchMethod());
+            record.setMatchScore(result.getScore() != null ? BigDecimal.valueOf(result.getScore()) : null);
+            record.setResolverModel(result.getModelVersion());
+            record.setIsAutoMerged(autoMerged);
+            entityFusionRecordMapper.insert(record);
+        } catch (Exception e) {
+            log.warn("[T2] failed to insert realtime fusion record, mentionId={}, matchedEntityId={}",
+                    mention.getMentionId(), result.getMatchedEntityId(), e);
+        }
+    }
+
+    private void writeToNeo4j(PipelineTask task, T2ExtractResponse response, MediaContent mc,
+                              Map<String, ResolvedMention> resolvedMentions) {
+        try {
+            writeRelations(response, resolvedMentions);
+            linkAuthorAccount(resolvedMentions, mc);
+            writeMediaContentToNeo4j(task, mc);
+        } catch (Exception e) {
+            log.error("T2 Neo4j write failed, taskId={}", task.getId(), e);
+        }
+    }
+
+    private void writeRelations(T2ExtractResponse response, Map<String, ResolvedMention> resolvedMentions) {
+        if (response == null || response.getRelations() == null) {
             return;
         }
-        String personId = stableUuid("person:" + personName);
-        String narrativeName = firstEntityName(response, "narrative");
-        String narrativeId = hasText(narrativeName) ? stableUuid("narrative:" + narrativeName) : null;
+        for (T2ExtractResponse.ExtractedRelationMention rel : response.getRelations()) {
+            if (rel == null || !hasText(rel.getSubjectMentionId()) || !hasText(rel.getObjectMentionId())
+                    || !hasText(rel.getPredicate())) {
+                continue;
+            }
+            if (!ALLOWED_RELATION_TYPES.contains(rel.getPredicate())) {
+                log.warn("Skip T2 relation with unsupported predicate={}, subjectMentionId={}, objectMentionId={}",
+                        rel.getPredicate(), rel.getSubjectMentionId(), rel.getObjectMentionId());
+                continue;
+            }
+            ResolvedMention from = resolvedMentions.get(rel.getSubjectMentionId());
+            ResolvedMention to = resolvedMentions.get(rel.getObjectMentionId());
+            if (from == null || to == null || !hasText(from.getLabel()) || !hasText(to.getLabel())) {
+                continue;
+            }
+            try {
+                Map<String, Object> props = new HashMap<>();
+                props.put("source", "t2_realtime_resolution");
+                props.put("extraction_method", "t2_relation_mention");
+                props.put("relationMentionId", rel.getRelationMentionId());
+                if (rel.getConfidence() != null) {
+                    props.put("confidence", rel.getConfidence());
+                }
+                putIfHasText(props, "evidence", rel.getEvidence());
+                boolean existed = neo4jGraphService.relationExists(from.getNodeId(), to.getNodeId(), rel.getPredicate());
+                props.put("evidenceUpsert", existed);
+                neo4jGraphService.mergeRelation(
+                        from.getLabel(), from.getNodeId(),
+                        to.getLabel(), to.getNodeId(),
+                        rel.getPredicate(), props);
+            } catch (Exception e) {
+                log.warn("T2 relation write failed, predicate={}, subjectMentionId={}, objectMentionId={}",
+                        rel.getPredicate(), rel.getSubjectMentionId(), rel.getObjectMentionId(), e);
+            }
+        }
+    }
+
+    private void linkAuthorAccount(Map<String, ResolvedMention> resolvedMentions, MediaContent content) {
+        if (content == null || content.getAuthorAccountId() == null) {
+            return;
+        }
+        ResolvedMention person = firstResolvedByType(resolvedMentions, "person");
+        if (person == null) {
+            return;
+        }
 
         SocialAccount account = socialAccountMapper.selectById(content.getAuthorAccountId());
         if (account == null) {
@@ -366,20 +444,30 @@ public class T2ExtractionStep {
 
         neo4jGraphService.mergeNode("SocialAccount", account.getId().toString(), accountProps);
         neo4jGraphService.mergeRelation(
-                "Person", personId,
+                "Person", person.getNodeId(),
                 "SocialAccount", account.getId().toString(),
                 "HAS_ACCOUNT",
                 Map.of("confidence", 0.95D, "source", "t2_author_link",
                         "extraction_method", "author_field_lookup"));
 
-        if (hasText(narrativeId)) {
+        ResolvedMention narrative = firstResolvedByType(resolvedMentions, "narrative");
+        if (narrative != null) {
             neo4jGraphService.mergeRelation(
                     "SocialAccount", account.getId().toString(),
-                    "Narrative", narrativeId,
+                    "Narrative", narrative.getNodeId(),
                     "AMPLIFIES",
                     Map.of("frequency", 1, "confidence", 0.80D, "source", "t2_author_link",
                             "extraction_method", "author_field_lookup"));
         }
+    }
+
+    private ResolvedMention firstResolvedByType(Map<String, ResolvedMention> resolvedMentions, String type) {
+        for (ResolvedMention mention : resolvedMentions.values()) {
+            if (type.equals(mention.getEntityType())) {
+                return mention;
+            }
+        }
+        return null;
     }
 
     private void writeMediaContentToNeo4j(PipelineTask task, MediaContent content) {
@@ -430,11 +518,7 @@ public class T2ExtractionStep {
         for (UUID assetId : assetIds) {
             try {
                 MediaAsset asset = mediaAssetMapper.selectById(assetId);
-                if (asset == null) {
-                    log.debug("MediaAsset not yet available, will be written later, assetId={}", assetId);
-                    continue;
-                }
-                if ("thumbnail".equals(asset.getAssetType())) {
+                if (asset == null || "thumbnail".equals(asset.getAssetType())) {
                     continue;
                 }
 
@@ -476,8 +560,6 @@ public class T2ExtractionStep {
             return true;
         }
         if (!hasText(content.getPlatform())) {
-            log.debug("Skip {} relation because platform is empty, contentId={}, targetPlatformContentId={}",
-                    relationType, content.getId(), targetPlatformContentId);
             return false;
         }
 
@@ -485,9 +567,6 @@ public class T2ExtractionStep {
             MediaContent target = mediaContentMapper.selectByPlatformAndContentId(
                     content.getPlatform(), targetPlatformContentId.trim());
             if (target == null) {
-                log.debug("Skip {} relation because target content was not found, contentId={}, platform={}, "
-                                + "targetPlatformContentId={}",
-                        relationType, content.getId(), content.getPlatform(), targetPlatformContentId);
                 return false;
             }
             mergeMediaContentNode(target);
@@ -566,15 +645,6 @@ public class T2ExtractionStep {
         neo4jGraphService.mergeNode("SocialAccount", accountId.toString(), accountProps);
     }
 
-    private String firstEntityName(T2ExtractResponse response, String type) {
-        for (T2ExtractResponse.ExtractedEntity entity : response.getEntities()) {
-            if (entity != null && type.equals(entity.getType()) && hasText(entity.getCanonicalName())) {
-                return entity.getCanonicalName();
-            }
-        }
-        return null;
-    }
-
     private String toNeo4jLabel(String type) {
         return switch (type != null ? type : "") {
             case "person" -> "Person";
@@ -589,6 +659,25 @@ public class T2ExtractionStep {
 
     private String stableUuid(String seed) {
         return StableUuidUtil.fromSeed(seed);
+    }
+
+    private String entityName(T2ExtractResponse.ExtractedMention mention) {
+        return hasText(mention.getNormalizedName()) ? mention.getNormalizedName() : mention.getName();
+    }
+
+    private String trimToNull(String value) {
+        return hasText(value) ? value.trim() : null;
+    }
+
+    private List<String> distinctText(List<String> values) {
+        if (values == null || values.isEmpty()) {
+            return List.of();
+        }
+        return values.stream()
+                .filter(this::hasText)
+                .map(String::trim)
+                .distinct()
+                .toList();
     }
 
     private boolean sameContentId(String left, String right) {
@@ -623,7 +712,32 @@ public class T2ExtractionStep {
         }
     }
 
+    private UUID parseUuid(String value) {
+        if (!hasText(value)) {
+            return null;
+        }
+        try {
+            return UUID.fromString(value.trim());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    private String stringValue(Object value) {
+        return value == null ? null : value.toString();
+    }
+
     private boolean hasText(String value) {
         return value != null && !value.trim().isEmpty();
+    }
+
+    @Data
+    private static class ResolvedMention {
+        private String mentionId;
+        private String nodeId;
+        private String label;
+        private String entityType;
+        private String action;
+        private String name;
     }
 }

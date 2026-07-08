@@ -4,23 +4,27 @@ import lombok.Data;
 
 @Data
 public class T2ExtractRequest {
-    /** 原始文本（RZDK字段名为 text）*/
+    private String docId;
     private String text;
+    private Object annotation;
+    private SourceInfo source;
+    private String language;
 
     /**
-     * T1 的完整标注结果（RZDK字段名为 annotation）。
-     * 直接传 T1AnnotateResponse 对应的 annotations 对象（含 entities_hint、sentiment 等）。
+     * @deprecated Use {@link #source}. Kept only for older internal agent prompt code.
      */
-    private Object annotation;
+    @Deprecated
+    public SourceInfo getSourceInfo() {
+        return source;
+    }
 
-    /** 来源信息 */
-    private SourceInfo sourceInfo;
-
-    private String[] hashtags;
-    private String[] mentions;
-    private String parentContentId;
-    private String repostOfContentId;
-    private String quotedContentId;
+    /**
+     * @deprecated Use {@link SourceInfo#hashtags}. Kept only for older internal agent prompt code.
+     */
+    @Deprecated
+    public String[] getHashtags() {
+        return source != null ? source.getHashtags() : null;
+    }
 
     @Data
     public static class SourceInfo {
@@ -28,5 +32,10 @@ public class T2ExtractRequest {
         private String contentUrl;
         private String publishTime;
         private String authorHandle;
+        private String[] hashtags;
+        private String[] mentions;
+        private String parentContentId;
+        private String repostOfContentId;
+        private String quotedContentId;
     }
 }
