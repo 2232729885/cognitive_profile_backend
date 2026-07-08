@@ -15,7 +15,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class EntityEsService {
 
-    private static final String ENTITY_INDEX = "kg_entities_index";
+    private static final String ENTITY_INDEX = "entities_index";
 
     private final ElasticsearchClient esClient;
 

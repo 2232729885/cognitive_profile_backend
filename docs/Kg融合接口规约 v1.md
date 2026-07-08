@@ -366,7 +366,7 @@ ASSERTED_BY, DERIVED_FROM, CONFLICTS_WITH, REVIEWED_BY
 **POST /kg/entity/candidates/batch**
 - 三路召回：
   - ES：`canonicalName` + `aliases` 字段模糊匹配
-  - Milvus `entity_vectors`：`normalizedName` 向量 ANN TopK=20
+  - Milvus `entity_embeddings`：`normalizedName` 向量 ANN TopK=20
   - Neo4j：aliases 属性精确匹配
 - 结果合并去重，按综合分数排序，返回 TopK=10 候选
 
@@ -374,7 +374,7 @@ ASSERTED_BY, DERIVED_FROM, CONFLICTS_WITH, REVIEWED_BY
 **POST /kg/entity/create/batch**
 - 写 PG 对应实体表（persons/organizations/events/narratives）
 - 写 Neo4j 节点（stableUuid）
-- 写 Milvus `entity_vectors`（normalizedName 向量化）
+- 写 Milvus `entity_embeddings`（normalizedName 向量化）
 - 写 ES entities 索引
 
 ### 3.4 实体融合
@@ -409,10 +409,10 @@ ASSERTED_BY, DERIVED_FROM, CONFLICTS_WITH, REVIEWED_BY
 
 ## 四、新增存储设计
 
-### 4.1 Milvus entity_vectors Collection
+### 4.1 Milvus entity_embeddings Collection
 
 ```
-Collection: entity_vectors
+Collection: entity_embeddings
 Schema:
   - id: VARCHAR(64) PK  → "entity_{entityType}_{stableUuid}"
   - entity_id: VARCHAR(64)   → stableUuid
@@ -424,7 +424,7 @@ Schema:
 ### 4.2 ES entities 索引
 
 ```
-Index: kg_entities_index
+Index: entities_index
 Fields:
   - entity_id: keyword
   - canonical_name: text (ik_max_word)

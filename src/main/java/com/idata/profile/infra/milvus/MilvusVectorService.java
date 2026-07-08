@@ -29,7 +29,7 @@ public class MilvusVectorService {
     private static final int EMBEDDING_DIMENSION = 4096;
     private static final String TEXT_COLLECTION = "text_embeddings";
     private static final String IMAGE_COLLECTION = "image_embeddings";
-    private static final String ENTITY_COLLECTION = "entity_vectors";
+    private static final String ENTITY_COLLECTION = "entity_embeddings";
     private static final String VECTOR_FIELD = "embedding";
     private static final Gson GSON = new Gson();
 
