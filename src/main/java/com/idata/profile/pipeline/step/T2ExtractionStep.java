@@ -7,6 +7,7 @@ import com.idata.profile.agentproxy.dto.t3.T3ResolveBatchRequest;
 import com.idata.profile.agentproxy.dto.t3.T3ResolveBatchResponse;
 import com.idata.profile.agentproxy.dto.t4.T4EmbeddingRequest;
 import com.idata.profile.agentproxy.dto.t4.T4EmbeddingResponse;
+import com.idata.profile.common.constant.AllowedRelationTypes;
 import com.idata.profile.common.constant.PipelineStatus;
 import com.idata.profile.common.util.StableUuidUtil;
 import com.idata.profile.entity.account.SocialAccount;
@@ -43,7 +44,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 
 @Slf4j
@@ -54,22 +54,6 @@ public class T2ExtractionStep {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final double AUTO_MERGE_THRESHOLD = 0.9D;
     private static final double REVIEW_THRESHOLD = 0.6D;
-    private static final Set<String> ALLOWED_RELATION_TYPES = Set.of(
-            "SAME_AS", "HAS_ACCOUNT", "ALIAS_OF", "MERGED_INTO",
-            "AFFILIATED_WITH", "PART_OF", "CONTROLS", "OWNS", "MEMBER_OF",
-            "ADMIN_OF", "PUBLISHED_IN",
-            "AUTHORED", "REPLY_TO", "COMMENT_ON", "REPOSTS", "QUOTES",
-            "SHARES", "REFERENCES_URL", "MENTIONS",
-            "DESCRIBES", "REPORTS", "EVENT_OCCURRED_AT", "EVENT_INVOLVES_ENTITY",
-            "LOCATED_IN", "POSTS_FROM",
-            "CONTENT_EXPRESSES_NARRATIVE", "NARRATIVE_TARGETS_ENTITY",
-            "NARRATIVE_ABOUT_EVENT", "SUPPORTS", "OPPOSES", "INCITES",
-            "DE_ESCALATES", "BELONGS_TO", "HAS_EMOTION",
-            "AMPLIFIES", "BRIDGES_COMMUNITY", "COORDINATES_WITH",
-            "POTENTIAL_SUBORDINATE_TO", "INFLUENCES",
-            "ASSERTED_BY", "DERIVED_FROM", "CONFLICTS_WITH", "REVIEWED_BY",
-            "HAS_MEDIA"
-    );
 
     private final AgentProxyClient agentProxyClient;
     private final MediaContentMapper mediaContentMapper;
@@ -389,7 +373,7 @@ public class T2ExtractionStep {
                     || !hasText(rel.getPredicate())) {
                 continue;
             }
-            if (!ALLOWED_RELATION_TYPES.contains(rel.getPredicate())) {
+            if (!AllowedRelationTypes.VALUES.contains(rel.getPredicate())) {
                 log.warn("Skip T2 relation with unsupported predicate={}, subjectMentionId={}, objectMentionId={}",
                         rel.getPredicate(), rel.getSubjectMentionId(), rel.getObjectMentionId());
                 continue;
@@ -449,16 +433,6 @@ public class T2ExtractionStep {
                 "HAS_ACCOUNT",
                 Map.of("confidence", 0.95D, "source", "t2_author_link",
                         "extraction_method", "author_field_lookup"));
-
-        ResolvedMention narrative = firstResolvedByType(resolvedMentions, "narrative");
-        if (narrative != null) {
-            neo4jGraphService.mergeRelation(
-                    "SocialAccount", account.getId().toString(),
-                    "Narrative", narrative.getNodeId(),
-                    "AMPLIFIES",
-                    Map.of("frequency", 1, "confidence", 0.80D, "source", "t2_author_link",
-                            "extraction_method", "author_field_lookup"));
-        }
     }
 
     private ResolvedMention firstResolvedByType(Map<String, ResolvedMention> resolvedMentions, String type) {
@@ -483,9 +457,9 @@ public class T2ExtractionStep {
             if (content.getAuthorAccountId() != null) {
                 mergeSocialAccountNode(content.getAuthorAccountId());
                 neo4jGraphService.mergeRelation(
-                        "SocialAccount", content.getAuthorAccountId().toString(),
                         "MediaContent", content.getId().toString(),
-                        "AUTHORED",
+                        "SocialAccount", content.getAuthorAccountId().toString(),
+                        "PUBLISHED_BY",
                         Map.of("source", "backend_structural",
                                 "extraction_method", "author_field_lookup"));
             }
@@ -493,7 +467,6 @@ public class T2ExtractionStep {
             boolean allSynced = true;
             allSynced &= writePropagationRelation(content, content.getParentContentId(), "REPLY_TO");
             allSynced &= writePropagationRelation(content, content.getRepostOfContentId(), "REPOSTS");
-            allSynced &= writePropagationRelation(content, content.getQuotedContentId(), "QUOTES");
             if (!sameContentId(content.getRootContentId(), content.getPlatformContentId())) {
                 allSynced &= writePropagationRelation(content, content.getRootContentId(), "REPLY_TO");
             }
@@ -501,7 +474,6 @@ public class T2ExtractionStep {
                 mediaContentMapper.markPropagationSyncedToNeo4j(content.getId());
             }
 
-            writeHashtagNarratives(content);
             writeMediaAssetNodes(content);
         } catch (Exception e) {
             log.warn("Structural MediaContent Neo4j write failed, taskId={}, contentId={}",
@@ -582,36 +554,6 @@ public class T2ExtractionStep {
                             + "targetPlatformContentId={}",
                     content.getId(), relationType, targetPlatformContentId, e);
             return false;
-        }
-    }
-
-    private void writeHashtagNarratives(MediaContent content) {
-        String[] hashtags = content.getHashtags();
-        if (hashtags == null || hashtags.length == 0) {
-            return;
-        }
-
-        for (String rawHashtag : hashtags) {
-            if (!hasText(rawHashtag)) {
-                continue;
-            }
-            String hashtag = rawHashtag.trim();
-            try {
-                String narrativeId = stableUuid("hashtag:" + hashtag);
-                neo4jGraphService.mergeNode("Narrative", narrativeId,
-                        Map.of("canonicalLabel", hashtag,
-                                "source", "backend_structural",
-                                "frameType", "hashtag"));
-                neo4jGraphService.mergeRelation(
-                        "MediaContent", content.getId().toString(),
-                        "Narrative", narrativeId,
-                        "AMPLIFIES",
-                        Map.of("source", "backend_structural",
-                                "extraction_method", "hashtag_field"));
-            } catch (Exception e) {
-                log.warn("Failed to write hashtag narrative to Neo4j, contentId={}, hashtag={}",
-                        content.getId(), hashtag, e);
-            }
         }
     }
 

@@ -14,6 +14,7 @@ import com.idata.profile.agentproxy.dto.t5.T5GenerateProfileRequest;
 import com.idata.profile.agentproxy.dto.t5.T5GenerateProfileResponse;
 import com.idata.profile.agentproxy.dto.t6.T6IdentifyRequest;
 import com.idata.profile.agentproxy.dto.t6.T6IdentifyResponse;
+import com.idata.profile.common.constant.AllowedRelationTypes;
 import com.idata.profile.entity.content.MediaContent;
 import com.idata.profile.entity.graph.Person;
 import com.idata.profile.infra.neo4j.Neo4jGraphService;
@@ -141,13 +142,9 @@ public class LlmAgentController {
             }
 
             关系类型词表（relationType 必须从以下选取，不允许自定义）：
-            身份归一类：SAME_AS, HAS_ACCOUNT, ALIAS_OF, MERGED_INTO
-            组织社群类：AFFILIATED_WITH, PART_OF, CONTROLS, OWNS, MEMBER_OF, ADMIN_OF, PUBLISHED_IN
-            内容链路类：AUTHORED, REPLY_TO, COMMENT_ON, REPOSTS, QUOTES, SHARES, REFERENCES_URL, MENTIONS, HAS_MEDIA
-            事件地点类：DESCRIBES, REPORTS, EVENT_OCCURRED_AT, EVENT_INVOLVES_ENTITY, LOCATED_IN, POSTS_FROM
-            叙事认知类：CONTENT_EXPRESSES_NARRATIVE, NARRATIVE_TARGETS_ENTITY, NARRATIVE_ABOUT_EVENT, SUPPORTS, OPPOSES, HAS_EMOTION
-            传播协同类：AMPLIFIES, BRIDGES_COMMUNITY, COORDINATES_WITH, POTENTIAL_SUBORDINATE_TO, INFLUENCES
-            证据治理类：ASSERTED_BY, DERIVED_FROM, CONFLICTS_WITH, REVIEWED_BY
+            Valid predicate values: HAS_ACCOUNT, BELONGS_TO, PART_OF, PUBLISHED_BY, REPLY_TO, REPOSTS,
+            MENTIONS, DESCRIBES, EVENT_OCCURRED_AT, EVENT_INVOLVES_ENTITY, LOCATED_IN,
+            SUPPORTS, OPPOSES, QUESTIONS, INCITES, DE_ESCALATES.
 
             要求：
             1. 只抽取文本中明确提到的实体，不推断隐含实体
@@ -180,7 +177,7 @@ public class LlmAgentController {
                 {
                   "relationMentionId": "r1",
                   "subjectMentionId": "m1",
-                  "predicate": "AFFILIATED_WITH",
+                  "predicate": "SUPPORTS",
                   "objectMentionId": "m2",
                   "confidence": 0.0,
                   "evidence": "short evidence span"
@@ -192,7 +189,9 @@ public class LlmAgentController {
 
             Rules:
             - relation subjectMentionId and objectMentionId must refer to entities[].mentionId.
-            - predicate must be one of the provided RelationType enum values.
+            - predicate must be one of these valid values: HAS_ACCOUNT, BELONGS_TO, PART_OF, PUBLISHED_BY, REPLY_TO,
+              REPOSTS, MENTIONS, DESCRIBES, EVENT_OCCURRED_AT, EVENT_INVOLVES_ENTITY, LOCATED_IN, SUPPORTS,
+              OPPOSES, QUESTIONS, INCITES, DE_ESCALATES.
             - Events are entities with type="event"; put eventType/eventTimeStart in attributes.
             - Return empty arrays when no entity or relation exists.
             """;
@@ -313,16 +312,6 @@ public class LlmAgentController {
             """;
 
     private static final List<String> BEND_KEYS = List.of("Distort", "Dismiss", "Amplify", "Narrativize", "other");
-
-    private static final Set<String> ALLOWED_RELATION_TYPES = Set.of(
-            "SAME_AS", "HAS_ACCOUNT", "ALIAS_OF", "MERGED_INTO",
-            "AFFILIATED_WITH", "PART_OF", "CONTROLS", "OWNS", "MEMBER_OF", "ADMIN_OF", "PUBLISHED_IN",
-            "AUTHORED", "REPLY_TO", "COMMENT_ON", "REPOSTS", "QUOTES", "SHARES", "REFERENCES_URL", "MENTIONS", "HAS_MEDIA",
-            "DESCRIBES", "REPORTS", "EVENT_OCCURRED_AT", "EVENT_INVOLVES_ENTITY", "LOCATED_IN", "POSTS_FROM",
-            "CONTENT_EXPRESSES_NARRATIVE", "NARRATIVE_TARGETS_ENTITY", "NARRATIVE_ABOUT_EVENT",
-            "SUPPORTS", "OPPOSES", "HAS_EMOTION",
-            "AMPLIFIES", "BRIDGES_COMMUNITY", "COORDINATES_WITH", "POTENTIAL_SUBORDINATE_TO", "INFLUENCES",
-            "ASSERTED_BY", "DERIVED_FROM", "CONFLICTS_WITH", "REVIEWED_BY");
 
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
@@ -561,7 +550,7 @@ public class LlmAgentController {
         response.setRelationships(response.getRelationships().stream()
                 .filter(relation -> relation != null
                         && relation.getRelationType() != null
-                        && ALLOWED_RELATION_TYPES.contains(relation.getRelationType()))
+                        && AllowedRelationTypes.VALUES.contains(relation.getRelationType()))
                 .toList());
     }
 

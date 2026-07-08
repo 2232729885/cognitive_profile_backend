@@ -49,7 +49,6 @@ public class ContentPropagationBackfillJob {
         boolean allSynced = true;
         allSynced &= writePropagationRelation(content, content.getParentContentId(), "REPLY_TO");
         allSynced &= writePropagationRelation(content, content.getRepostOfContentId(), "REPOSTS");
-        allSynced &= writePropagationRelation(content, content.getQuotedContentId(), "QUOTES");
         if (!sameContentId(content.getRootContentId(), content.getPlatformContentId())) {
             allSynced &= writePropagationRelation(content, content.getRootContentId(), "REPLY_TO");
         }

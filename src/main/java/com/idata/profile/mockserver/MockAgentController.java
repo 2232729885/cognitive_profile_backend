@@ -249,7 +249,7 @@ public class MockAgentController {
         T2ExtractResponse.ExtractedRelationMention rel1 = new T2ExtractResponse.ExtractedRelationMention();
         rel1.setRelationMentionId("r1");
         rel1.setSubjectMentionId("m1");
-        rel1.setPredicate("AFFILIATED_WITH");
+        rel1.setPredicate("BELONGS_TO");
         rel1.setObjectMentionId("m3");
         rel1.setConfidence(0.78);
         rel1.setEvidence("Leila Farzan is described as an analyst related to U.S. Central Command");
@@ -270,18 +270,10 @@ public class MockAgentController {
         rel3.setConfidence(0.95);
         rel3.setEvidence("U.S. Central Command is involved in the standoff");
 
-        T2ExtractResponse.ExtractedRelationMention rel4 = new T2ExtractResponse.ExtractedRelationMention();
-        rel4.setRelationMentionId("r4");
-        rel4.setSubjectMentionId("m2");
-        rel4.setPredicate("NARRATIVE_ABOUT_EVENT");
-        rel4.setObjectMentionId("e1");
-        rel4.setConfidence(0.85);
-        rel4.setEvidence("The narrative is about the Persian Gulf military standoff");
-
         T2ExtractResponse resp = new T2ExtractResponse();
         resp.setDocId(request.getDocId());
         resp.setEntities(List.of(person, organization, narrative, location, event));
-        resp.setRelations(List.of(rel1, rel2, rel3, rel4));
+        resp.setRelations(List.of(rel1, rel2, rel3));
         resp.setResolvedAuthorAccountId(null);
         resp.setModelVersion("mock-t2-v2.0");
         resp.setRaw(toJson(resp));
@@ -367,13 +359,13 @@ public class MockAgentController {
         T3FuseResponse.Neo4jRelation participates = new T3FuseResponse.Neo4jRelation();
         participates.setFromId(personId);
         participates.setToId(narrativeId);
-        participates.setRelationType("AMPLIFIES");
+        participates.setRelationType("SUPPORTS");
         participates.setProperties(Map.of("frequency", 12, "confidence", 0.85, "source", "mock-t3"));
 
         T3FuseResponse.Neo4jRelation affiliated = new T3FuseResponse.Neo4jRelation();
         affiliated.setFromId(personId);
         affiliated.setToId(organizationId);
-        affiliated.setRelationType("AFFILIATED_WITH");
+        affiliated.setRelationType("BELONGS_TO");
         affiliated.setProperties(Map.of("confidence", 0.78, "source", "mock-t3"));
 
         T3FuseResponse.Neo4jRelation promotes = new T3FuseResponse.Neo4jRelation();
@@ -397,7 +389,7 @@ public class MockAgentController {
         T3FuseResponse.Neo4jRelation narrativeAboutEvent = new T3FuseResponse.Neo4jRelation();
         narrativeAboutEvent.setFromId(narrativeId);
         narrativeAboutEvent.setToId(eventId);
-        narrativeAboutEvent.setRelationType("NARRATIVE_ABOUT_EVENT");
+        narrativeAboutEvent.setRelationType("DESCRIBES");
         narrativeAboutEvent.setProperties(Map.of("confidence", 0.92, "source", "mock-t3"));
 
         T3FuseResponse.Neo4jRelation orgLocatedIn = new T3FuseResponse.Neo4jRelation();

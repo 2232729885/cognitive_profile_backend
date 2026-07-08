@@ -7,12 +7,12 @@ package com.idata.profile.common.constant;
  */
 public enum RelationType {
     FOLLOWING("following", "FOLLOWS"),
-    SUBSCRIBE("subscribe", "MEMBER_OF"),
-    MEMBER_OF("member_of", "MEMBER_OF"),
-    OWNER_OF("owner_of", "OWNS"),
-    CREATOR_OF("creator_of", "OWNS"),
-    ADMIN_OF("admin_of", "ADMIN_OF"),
-    MODERATOR_OF("moderator_of", "ADMIN_OF");
+    SUBSCRIBE("subscribe", "BELONGS_TO"),
+    MEMBER_OF("member_of", "BELONGS_TO"),
+    OWNER_OF("owner_of", "BELONGS_TO"),
+    CREATOR_OF("creator_of", "BELONGS_TO"),
+    ADMIN_OF("admin_of", "BELONGS_TO"),
+    MODERATOR_OF("moderator_of", "BELONGS_TO");
 
     private final String code;
     private final String neo4jRelationLabel;
