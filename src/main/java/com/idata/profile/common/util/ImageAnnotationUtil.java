@@ -37,7 +37,34 @@ public class ImageAnnotationUtil {
     }
 
     public void applyImageAnnotations(MediaAsset asset, T1AnnotateResponse response) {
-        // T1 v0.5 image-field mapping will be implemented in the follow-up migration round.
+        T1AnnotateResponse.AigcDetection aigc = response.getAigcDetection();
+        if (aigc != null && aigc.getImageAigcDetection() != null
+                && aigc.getImageAigcDetection().getImageAigcScore() != null) {
+            asset.setAigcScore(BigDecimal.valueOf(aigc.getImageAigcDetection().getImageAigcScore()));
+        }
+
+        T1AnnotateResponse.Annotations.BasicObjective basicObjective =
+                response.getAnnotations() != null ? response.getAnnotations().getBasicObjective() : null;
+        if (basicObjective != null && basicObjective.getEntitiesHint() != null
+                && !basicObjective.getEntitiesHint().isEmpty()) {
+            try {
+                asset.setObjectAnnotations(OBJECT_MAPPER.writeValueAsString(basicObjective.getEntitiesHint()));
+            } catch (JacksonException e) {
+                log.warn("Failed to serialize image entities hint, assetId={}", asset.getId(), e);
+            }
+        }
+
+        if (response.getEvidenceClues() != null && !response.getEvidenceClues().isEmpty()) {
+            String ocrText = response.getEvidenceClues().stream()
+                    .filter(ev -> "ocr".equals(ev.getSource()) && ev.getEvidenceText() != null
+                            && !ev.getEvidenceText().isBlank())
+                    .map(T1AnnotateResponse.EvidenceClue::getEvidenceText)
+                    .collect(java.util.stream.Collectors.joining(" "));
+            if (!ocrText.isBlank()) {
+                asset.setOcrText(ocrText);
+            }
+        }
+        // v0.5 has no independent scene classification field. Keep sceneLabel unchanged.
     }
 
     public void updateNeo4jAnnotations(MediaAsset asset) {
@@ -78,19 +105,6 @@ public class ImageAnnotationUtil {
         putIfNotNull(props, "aigcScore",
                 asset.getAigcScore() != null ? asset.getAigcScore().doubleValue() : null);
         return props;
-    }
-
-    private BigDecimal toAigcScore(String aigcSuspicion) {
-        if (aigcSuspicion == null) {
-            return null;
-        }
-        return switch (aigcSuspicion.toLowerCase()) {
-            case "none" -> BigDecimal.ZERO;
-            case "low" -> new BigDecimal("0.2");
-            case "medium" -> new BigDecimal("0.5");
-            case "high" -> new BigDecimal("0.85");
-            default -> null;
-        };
     }
 
     private String stripTrailingSlash(String value) {

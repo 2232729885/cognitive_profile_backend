@@ -104,6 +104,29 @@ public class MediaContent {
     @TableField(typeHandler = JsonbStringTypeHandler.class)
     private String bendTactics;
 
+    // ---- T1 标注接口规约 v0.5 新增字段 ----
+    @TableField(typeHandler = JsonbStringTypeHandler.class)
+    private String t1AnnotationV05;
+    /** 维度2扩展：内容级立场强度 */
+    private String coreStanceStrength;
+    @TableField(typeHandler = StringArrayTypeHandler.class)
+    private String[] emotionLabels;
+    /** 维度8：内容目的主分类 */
+    private String contentPurposePrimary;
+    /** 维度4：民众/公众群体类型 */
+    private String publicAttitudeGroup;
+    /** 维度4：民众态度标签 */
+    private String publicAttitudeLabel;
+    /** 维度4：民众态度强度 */
+    private String publicAttitudeIntensity;
+    /** 维度15：事件类型 */
+    private String eventTypeLabel;
+    private java.math.BigDecimal t1OverallConfidence;
+    @TableField(typeHandler = StringArrayTypeHandler.class)
+    private String[] t1ReviewReasons;
+    @TableField(typeHandler = StringArrayTypeHandler.class)
+    private String[] t1FailedModules;
+
     private Boolean needHumanReview;
     private String humanReviewStatus;
     private Boolean propagationSyncedToNeo4j;

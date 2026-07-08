@@ -32,7 +32,6 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class T1AnnotationStep {
 
-    private static final BigDecimal AIGC_REVIEW_THRESHOLD = new BigDecimal("0.8");
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final AgentProxyClient agentProxyClient;
@@ -96,33 +95,210 @@ public class T1AnnotationStep {
     }
 
     private void applyAnnotations(MediaContent mc, T1AnnotateResponse response) {
-        if (response.getQualityControl() != null) {
-            if (response.getQualityControl().getNeedHumanReview() != null) {
-                mc.setNeedHumanReview(response.getQualityControl().getNeedHumanReview());
+        try {
+            mc.setT1AnnotationV05(OBJECT_MAPPER.writeValueAsString(response));
+        } catch (JacksonException e) {
+            log.warn("Failed to serialize full T1 v0.5 response, contentId={}", mc.getId(), e);
+        }
+
+        T1AnnotateResponse.AigcDetection aigc = response.getAigcDetection();
+        if (aigc != null) {
+            mc.setAigcType(aigc.getOverallAigcLabel());
+            if (aigc.getOverallAigcScore() != null) {
+                mc.setAigcScore(BigDecimal.valueOf(aigc.getOverallAigcScore()));
             }
         }
-        mc.setT1AnnotatedAt(OffsetDateTime.now());
-    }
 
-    private BigDecimal toAigcScore(String aigcSuspicion) {
-        if (aigcSuspicion == null) {
-            return null;
+        T1AnnotateResponse.Annotations annotations = response.getAnnotations();
+        if (annotations != null) {
+            T1AnnotateResponse.Annotations.HighValueSubjective hvs = annotations.getHighValueSubjective();
+            if (hvs != null) {
+                if (hvs.getIdeology() != null) {
+                    mc.setIdeologyLabel(hvs.getIdeology().getIdeologyLabel());
+                }
+                if (hvs.getCoreStance() != null) {
+                    mc.setOverallStance(hvs.getCoreStance().getStanceLabel());
+                    mc.setCoreStanceStrength(hvs.getCoreStance().getStanceStrength());
+                }
+                if (hvs.getPublicAttitude() != null) {
+                    mc.setPublicAttitudeGroup(hvs.getPublicAttitude().getPublicGroup());
+                    mc.setPublicAttitudeLabel(hvs.getPublicAttitude().getAttitudeLabel());
+                    mc.setPublicAttitudeIntensity(hvs.getPublicAttitude().getAttitudeIntensity());
+                }
+                if (hvs.getOpinionEmotion() != null) {
+                    mc.setSentimentLabel(hvs.getOpinionEmotion().getSentimentPolarity());
+                    if (hvs.getOpinionEmotion().getEmotionLabels() != null
+                            && !hvs.getOpinionEmotion().getEmotionLabels().isEmpty()) {
+                        mc.setEmotionLabels(hvs.getOpinionEmotion().getEmotionLabels().toArray(new String[0]));
+                    }
+                }
+                if (hvs.getEventHeat() != null) {
+                    mc.setEventHeat(hvs.getEventHeat().getHeatLevel());
+                    if (hvs.getEventHeat().getHeatScore() != null) {
+                        mc.setEventHeatScore(BigDecimal.valueOf(hvs.getEventHeat().getHeatScore()));
+                    }
+                }
+                if (hvs.getLanguageStyle() != null && hvs.getLanguageStyle().getStyleLabels() != null
+                        && !hvs.getLanguageStyle().getStyleLabels().isEmpty()) {
+                    mc.setLanguageStyleTags(hvs.getLanguageStyle().getStyleLabels().toArray(new String[0]));
+                }
+                if (hvs.getContentPurpose() != null) {
+                    mc.setContentPurposePrimary(hvs.getContentPurpose().getPrimaryPurpose());
+                }
+                if (hvs.getRiskLevel() != null) {
+                    mc.setRiskLevel(hvs.getRiskLevel().getRiskLabel());
+                    if (hvs.getRiskLevel().getRiskTypes() != null && !hvs.getRiskLevel().getRiskTypes().isEmpty()) {
+                        mc.setRiskTypes(hvs.getRiskLevel().getRiskTypes().toArray(new String[0]));
+                    }
+                }
+            }
+
+            T1AnnotateResponse.Annotations.BasicObjective bo = annotations.getBasicObjective();
+            if (bo != null) {
+                if (bo.getTopicTags() != null) {
+                    mc.setTopicCategory(bo.getTopicTags().getPrimaryDomain());
+                    if (bo.getTopicTags().getSubtopicTags() != null
+                            && !bo.getTopicTags().getSubtopicTags().isEmpty()) {
+                        mc.setTopicSubcategory(bo.getTopicTags().getSubtopicTags().get(0));
+                    }
+                }
+                if (bo.getAccountType() != null) {
+                    mc.setAccountTypeHint(bo.getAccountType().getPrimaryAccountCategory());
+                }
+                if (bo.getEntitiesHint() != null && !bo.getEntitiesHint().isEmpty()) {
+                    try {
+                        String hintsJson = OBJECT_MAPPER.writeValueAsString(bo.getEntitiesHint());
+                        mc.setEntitiesHint(hintsJson);
+                        mc.setNarrativeHint(hintsJson);
+                    } catch (JacksonException e) {
+                        log.warn("Failed to serialize T1 entities hint, contentId={}", mc.getId(), e);
+                    }
+                }
+                if (bo.getKeywords() != null && !bo.getKeywords().isEmpty()) {
+                    String[] keywordTexts = bo.getKeywords().stream()
+                            .map(T1AnnotateResponse.Annotations.BasicObjective.Keyword::getKeywordText)
+                            .filter(t -> t != null && !t.isBlank())
+                            .toArray(String[]::new);
+                    if (keywordTexts.length > 0) {
+                        mc.setKeywords(keywordTexts);
+                    }
+                }
+                if (bo.getSummary() != null) {
+                    mc.setSummary(bo.getSummary().getSummaryText());
+                }
+                if (bo.getEventType() != null) {
+                    mc.setEventTypeLabel(bo.getEventType().getEventTypeLabel());
+                }
+            }
         }
-        return switch (aigcSuspicion.toLowerCase()) {
-            case "none" -> BigDecimal.ZERO;
-            case "low" -> new BigDecimal("0.2");
-            case "medium" -> new BigDecimal("0.5");
-            case "high" -> new BigDecimal("0.85");
-            default -> null;
-        };
+
+        if (response.getQualityControl() != null) {
+            T1AnnotateResponse.QualityControl qc = response.getQualityControl();
+            if (qc.getNeedHumanReview() != null) {
+                mc.setNeedHumanReview(qc.getNeedHumanReview());
+            }
+            if (qc.getReviewReasons() != null && !qc.getReviewReasons().isEmpty()) {
+                mc.setT1ReviewReasons(qc.getReviewReasons().toArray(new String[0]));
+            }
+            if (qc.getFailedModules() != null && !qc.getFailedModules().isEmpty()) {
+                mc.setT1FailedModules(qc.getFailedModules().toArray(new String[0]));
+            }
+        }
+        if (response.getOverallConfidence() != null) {
+            mc.setT1OverallConfidence(BigDecimal.valueOf(response.getOverallConfidence()));
+        }
+
+        mc.setT1AnnotatedAt(OffsetDateTime.now());
     }
 
     private void syncT1AnnotationsToNeo4j(MediaContent mc, T1AnnotateResponse response) {
         try {
             Map<String, Object> props = new LinkedHashMap<>();
-            props.put("t1SchemaVersion", response.getSchemaVersion());
-            if (Boolean.TRUE.equals(response.getQualityControl() != null
-                    ? response.getQualityControl().getNeedHumanReview() : null)) {
+
+            T1AnnotateResponse.AigcDetection aigc = response.getAigcDetection();
+            if (aigc != null) {
+                putStr(props, "aigcLabel", aigc.getOverallAigcLabel());
+                if (aigc.getOverallAigcScore() != null) {
+                    props.put("aigcScore", aigc.getOverallAigcScore());
+                }
+            }
+
+            T1AnnotateResponse.Annotations annotations = response.getAnnotations();
+            if (annotations != null) {
+                T1AnnotateResponse.Annotations.HighValueSubjective hvs = annotations.getHighValueSubjective();
+                if (hvs != null) {
+                    if (hvs.getIdeology() != null) {
+                        putStr(props, "ideologyLabel", hvs.getIdeology().getIdeologyLabel());
+                    }
+                    if (hvs.getCoreStance() != null) {
+                        putStr(props, "coreStanceLabel", hvs.getCoreStance().getStanceLabel());
+                        putStr(props, "coreStanceStrength", hvs.getCoreStance().getStanceStrength());
+                    }
+                    if (hvs.getPublicAttitude() != null) {
+                        putStr(props, "publicAttitudeGroup", hvs.getPublicAttitude().getPublicGroup());
+                        putStr(props, "publicAttitudeLabel", hvs.getPublicAttitude().getAttitudeLabel());
+                    }
+                    if (hvs.getOpinionEmotion() != null) {
+                        putStr(props, "sentimentPolarity", hvs.getOpinionEmotion().getSentimentPolarity());
+                        putStrArray(props, "emotionLabels", hvs.getOpinionEmotion().getEmotionLabels());
+                    }
+                    if (hvs.getEventHeat() != null) {
+                        putStr(props, "eventHeatLevel", hvs.getEventHeat().getHeatLevel());
+                        if (hvs.getEventHeat().getHeatScore() != null) {
+                            props.put("eventHeatScore", hvs.getEventHeat().getHeatScore());
+                        }
+                    }
+                    if (hvs.getLanguageStyle() != null) {
+                        putStrArray(props, "languageStyleTags", hvs.getLanguageStyle().getStyleLabels());
+                    }
+                    if (hvs.getContentPurpose() != null) {
+                        putStr(props, "contentPurposePrimary", hvs.getContentPurpose().getPrimaryPurpose());
+                    }
+                    if (hvs.getRiskLevel() != null) {
+                        putStr(props, "riskLabel", hvs.getRiskLevel().getRiskLabel());
+                        putStrArray(props, "riskTypes", hvs.getRiskLevel().getRiskTypes());
+                    }
+                }
+
+                T1AnnotateResponse.Annotations.BasicObjective bo = annotations.getBasicObjective();
+                if (bo != null) {
+                    if (bo.getTopicTags() != null) {
+                        putStr(props, "topicPrimaryDomain", bo.getTopicTags().getPrimaryDomain());
+                        putStrArray(props, "topicSubtags", bo.getTopicTags().getSubtopicTags());
+                    }
+                    if (bo.getAccountType() != null) {
+                        putStr(props, "accountTypeHint", bo.getAccountType().getPrimaryAccountCategory());
+                    }
+                    if (bo.getEntitiesHint() != null && !bo.getEntitiesHint().isEmpty()) {
+                        String[] typeHints = bo.getEntitiesHint().stream()
+                                .map(T1AnnotateResponse.Annotations.BasicObjective.EntityHint::getTypeHint)
+                                .filter(t -> t != null && !t.isBlank())
+                                .distinct()
+                                .toArray(String[]::new);
+                        if (typeHints.length > 0) {
+                            props.put("entityTypeHints", typeHints);
+                        }
+                    }
+                    if (bo.getKeywords() != null && !bo.getKeywords().isEmpty()) {
+                        String[] keywordTexts = bo.getKeywords().stream()
+                                .map(T1AnnotateResponse.Annotations.BasicObjective.Keyword::getKeywordText)
+                                .filter(t -> t != null && !t.isBlank())
+                                .toArray(String[]::new);
+                        if (keywordTexts.length > 0) {
+                            props.put("keywords", keywordTexts);
+                        }
+                    }
+                    if (bo.getSummary() != null) {
+                        putStr(props, "summary", bo.getSummary().getSummaryText());
+                    }
+                    if (bo.getEventType() != null) {
+                        putStr(props, "eventTypeLabel", bo.getEventType().getEventTypeLabel());
+                    }
+                }
+            }
+
+            if (response.getQualityControl() != null
+                    && Boolean.TRUE.equals(response.getQualityControl().getNeedHumanReview())) {
                 props.put("needHumanReview", true);
             }
             if (response.getOverallConfidence() != null) {
