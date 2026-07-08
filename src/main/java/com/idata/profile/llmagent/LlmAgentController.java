@@ -6,8 +6,6 @@ import com.idata.profile.agentproxy.dto.t2.T2ExtractRequest;
 import com.idata.profile.agentproxy.dto.t2.T2ExtractResponse;
 import com.idata.profile.agentproxy.dto.t3.T3ResolveBatchRequest;
 import com.idata.profile.agentproxy.dto.t3.T3ResolveBatchResponse;
-import com.idata.profile.agentproxy.dto.t3.T3ResolveRequest;
-import com.idata.profile.agentproxy.dto.t3.T3ResolveResponse;
 import com.idata.profile.agentproxy.dto.t4.T4EmbeddingRequest;
 import com.idata.profile.agentproxy.dto.t4.T4EmbeddingResponse;
 import com.idata.profile.agentproxy.dto.t5.T5GenerateProfileRequest;
@@ -104,56 +102,6 @@ public class LlmAgentController {
             5. aigcSuspicion 基于语言风格、重复模式、语义连贯性判断
             """;
 
-    private static final String T2_SYSTEM_PROMPT = """
-            你是一个专业的信息抽取系统。从社交媒体文本中抽取实体、关系和事件，严格按照 JSON 格式输出，不要输出任何其他内容，不要有 markdown 代码块，不要有解释说明。
-
-            输出 JSON 结构如下：
-            {
-              "entities": [
-                {
-                  "type": "person|organization|event|narrative|location|social_account",
-                  "canonicalName": "标准化名称（英文实体保留英文，中文保留中文）",
-                  "aliases": ["别名1", "别名2"],
-                  "importanceScore": 85.0（0-100，在文本中的重要程度）
-                }
-              ],
-              "relationships": [
-                {
-                  "sourceName": "来源实体名称",
-                  "sourceType": "实体类型",
-                  "targetName": "目标实体名称",
-                  "targetType": "实体类型",
-                  "relationType": "关系类型（见下方词表）",
-                  "role": "角色说明或null",
-                  "confidence": 0.85
-                }
-              ],
-              "events": [
-                {
-                  "eventType": "military|diplomatic|protest|cyber|election|disaster|other",
-                  "canonicalName": "事件标准名称",
-                  "eventTimeStart": "ISO-8601时间或null",
-                  "confidence": 0.90,
-                  "participants": [
-                    {"name": "参与方名称", "role": "actor|target|location|related"}
-                  ]
-                }
-              ]
-            }
-
-            关系类型词表（relationType 必须从以下选取，不允许自定义）：
-            Valid predicate values: HAS_ACCOUNT, BELONGS_TO, PART_OF, PUBLISHED_BY, REPLY_TO, REPOSTS,
-            MENTIONS, DESCRIBES, EVENT_OCCURRED_AT, EVENT_INVOLVES_ENTITY, LOCATED_IN,
-            SUPPORTS, OPPOSES, QUESTIONS, INCITES, DE_ESCALATES.
-
-            要求：
-            1. 只抽取文本中明确提到的实体，不推断隐含实体
-            2. canonicalName 使用文本中出现的语言，不做翻译
-            3. importanceScore：核心实体 80-100，次要实体 50-79，背景实体 20-49
-            4. 没有实体/关系/事件时对应字段返回空数组 []，不返回 null
-            5. entities 数量控制在 10 个以内，relationships 控制在 15 个以内
-            """;
-
     private static final String T2_SYSTEM_PROMPT_V11 = """
             You are an information extraction system. Return only one valid JSON object.
             Extract mention-level entities and relation mentions from the input text.
@@ -166,7 +114,7 @@ public class LlmAgentController {
                   "mentionId": "m1",
                   "name": "surface form in text",
                   "normalizedName": "canonical cross-lingual name",
-                  "type": "person|organization|event|location|narrative",
+                  "type": "person|organization|event|location",
                   "aliases": [],
                   "importanceScore": 0.0,
                   "confidence": 0.0,
@@ -371,23 +319,6 @@ public class LlmAgentController {
         } catch (Exception e) {
             logLlmFailure("[LLM-T2] extract_entities失败，返回fallback", e);
             return buildFallbackT2Response();
-        }
-    }
-
-    @PostMapping("/t3/resolve_entities")
-    public T3ResolveResponse resolveEntities(@RequestBody T3ResolveRequest request) {
-        int candidateCount = request.getEntities() != null ? request.getEntities().size() : 0;
-        log.info("[LLM-T3] resolve_entities, candidateCount={}", candidateCount);
-
-        String userPrompt = buildT3UserPrompt(request);
-        try {
-            String raw = callJsonLlm(T3_SYSTEM_PROMPT, userPrompt);
-
-            T3ResolveResponse response = parseT3Response(raw, request);
-            return response;
-        } catch (Exception e) {
-            logLlmFailure("[LLM-T3] resolve_entities失败，返回fallback", e);
-            return buildFallbackT3Response(request);
         }
     }
 
@@ -600,78 +531,6 @@ public class LlmAgentController {
             builder.maxTokens(maxTokens);
         }
         return builder;
-    }
-
-    private String buildT3UserPrompt(T3ResolveRequest request) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("请判断以下实体候选是否指向同一个真实世界对象：\n\n");
-        if (request.getEntities() != null) {
-            for (T3ResolveRequest.EntityCandidate entity : request.getEntities()) {
-                sb.append("id: ").append(entity.getId())
-                        .append(" | type: ").append(entity.getEntityType())
-                        .append(" | name: ").append(entity.getCanonicalName())
-                        .append(" | aliases: ").append(entity.getAliases())
-                        .append(" | platforms: ").append(entity.getSourceIdentifiers())
-                        .append("\n");
-            }
-        }
-        return sb.toString();
-    }
-
-    private T3ResolveResponse parseT3Response(String raw, T3ResolveRequest request) throws Exception {
-        T3ResolveResponse response = objectMapper.readValue(cleanJson(raw), T3ResolveResponse.class);
-        normalizeT3Response(response, request);
-        return response;
-    }
-
-    private void normalizeT3Response(T3ResolveResponse response, T3ResolveRequest request) {
-        Set<String> inputIds = request.getEntities() == null ? Set.of() : request.getEntities().stream()
-                .map(T3ResolveRequest.EntityCandidate::getId)
-                .filter(Objects::nonNull)
-                .collect(Collectors.toSet());
-
-        if (response.getMergeGroups() == null) {
-            response.setMergeGroups(List.of());
-        }
-        response.setMergeGroups(response.getMergeGroups().stream()
-                .filter(group -> group != null
-                        && group.getSurvivorId() != null
-                        && inputIds.contains(group.getSurvivorId())
-                        && group.getConfidence() != null
-                        && group.getConfidence() >= 0.8D)
-                .peek(group -> {
-                    if (group.getMergedIds() == null) {
-                        group.setMergedIds(List.of());
-                    } else {
-                        group.setMergedIds(group.getMergedIds().stream()
-                                .filter(id -> id != null && inputIds.contains(id) && !id.equals(group.getSurvivorId()))
-                                .toList());
-                    }
-                })
-                .filter(group -> !group.getMergedIds().isEmpty())
-                .toList());
-
-        if (response.getDisjointPairs() == null) {
-            response.setDisjointPairs(List.of());
-        }
-        if (response.getUncertain() == null) {
-            response.setUncertain(List.of());
-        } else {
-            response.setUncertain(response.getUncertain().stream()
-                    .filter(inputIds::contains)
-                    .toList());
-        }
-    }
-
-    private T3ResolveResponse buildFallbackT3Response(T3ResolveRequest request) {
-        T3ResolveResponse resp = new T3ResolveResponse();
-        resp.setMergeGroups(List.of());
-        resp.setDisjointPairs(List.of());
-        resp.setUncertain(request.getEntities() == null ? List.of() : request.getEntities().stream()
-                .map(T3ResolveRequest.EntityCandidate::getId)
-                .filter(Objects::nonNull)
-                .toList());
-        return resp;
     }
 
     private String buildT3BatchUserPrompt(T3ResolveBatchRequest request) {

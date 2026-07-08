@@ -4,23 +4,14 @@ import com.idata.profile.agentproxy.dto.t1.T1AnnotateRequest;
 import com.idata.profile.agentproxy.dto.t1.T1AnnotateResponse;
 import com.idata.profile.agentproxy.dto.t2.T2ExtractRequest;
 import com.idata.profile.agentproxy.dto.t2.T2ExtractResponse;
-import com.idata.profile.agentproxy.dto.t3.T3FuseRequest;
-import com.idata.profile.agentproxy.dto.t3.T3FuseResponse;
 import com.idata.profile.agentproxy.dto.t3.T3ResolveBatchRequest;
 import com.idata.profile.agentproxy.dto.t3.T3ResolveBatchResponse;
-import com.idata.profile.agentproxy.dto.t3.T3ResolveRequest;
-import com.idata.profile.agentproxy.dto.t3.T3ResolveResponse;
 import com.idata.profile.agentproxy.dto.t4.T4EmbeddingRequest;
 import com.idata.profile.agentproxy.dto.t4.T4EmbeddingResponse;
 import com.idata.profile.agentproxy.dto.t5.T5GenerateProfileRequest;
 import com.idata.profile.agentproxy.dto.t5.T5GenerateProfileResponse;
 import com.idata.profile.agentproxy.dto.t6.T6IdentifyRequest;
 import com.idata.profile.agentproxy.dto.t6.T6IdentifyResponse;
-import com.idata.profile.common.util.StableUuidUtil;
-import com.idata.profile.mapper.graph.EventMapper;
-import com.idata.profile.mapper.graph.NarrativeMapper;
-import com.idata.profile.mapper.graph.OrganizationMapper;
-import com.idata.profile.mapper.graph.PersonMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Profile;
@@ -34,7 +25,6 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 @Slf4j
 @RestController
@@ -43,10 +33,6 @@ import java.util.stream.Collectors;
 public class MockAgentController {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-    private final PersonMapper personMapper;
-    private final OrganizationMapper organizationMapper;
-    private final EventMapper eventMapper;
-    private final NarrativeMapper narrativeMapper;
 
     @PostMapping("/mock/t1/annotate_text")
     public T1AnnotateResponse annotateText(@RequestBody T1AnnotateRequest request) {
@@ -81,6 +67,13 @@ public class MockAgentController {
         entityHint.setEmotionExpression("worry");
         entityHint.setEmotionIntensity("medium");
         entityHint.setEvidenceIds(List.of("ev_001"));
+
+        T1AnnotateResponse.EvidenceClue evidenceClue = new T1AnnotateResponse.EvidenceClue();
+        evidenceClue.setEvidenceId("ev_001");
+        evidenceClue.setEvidenceType("text_span");
+        evidenceClue.setRawContent("Leila Farzan");
+        evidenceClue.setSpan(Map.of("start", 0, "end", 12));
+        evidenceClue.setConfidence(0.92);
 
         T1AnnotateResponse.Annotations.Risk risk = new T1AnnotateResponse.Annotations.Risk();
         risk.setLevel("medium");
@@ -127,7 +120,7 @@ public class MockAgentController {
         T1AnnotateResponse resp = new T1AnnotateResponse();
         resp.setLanguage(request.getLanguage() != null ? request.getLanguage() : "zh");
         resp.setAnnotations(annotations);
-        resp.setEvidenceClues(List.of());
+        resp.setEvidenceClues(List.of(evidenceClue));
         resp.setQualityControl(qualityControl);
         resp.setConfidence(0.82);
         resp.setProcessedAt(java.time.OffsetDateTime.now().toString());
@@ -204,16 +197,6 @@ public class MockAgentController {
         person.setAliases(List.of("L. Farzan", "莱拉·法尔赞"));
         person.setAttributes(Map.of());
 
-        T2ExtractResponse.ExtractedMention narrative = new T2ExtractResponse.ExtractedMention();
-        narrative.setMentionId("m2");
-        narrative.setName("Hormuz escalation narrative");
-        narrative.setType("narrative");
-        narrative.setNormalizedName("Hormuz Strait escalation narrative");
-        narrative.setImportanceScore(76.0);
-        narrative.setConfidence(0.88);
-        narrative.setAliases(List.of());
-        narrative.setAttributes(Map.of("frameType", "threat_escalation"));
-
         T2ExtractResponse.ExtractedMention organization = new T2ExtractResponse.ExtractedMention();
         organization.setMentionId("m3");
         organization.setName("U.S. Central Command");
@@ -272,174 +255,11 @@ public class MockAgentController {
 
         T2ExtractResponse resp = new T2ExtractResponse();
         resp.setDocId(request.getDocId());
-        resp.setEntities(List.of(person, organization, narrative, location, event));
+        resp.setEntities(List.of(person, organization, location, event));
         resp.setRelations(List.of(rel1, rel2, rel3));
         resp.setResolvedAuthorAccountId(null);
         resp.setModelVersion("mock-t2-v2.0");
         resp.setRaw(toJson(resp));
-        return resp;
-    }
-
-    @PostMapping("/mock/t3/fuse_entities")
-    public T3FuseResponse fuseEntities(@RequestBody T3FuseRequest request) {
-        // All relation types must come from the RZDK relationships.py RelationType enum.
-        // Real T3 integrations must use the same vocabulary.
-        log.info("[MOCK-T3] fuse_entities, entityRefs={}",
-                request.getEntities() != null ? request.getEntities().size() : 0);
-
-        T3FuseRequest.T2EntityRef personRef = findEntity(request, "person", "Leila Farzan");
-        T3FuseRequest.T2EntityRef organizationRef = findEntity(request, "organization", "U.S. Central Command");
-        T3FuseRequest.T2EntityRef narrativeRef = findEntity(request, "narrative", "Hormuz Strait escalation narrative");
-        T3FuseRequest.T2EntityRef locationRef = findEntity(request, "location", "Strait of Hormuz");
-        T3FuseRequest.T2EntityRef eventRef = findEntity(request, "event", "2026 Persian Gulf Military Standoff");
-
-        String personId = entityId(personRef);
-        String organizationId = entityId(organizationRef);
-        String narrativeId = entityId(narrativeRef);
-        String locationId = entityId(locationRef);
-        String eventId = entityId(eventRef);
-
-        T3FuseResponse.EntityMerge merge = new T3FuseResponse.EntityMerge();
-        merge.setSurvivorId(personId);
-        merge.setMergedIds(List.of(stableUuid(personId + ":merged-alias")));
-
-        T3FuseResponse.Neo4jNode personNode = new T3FuseResponse.Neo4jNode();
-        personNode.setLabel("Person");
-        personNode.setId(personId);
-        personNode.setProperties(Map.of(
-                "canonicalName", personRef.getCanonicalName(),
-                "nationality", "IR-US",
-                "profession", "security analyst",
-                "importanceScore", 88.0
-        ));
-
-        T3FuseResponse.Neo4jNode organizationNode = new T3FuseResponse.Neo4jNode();
-        organizationNode.setLabel("Organization");
-        organizationNode.setId(organizationId);
-        organizationNode.setProperties(Map.of(
-                "canonicalName", organizationRef.getCanonicalName(),
-                "orgType", "military_command",
-                "country", "US",
-                "importanceScore", 84.0
-        ));
-
-        T3FuseResponse.Neo4jNode narrativeNode = new T3FuseResponse.Neo4jNode();
-        narrativeNode.setLabel("Narrative");
-        narrativeNode.setId(narrativeId);
-        narrativeNode.setProperties(Map.of(
-                "canonicalLabel", narrativeRef.getCanonicalName(),
-                "importanceScore", 76.0,
-                "frameType", "threat_escalation",
-                "region", "Persian Gulf",
-                "source", "mock-t3"
-        ));
-
-        T3FuseResponse.Neo4jNode locationNode = new T3FuseResponse.Neo4jNode();
-        locationNode.setLabel("Location");
-        locationNode.setId(locationId);
-        locationNode.setProperties(Map.of(
-                "canonicalName", "Strait of Hormuz",
-                "placeType", "water_body",
-                "country", "IR",
-                "importanceScore", 85.0,
-                "source", "mock-t3"
-        ));
-
-        T3FuseResponse.Neo4jNode eventNode = new T3FuseResponse.Neo4jNode();
-        eventNode.setLabel("Event");
-        eventNode.setId(eventId);
-        eventNode.setProperties(Map.of(
-                "canonicalName", "2026 Persian Gulf Military Standoff",
-                "eventType", "military",
-                "country", "IR",
-                "importanceScore", 90.0,
-                "source", "mock-t3"
-        ));
-
-        T3FuseResponse.Neo4jRelation participates = new T3FuseResponse.Neo4jRelation();
-        participates.setFromId(personId);
-        participates.setToId(narrativeId);
-        participates.setRelationType("SUPPORTS");
-        participates.setProperties(Map.of("frequency", 12, "confidence", 0.85, "source", "mock-t3"));
-
-        T3FuseResponse.Neo4jRelation affiliated = new T3FuseResponse.Neo4jRelation();
-        affiliated.setFromId(personId);
-        affiliated.setToId(organizationId);
-        affiliated.setRelationType("BELONGS_TO");
-        affiliated.setProperties(Map.of("confidence", 0.78, "source", "mock-t3"));
-
-        T3FuseResponse.Neo4jRelation promotes = new T3FuseResponse.Neo4jRelation();
-        promotes.setFromId(organizationId);
-        promotes.setToId(narrativeId);
-        promotes.setRelationType("SUPPORTS");
-        promotes.setProperties(Map.of("confidence", 0.82, "source", "mock-t3"));
-
-        T3FuseResponse.Neo4jRelation eventAtLocation = new T3FuseResponse.Neo4jRelation();
-        eventAtLocation.setFromId(eventId);
-        eventAtLocation.setToId(locationId);
-        eventAtLocation.setRelationType("EVENT_OCCURRED_AT");
-        eventAtLocation.setProperties(Map.of("confidence", 0.95, "source", "mock-t3"));
-
-        T3FuseResponse.Neo4jRelation eventInvolvesOrg = new T3FuseResponse.Neo4jRelation();
-        eventInvolvesOrg.setFromId(eventId);
-        eventInvolvesOrg.setToId(organizationId);
-        eventInvolvesOrg.setRelationType("EVENT_INVOLVES_ENTITY");
-        eventInvolvesOrg.setProperties(Map.of("role", "actor", "confidence", 0.88, "source", "mock-t3"));
-
-        T3FuseResponse.Neo4jRelation narrativeAboutEvent = new T3FuseResponse.Neo4jRelation();
-        narrativeAboutEvent.setFromId(narrativeId);
-        narrativeAboutEvent.setToId(eventId);
-        narrativeAboutEvent.setRelationType("DESCRIBES");
-        narrativeAboutEvent.setProperties(Map.of("confidence", 0.92, "source", "mock-t3"));
-
-        T3FuseResponse.Neo4jRelation orgLocatedIn = new T3FuseResponse.Neo4jRelation();
-        orgLocatedIn.setFromId(organizationId);
-        orgLocatedIn.setToId(locationId);
-        orgLocatedIn.setRelationType("LOCATED_IN");
-        orgLocatedIn.setProperties(Map.of("confidence", 0.80, "source", "mock-t3"));
-
-        T3FuseResponse resp = new T3FuseResponse();
-        resp.setEntityMerges(List.of(merge));
-        resp.setNodes(List.of(personNode, organizationNode, narrativeNode, locationNode, eventNode));
-        resp.setRelations(List.of(participates, affiliated, promotes,
-                eventAtLocation, eventInvolvesOrg, narrativeAboutEvent, orgLocatedIn));
-        resp.setRaw(toJson(resp));
-        return resp;
-    }
-
-    @PostMapping("/mock/t3/resolve_entities")
-    public T3ResolveResponse resolveEntities(@RequestBody T3ResolveRequest request) {
-        log.info("[MOCK-T3] resolve_entities, candidateCount={}",
-                request.getEntities() != null ? request.getEntities().size() : 0);
-
-        /*
-         * 算法组实现 resolve_entities 时，输出格式约定（选项B：直接输出聚合好的分组）：
-         *
-         * mergeGroups：T3 认为应该合并的实体分组列表。
-         *   每组 survivorId 是归一后保留的实体 ID（应选 importanceScore 最高的那个），
-         *   mergedIds 是被合并的实体 ID 列表，confidence 是归一置信度（后端只执行 >= 0.8 的）,
-         *   matchMethod 标注归一依据：
-         *     - exact_name：精确名称匹配（后端精确匹配已覆盖，T3 通常不需要再返回这类）
-         *     - alias_match：别名匹配（如 "Biden" 匹配到 aliases 里有 "Biden" 的实体）
-         *     - cross_language：跨语言归一（如 "拜登" 和 "Biden" 归一）
-         *     - semantic_similarity：语义相似度归一（向量余弦，用于叙事/事件等长文本实体）
-         *     - identifier_match：平台标识符匹配（如 twitter uid 相同，置信度最高）
-         *
-         * disjointPairs：T3 明确判断不是同一实体的 ID 对（否定证据，后端记录备用，暂不处理）。
-         *
-         * uncertain：T3 无法判断的实体 ID 列表（置信度低于阈值或证据不足）。
-         *
-         * Mock 实现：全部标记为 uncertain，mergeGroups 为空。
-         * 接入真实 T3 后，mergeGroups 里应包含跨语言归一的结果。
-         */
-        T3ResolveResponse resp = new T3ResolveResponse();
-        resp.setMergeGroups(List.of());
-        resp.setDisjointPairs(List.of());
-        resp.setUncertain(request.getEntities() == null ? List.of() :
-                request.getEntities().stream()
-                        .map(T3ResolveRequest.EntityCandidate::getId)
-                        .filter(java.util.Objects::nonNull)
-                        .collect(Collectors.toList()));
         return resp;
     }
 
@@ -455,21 +275,38 @@ public class MockAgentController {
                                     new T3ResolveBatchResponse.ResolveResult();
                             String mentionId = item.getMention() != null ? item.getMention().getMentionId() : null;
                             result.setMentionId(mentionId);
-                            if (item.getCandidates() != null && !item.getCandidates().isEmpty()) {
-                                T3ResolveBatchRequest.Candidate top = item.getCandidates().get(0);
-                                result.setAction(top.getScore() != null && top.getScore() >= 0.9D ? "MERGE" : "REVIEW");
+
+                            double autoMergeThreshold = request.getStrategy() != null
+                                    && request.getStrategy().getAutoMergeThreshold() != null
+                                    ? request.getStrategy().getAutoMergeThreshold() : 0.9D;
+                            double reviewThreshold = request.getStrategy() != null
+                                    && request.getStrategy().getReviewThreshold() != null
+                                    ? request.getStrategy().getReviewThreshold() : 0.6D;
+
+                            T3ResolveBatchRequest.Candidate top = item.getCandidates() != null
+                                    && !item.getCandidates().isEmpty()
+                                    ? item.getCandidates().get(0) : null;
+                            double topScore = top != null && top.getScore() != null ? top.getScore() : 0D;
+
+                            if (top != null && topScore >= autoMergeThreshold) {
+                                result.setAction("MERGE");
                                 result.setMatchedEntityId(top.getEntityId());
-                                result.setScore(top.getScore());
-                                result.setConfidence(top.getScore());
+                                result.setMatchMethod("mock_candidate_top1");
+                                result.setReason("mock resolver selected the highest ranked candidate");
+                            } else if (top != null && topScore >= reviewThreshold) {
+                                result.setAction("REVIEW");
+                                result.setMatchedEntityId(top.getEntityId());
                                 result.setMatchMethod("mock_candidate_top1");
                                 result.setReason("mock resolver selected the highest ranked candidate");
                             } else {
                                 result.setAction("CREATE");
-                                result.setScore(0.0D);
-                                result.setConfidence(0.0D);
-                                result.setMatchMethod("no_candidate");
-                                result.setReason("no candidate returned by backend retrieval");
+                                result.setMatchMethod(top != null ? "low_score_candidate" : "no_candidate");
+                                result.setReason(top != null
+                                        ? "top candidate score below review threshold"
+                                        : "no candidate returned by backend retrieval");
                             }
+                            result.setScore(topScore);
+                            result.setConfidence(topScore);
                             return result;
                         })
                         .toList();
@@ -594,46 +431,6 @@ public class MockAgentController {
         resp.setEmbedding(embedding);
         resp.setModelVersion("mock-qwen3-vl-embedding-8b");
         return resp;
-    }
-
-    private T3FuseRequest.T2EntityRef findEntity(T3FuseRequest request, String type, String fallbackName) {
-        if (request.getEntities() != null) {
-            for (T3FuseRequest.T2EntityRef entity : request.getEntities()) {
-                if (type.equals(entity.getType())) {
-                    return entity;
-                }
-            }
-        }
-        T3FuseRequest.T2EntityRef fallback = new T3FuseRequest.T2EntityRef();
-        fallback.setType(type);
-        fallback.setCanonicalName(fallbackName);
-        fallback.setTempId(stableUuid(type + ":" + fallbackName));
-        return fallback;
-    }
-
-    private String entityId(T3FuseRequest.T2EntityRef ref) {
-        if (ref == null) {
-            return stableUuid("unknown:unknown");
-        }
-
-        String canonicalName = ref.getCanonicalName();
-        String type = ref.getType();
-        UUID realId = switch (type != null ? type : "") {
-            case "person" -> personMapper.selectCanonicalIdByName(canonicalName);
-            case "organization" -> organizationMapper.selectCanonicalIdByName(canonicalName);
-            case "event" -> eventMapper.selectCanonicalIdByName(canonicalName);
-            case "narrative" -> narrativeMapper.selectCanonicalIdByLabel(canonicalName);
-            default -> null;
-        };
-        if (realId != null) {
-            return realId.toString();
-        }
-
-        return stableUuid((type != null ? type : "unknown") + ":" + canonicalName);
-    }
-
-    private String stableUuid(String value) {
-        return StableUuidUtil.fromSeed(value);
     }
 
     private String toJson(Object obj) {

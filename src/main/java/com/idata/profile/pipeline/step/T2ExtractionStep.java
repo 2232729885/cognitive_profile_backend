@@ -24,7 +24,6 @@ import com.idata.profile.mapper.content.MediaAssetMapper;
 import com.idata.profile.mapper.content.MediaContentMapper;
 import com.idata.profile.mapper.dedup.EntityFusionRecordMapper;
 import com.idata.profile.mapper.graph.EventMapper;
-import com.idata.profile.mapper.graph.NarrativeMapper;
 import com.idata.profile.mapper.graph.OrganizationMapper;
 import com.idata.profile.mapper.graph.PersonMapper;
 import com.idata.profile.mapper.raw.RawRecordMapper;
@@ -34,7 +33,6 @@ import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
@@ -62,7 +60,6 @@ public class T2ExtractionStep {
     private final PersonMapper personMapper;
     private final OrganizationMapper organizationMapper;
     private final EventMapper eventMapper;
-    private final NarrativeMapper narrativeMapper;
     private final Neo4jGraphService neo4jGraphService;
     private final SocialAccountMapper socialAccountMapper;
     private final MediaAssetMapper mediaAssetMapper;
@@ -271,8 +268,6 @@ public class T2ExtractionStep {
             case "person" -> personMapper.insertEntity(canonicalName, importanceScore);
             case "organization" -> organizationMapper.insertEntity(canonicalName, importanceScore);
             case "event" -> eventMapper.insertEntity(canonicalName, importanceScore);
-            case "narrative" -> narrativeMapper.insertEntity(
-                    canonicalName, importanceScore, buildClaimAtoms(canonicalName, importanceScore));
             case "location" -> log.debug("Location mention is stored in Neo4j only, name={}", canonicalName);
             default -> log.warn("Unknown extracted entity type: {}", entity.getType());
         }
@@ -284,8 +279,7 @@ public class T2ExtractionStep {
             return;
         }
         Map<String, Object> props = new HashMap<>();
-        String nameKey = "narrative".equals(entity.getType()) ? "canonicalLabel" : "canonicalName";
-        props.put(nameKey, entityName(entity));
+        props.put("canonicalName", entityName(entity));
         if (entity.getAliases() != null && !entity.getAliases().isEmpty()) {
             props.put("aliases", entity.getAliases().toArray(new String[0]));
         }
@@ -592,7 +586,6 @@ public class T2ExtractionStep {
             case "person" -> "Person";
             case "organization" -> "Organization";
             case "event" -> "Event";
-            case "narrative" -> "Narrative";
             case "location" -> "Location";
             case "social_account" -> "SocialAccount";
             default -> null;
@@ -635,22 +628,6 @@ public class T2ExtractionStep {
     private void putIfNotNull(Map<String, Object> target, String key, Object value) {
         if (value != null) {
             target.put(key, value);
-        }
-    }
-
-    private String buildClaimAtoms(String canonicalName, BigDecimal importanceScore) {
-        try {
-            BigDecimal confidence = importanceScore
-                    .divide(new BigDecimal("100"), 3, java.math.RoundingMode.HALF_UP)
-                    .min(BigDecimal.ONE)
-                    .max(BigDecimal.ZERO);
-            return OBJECT_MAPPER.writeValueAsString(List.of(Map.of(
-                    "claim", canonicalName,
-                    "confidence", confidence
-            )));
-        } catch (JacksonException e) {
-            log.warn("Failed to serialize narrative claim atom, canonicalName={}", canonicalName, e);
-            return "[]";
         }
     }
 
