@@ -1,7 +1,11 @@
 package com.idata.profile.ingestion.consumer;
 
+import com.idata.profile.agentproxy.AgentProxyClient;
+import com.idata.profile.agentproxy.dto.t1.T1AnnotateAccountRequest;
+import com.idata.profile.agentproxy.dto.t1.T1AnnotateAccountResponse;
 import com.idata.profile.common.constant.PipelineStatus;
 import com.idata.profile.common.constant.RecordType;
+import com.idata.profile.entity.account.SocialAccount;
 import com.idata.profile.entity.raw.RawRecord;
 import com.idata.profile.infra.kafka.KafkaTopicConstants;
 import com.idata.profile.ingestion.normalizer.SocialAccountNormalizer;
@@ -15,6 +19,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
 
+import java.math.BigDecimal;
+import java.util.List;
 import java.util.UUID;
 
 @Slf4j
@@ -26,6 +32,7 @@ public class SocialAccountConsumer {
     private final RawRecordMapper rawRecordMapper;
     private final SocialAccountMapper socialAccountMapper;
     private final SocialAccountSnapshotMapper snapshotMapper;
+    private final AgentProxyClient agentProxyClient;
 
     @KafkaListener(topics = KafkaTopicConstants.SOCIAL_ACCOUNT, groupId = "cognitive-profile-ingestion")
     @Transactional
@@ -57,11 +64,52 @@ public class SocialAccountConsumer {
         }
 
         SocialAccountNormalizer.NormalizedAccount normalized = normalizer.normalize(kafkaMessage, rawRecord);
+        annotateAccountType(normalized.getAccount());
         UUID accountId = socialAccountMapper.upsertByPlatformAndUserId(normalized.getAccount());
         normalized.getSnapshot().setAccountId(accountId);
         snapshotMapper.insert(normalized.getSnapshot());
         rawRecord.setPipelineStatus(PipelineStatus.NORMALIZED.name());
         rawRecordMapper.updateById(rawRecord);
+    }
+
+    private void annotateAccountType(SocialAccount account) {
+        try {
+            T1AnnotateAccountRequest request = new T1AnnotateAccountRequest();
+            request.setPlatform(account.getPlatform());
+            request.setPlatformUserId(account.getPlatformUserId());
+            request.setAccountEntityType(account.getAccountEntityType());
+            request.setPlatformNativeType(account.getPlatformNativeType());
+            request.setHandle(account.getHandle());
+            request.setDisplayName(account.getDisplayName());
+            request.setBio(account.getBio());
+            request.setSelfDeclaredLocation(account.getSelfDeclaredLocation());
+            request.setVerified(account.getVerified());
+            request.setVerifiedType(account.getVerifiedType());
+            request.setIsSuspended(account.getIsSuspended());
+            request.setAccountCreatedAt(account.getAccountCreatedAt() != null
+                    ? account.getAccountCreatedAt().toString() : null);
+            request.setFollowersCount(account.getFollowersCount());
+            request.setFollowingCount(account.getFollowingCount());
+            request.setSubscriberCount(account.getSubscriberCount());
+            request.setMemberCount(account.getMemberCount());
+            request.setPostCount(account.getPostCount());
+            request.setViewCount(account.getViewCount());
+            request.setRecentPostSamples(List.of());
+
+            T1AnnotateAccountResponse response = agentProxyClient.call(
+                    "T1", "annotate_account", request, T1AnnotateAccountResponse.class);
+
+            if (response != null && response.getAccountType() != null) {
+                account.setAccountType(response.getAccountType().getPrimaryAccountCategory());
+                if (response.getAccountType().getAccountTypeConfidence() != null) {
+                    account.setAccountTypeConfidence(
+                            BigDecimal.valueOf(response.getAccountType().getAccountTypeConfidence()));
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[SocialAccountConsumer] T1 annotate_account failed, platform={}, platformUserId={}",
+                    account.getPlatform(), account.getPlatformUserId(), e);
+        }
     }
 
     private Object parseMessage(String rawMessage) {

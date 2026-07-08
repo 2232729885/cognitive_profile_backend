@@ -1,5 +1,7 @@
 package com.idata.profile.mockserver;
 
+import com.idata.profile.agentproxy.dto.t1.T1AnnotateAccountRequest;
+import com.idata.profile.agentproxy.dto.t1.T1AnnotateAccountResponse;
 import com.idata.profile.agentproxy.dto.t1.T1AnnotateRequest;
 import com.idata.profile.agentproxy.dto.t1.T1AnnotateResponse;
 import com.idata.profile.agentproxy.dto.t2.T2ExtractRequest;
@@ -484,6 +486,47 @@ public class MockAgentController {
         resp.setQualityControl(qualityControl);
 
         resp.setOverallConfidence(0.60);
+        resp.setProcessedAt(java.time.OffsetDateTime.now().toString());
+        return resp;
+    }
+
+    @PostMapping("/mock/t1/annotate_account")
+    public T1AnnotateAccountResponse annotateAccount(@RequestBody T1AnnotateAccountRequest request) {
+        log.info("[MOCK-T1] annotate_account, platform={}, handle={}",
+                request.getPlatform(), request.getHandle());
+
+        T1AnnotateResponse.Annotations.BasicObjective.AccountType accountType =
+                new T1AnnotateResponse.Annotations.BasicObjective.AccountType();
+        accountType.setPrimaryAccountCategory("news_media");
+        accountType.setAccountSubtypeTags(List.of("independent_media"));
+        accountType.setAutomationSuspicion("low");
+        accountType.setAccountTypeConfidence(0.82);
+        accountType.setEvidenceIds(List.of("ev_acc_001", "ev_acc_002"));
+
+        T1AnnotateResponse.EvidenceClue ev1 = new T1AnnotateResponse.EvidenceClue();
+        ev1.setEvidenceId("ev_acc_001");
+        ev1.setEvidenceType("metadata");
+        ev1.setSource("metadata");
+        ev1.setEvidenceText(request.getBio());
+
+        T1AnnotateResponse.EvidenceClue ev2 = new T1AnnotateResponse.EvidenceClue();
+        ev2.setEvidenceId("ev_acc_002");
+        ev2.setEvidenceType("metadata");
+        ev2.setSource("metadata");
+        ev2.setEvidenceText("verified=" + request.getVerified() + ", verifiedType=" + request.getVerifiedType());
+
+        T1AnnotateAccountResponse resp = new T1AnnotateAccountResponse();
+        resp.setSchemaVersion("t1_account_annotation_v0.5");
+        resp.setAccountType(accountType);
+        resp.setEvidenceClues(List.of(ev1, ev2));
+
+        T1AnnotateResponse.QualityControl qualityControl = new T1AnnotateResponse.QualityControl();
+        qualityControl.setNeedHumanReview(false);
+        qualityControl.setReviewReasons(List.of("none"));
+        qualityControl.setFailedModules(List.of("none"));
+        resp.setQualityControl(qualityControl);
+
+        resp.setOverallConfidence(0.82);
         resp.setProcessedAt(java.time.OffsetDateTime.now().toString());
         return resp;
     }

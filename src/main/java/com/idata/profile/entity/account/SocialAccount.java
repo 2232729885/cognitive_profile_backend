@@ -45,7 +45,14 @@ public class SocialAccount {
     private Long postCount;
     private Long viewCount;
 
-    private String accountType;         // T1标注: official|media|kol|normal|bot|cyborg
+    /**
+     * T1标注（v0.5 primary_account_category）：ordinary_user|news_media|state_affiliated_media|
+     * government_agency|political_actor|political_party_or_campaign|military_security_agency|
+     * international_organization|ngo_or_civil_society|academic_or_expert|commercial_brand|
+     * platform_official|influencer_kol|community_group|anonymous_account|
+     * suspected_bot_or_automated|unknown|other
+     */
+    private String accountType;
     private java.math.BigDecimal accountTypeConfidence;
 
     private UUID entityPersonId;        // EntityDeduplicationJob融合后回填
