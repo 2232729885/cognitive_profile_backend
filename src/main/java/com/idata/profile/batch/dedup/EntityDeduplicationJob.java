@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.idata.profile.agentproxy.AgentProxyClient;
 import com.idata.profile.agentproxy.dto.t3.T3ResolveRequest;
 import com.idata.profile.agentproxy.dto.t3.T3ResolveResponse;
+import com.idata.profile.agentproxy.dto.t4.T4EmbeddingRequest;
+import com.idata.profile.agentproxy.dto.t4.T4EmbeddingResponse;
 import com.idata.profile.common.util.StableUuidUtil;
 import com.idata.profile.entity.account.SocialAccount;
 import com.idata.profile.entity.dedup.EntityFusionRecord;
@@ -11,6 +13,8 @@ import com.idata.profile.entity.graph.Event;
 import com.idata.profile.entity.graph.Narrative;
 import com.idata.profile.entity.graph.Organization;
 import com.idata.profile.entity.graph.Person;
+import com.idata.profile.infra.elasticsearch.EntityEsService;
+import com.idata.profile.infra.milvus.MilvusVectorService;
 import com.idata.profile.infra.neo4j.Neo4jGraphService;
 import com.idata.profile.mapper.account.SocialAccountMapper;
 import com.idata.profile.mapper.dedup.EntityFusionRecordMapper;
@@ -49,6 +53,8 @@ public class EntityDeduplicationJob {
     private final EntityFusionRecordMapper entityFusionRecordMapper;
     private final Neo4jGraphService neo4jGraphService;
     private final AgentProxyClient agentProxyClient;
+    private final EntityEsService entityEsService;
+    private final MilvusVectorService milvusVectorService;
     private final ApplicationContext applicationContext;
     private final AtomicBoolean running = new AtomicBoolean(false);
 
@@ -252,19 +258,41 @@ public class EntityDeduplicationJob {
 
     private int resolveEntityTypeWithT3(String entityType, UUID jobRunId) {
         List<?> pendingEntities = selectPendingEntities(entityType, BATCH_LIMIT);
-        if (pendingEntities.size() < 2) {
+        if (pendingEntities.isEmpty()) {
             return 0;
         }
 
-        List<T3ResolveRequest.EntityCandidate> candidates = pendingEntities.stream()
-                .map(entity -> toCandidate(entity, entityType))
-                .filter(candidate -> candidate.getId() != null && candidate.getCanonicalName() != null)
-                .toList();
-        if (candidates.size() < 2) {
+        List<Map<String, Object>> resolveItems = new ArrayList<>();
+        for (Object entity : pendingEntities) {
+            T3ResolveRequest.EntityCandidate mention = toCandidate(entity, entityType);
+            if (mention.getId() == null || mention.getCanonicalName() == null) {
+                continue;
+            }
+
+            List<Map<String, Object>> candidates = retrieveCandidates(
+                    mention.getCanonicalName(), entityType, 10);
+            if (candidates.isEmpty()) {
+                continue;
+            }
+
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("mention", mention);
+            item.put("candidates", candidates);
+            item.put("context", Map.of(
+                    "language", "zh",
+                    "textWindow", mention.getCanonicalName()
+            ));
+            resolveItems.add(item);
+        }
+
+        if (resolveItems.isEmpty()) {
             return 0;
         }
 
         T3ResolveRequest request = new T3ResolveRequest();
+        List<T3ResolveRequest.EntityCandidate> candidates = resolveItems.stream()
+                .map(item -> (T3ResolveRequest.EntityCandidate) item.get("mention"))
+                .toList();
         request.setEntities(candidates);
 
         T3ResolveResponse response;
@@ -281,18 +309,126 @@ public class EntityDeduplicationJob {
 
         int merged = 0;
         for (T3ResolveResponse.MergeGroup group : response.getMergeGroups()) {
-            if (group == null || group.getConfidence() == null || group.getConfidence() < 0.8D
+            if (group == null || group.getConfidence() == null
                     || group.getMergedIds() == null || group.getMergedIds().isEmpty()) {
                 continue;
             }
+            double confidence = group.getConfidence();
             try {
-                merged += executeMergeGroup(group, entityType, jobRunId);
+                if (confidence >= 0.9D) {
+                    merged += executeMergeGroup(group, entityType, jobRunId);
+                    log.info("[EntityDeduplicationJob] auto-merge, entityType={}, survivorId={}, confidence={}",
+                            entityType, group.getSurvivorId(), confidence);
+                } else if (confidence >= 0.6D) {
+                    insertPendingReviewRecord(group, entityType, jobRunId, confidence);
+                    log.info("[EntityDeduplicationJob] pending-review, entityType={}, survivorId={}, confidence={}",
+                            entityType, group.getSurvivorId(), confidence);
+                }
             } catch (Exception e) {
-                log.warn("[EntityDeduplicationJob] T3 merge group failed, survivorId={}",
+                log.warn("[EntityDeduplicationJob] merge group failed, survivorId={}",
                         group.getSurvivorId(), e);
             }
         }
         return merged;
+    }
+
+    /**
+     * 三路候选召回：ES名称匹配 + Milvus向量ANN + Neo4j别名匹配。
+     * 结果合并去重，按综合分数排序，返回 TopK。
+     */
+    private List<Map<String, Object>> retrieveCandidates(String canonicalName,
+                                                         String entityType, int topK) {
+        Map<String, Map<String, Object>> candidates = new LinkedHashMap<>();
+
+        try {
+            List<Map<String, Object>> esResults =
+                    entityEsService.searchEntities(canonicalName, entityType, topK);
+            for (Map<String, Object> r : esResults) {
+                String entityId = stringValue(r.get("entity_id"));
+                if (entityId == null) {
+                    continue;
+                }
+                Map<String, Object> candidate = toCandidateMap(r, "NAME_INDEX");
+                candidates.put(entityId, candidate);
+            }
+        } catch (Exception e) {
+            log.warn("[EntityDeduplicationJob] ES candidate retrieval failed, name={}", canonicalName, e);
+        }
+
+        try {
+            T4EmbeddingRequest req = new T4EmbeddingRequest();
+            req.setText(canonicalName);
+            T4EmbeddingResponse embResp = agentProxyClient.call(
+                    "T4", "generate_text_embedding", req, T4EmbeddingResponse.class);
+            if (embResp != null && embResp.getEmbedding() != null) {
+                List<String> milvusIds = milvusVectorService.searchEntityEmbeddings(
+                        embResp.getEmbedding(), topK, entityType);
+                for (String entityId : milvusIds) {
+                    if (candidates.containsKey(entityId)) {
+                        addRetrievalChannel(candidates.get(entityId), "VECTOR_INDEX");
+                    } else {
+                        Map<String, Object> candidate = new LinkedHashMap<>();
+                        candidate.put("entityId", entityId);
+                        candidate.put("score", 0.7D);
+                        candidate.put("retrievalChannels", new ArrayList<>(List.of("VECTOR_INDEX")));
+                        candidates.put(entityId, candidate);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[EntityDeduplicationJob] Milvus candidate retrieval failed, name={}", canonicalName, e);
+        }
+
+        // Neo4j的别名匹配已经在 searchEntities 端点里实现，ES召回覆盖了大部分场景。
+        return new ArrayList<>(candidates.values()).stream()
+                .sorted((a, b) -> Double.compare(scoreOf(b.get("score")), scoreOf(a.get("score"))))
+                .limit(topK)
+                .toList();
+    }
+
+    private Map<String, Object> toCandidateMap(Map<String, Object> esResult, String channel) {
+        Map<String, Object> candidate = new LinkedHashMap<>();
+        candidate.put("entityId", esResult.get("entity_id"));
+        candidate.put("canonicalName", esResult.get("canonical_name"));
+        candidate.put("type", esResult.get("entity_type"));
+        candidate.put("aliases", esResult.getOrDefault("aliases", List.of()));
+        candidate.put("importanceScore", esResult.getOrDefault("importance_score", 0.0D));
+        candidate.put("score", esResult.getOrDefault("score", 0.5D));
+        candidate.put("retrievalChannels", new ArrayList<>(List.of(channel)));
+        return candidate;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void addRetrievalChannel(Map<String, Object> candidate, String channel) {
+        Object value = candidate.get("retrievalChannels");
+        if (value instanceof List<?> channels) {
+            ((List<String>) channels).add(channel);
+            return;
+        }
+        candidate.put("retrievalChannels", new ArrayList<>(List.of(channel)));
+    }
+
+    private void insertPendingReviewRecord(T3ResolveResponse.MergeGroup group,
+                                           String entityType, UUID jobRunId, double confidence) {
+        try {
+            EntityFusionRecord record = new EntityFusionRecord();
+            record.setId(UUID.randomUUID());
+            record.setEntityType(entityType);
+            record.setSurvivorId(parseUuid(group.getSurvivorId()));
+            record.setSurvivorName(group.getSurvivorId());
+            record.setMergedIds(group.getMergedIds().stream()
+                    .map(this::parseUuid)
+                    .filter(id -> id != null)
+                    .toArray(UUID[]::new));
+            record.setMergedCount(group.getMergedIds().size());
+            record.setFusionMethod("t3_pending_review");
+            record.setNeo4jMerged(false);
+            record.setJobRunId(jobRunId);
+            entityFusionRecordMapper.insert(record);
+        } catch (Exception e) {
+            log.warn("[EntityDeduplicationJob] insertPendingReviewRecord failed, survivorId={}",
+                    group.getSurvivorId(), e);
+        }
     }
 
     private List<?> selectPendingEntities(String entityType, int limit) {
@@ -512,6 +648,24 @@ public class EntityDeduplicationJob {
             return UUID.fromString(value.trim());
         } catch (IllegalArgumentException e) {
             return null;
+        }
+    }
+
+    private String stringValue(Object value) {
+        return value == null ? null : value.toString();
+    }
+
+    private double scoreOf(Object value) {
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+        if (value == null) {
+            return 0D;
+        }
+        try {
+            return Double.parseDouble(value.toString());
+        } catch (NumberFormatException e) {
+            return 0D;
         }
     }
 
