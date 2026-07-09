@@ -75,7 +75,7 @@ public class ImageEmbeddingService {
                     asset.getId().toString(),
                     asset.getContentId() != null ? asset.getContentId().toString() : null,
                     null,
-                    asset.getAigcScore() != null ? asset.getAigcScore().floatValue() : 0f,
+                    0f,
                     response.getEmbedding());
 
             asset.setEmbeddingId(vectorId);

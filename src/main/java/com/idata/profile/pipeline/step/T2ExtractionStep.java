@@ -10,6 +10,7 @@ import com.idata.profile.agentproxy.dto.t4.T4EmbeddingResponse;
 import com.idata.profile.common.constant.AllowedRelationTypes;
 import com.idata.profile.common.constant.PipelineStatus;
 import com.idata.profile.common.util.StableUuidUtil;
+import com.idata.profile.common.util.T1AnnotationView;
 import com.idata.profile.entity.account.SocialAccount;
 import com.idata.profile.entity.content.MediaAsset;
 import com.idata.profile.entity.content.MediaContent;
@@ -33,7 +34,6 @@ import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
@@ -124,17 +124,12 @@ public class T2ExtractionStep {
     }
 
     private Object extractT1EntitiesHint(MediaContent mc) {
-        if (!hasText(mc.getT1Annotation())) {
+        String entitiesHintJson = T1AnnotationView.parse(mc.getT1Annotation()).entitiesHintJson();
+        if (entitiesHintJson == null) {
             return null;
         }
         try {
-            JsonNode root = OBJECT_MAPPER.readTree(mc.getT1Annotation());
-            JsonNode entitiesHint = root.path("annotations").path("basicObjective").path("entitiesHint");
-            if (entitiesHint.isMissingNode() || entitiesHint.isNull()
-                    || (entitiesHint.isArray() && entitiesHint.isEmpty())) {
-                return null;
-            }
-            return OBJECT_MAPPER.readValue(entitiesHint.toString(), Object.class);
+            return OBJECT_MAPPER.readValue(entitiesHintJson, Object.class);
         } catch (Exception e) {
             log.warn("Failed to parse T1 entities hint for T2, contentId={}", mc.getId(), e);
             return null;

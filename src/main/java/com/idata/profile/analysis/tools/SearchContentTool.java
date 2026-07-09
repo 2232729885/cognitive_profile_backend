@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonPropertyDescription;
 import com.idata.profile.analysis.orchestrator.CoordinatorAgentService;
 import com.idata.profile.analysis.workflow.WorkflowTaskService;
+import com.idata.profile.common.util.T1AnnotationView;
 import com.idata.profile.entity.content.MediaContent;
 import com.idata.profile.search.HybridSearchRequest;
 import com.idata.profile.search.SearchResult;
@@ -95,6 +96,7 @@ public class SearchContentTool implements Function<SearchContentTool.Request, Se
     }
 
     private ContentSummary toSummary(MediaContent content) {
+        T1AnnotationView t1View = T1AnnotationView.parse(content.getT1Annotation());
         return new ContentSummary(
                 stringValue(content.getId()),
                 content.getPlatform(),
@@ -102,8 +104,8 @@ public class SearchContentTool implements Function<SearchContentTool.Request, Se
                 truncate(content.getBodyText(), 200),
                 content.getAuthorPlatformUserId(),
                 stringValue(content.getPublishedAt()),
-                content.getTopicCategory(),
-                content.getSentimentLabel()
+                t1View.topicCategory(),
+                t1View.sentimentLabel()
         );
     }
 

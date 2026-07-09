@@ -4,6 +4,7 @@ import com.idata.profile.agentproxy.AgentProxyClient;
 import com.idata.profile.agentproxy.dto.t4.T4EmbeddingRequest;
 import com.idata.profile.agentproxy.dto.t4.T4EmbeddingResponse;
 import com.idata.profile.common.constant.PipelineStatus;
+import com.idata.profile.common.util.T1AnnotationView;
 import com.idata.profile.entity.content.MediaContent;
 import com.idata.profile.entity.raw.RawRecord;
 import com.idata.profile.entity.task.PipelineTask;
@@ -78,6 +79,7 @@ public class T4IndexingStep {
     }
 
     private Object buildEsDocument(MediaContent mc) {
+        T1AnnotationView t1View = T1AnnotationView.parse(mc.getT1Annotation());
         Map<String, Object> document = new LinkedHashMap<>();
         document.put("id", mc.getId() != null ? mc.getId().toString() : null);
         document.put("raw_record_id", mc.getRawRecordId() != null ? mc.getRawRecordId().toString() : null);
@@ -100,15 +102,13 @@ public class T4IndexingStep {
         document.put("quote_count", mc.getQuoteCount());
         document.put("view_count", mc.getViewCount());
         document.put("reaction_count", mc.getReactionCount());
-        document.put("topic_category", mc.getTopicCategory());
-        document.put("topic_subcategory", mc.getTopicSubcategory());
-        document.put("sentiment_label", mc.getSentimentLabel());
-        document.put("sentiment_score", mc.getSentimentScore());
-        document.put("stance_label", mc.getStanceLabel());
-        document.put("stance_target", mc.getStanceTarget());
-        document.put("aigc_score", mc.getAigcScore());
-        document.put("aigc_type", mc.getAigcType());
-        document.put("narrative_hint", mc.getNarrativeHint());
+        document.put("topic_category", t1View.topicCategory());
+        document.put("topic_subcategory", t1View.topicSubcategory());
+        document.put("sentiment_label", t1View.sentimentLabel());
+        document.put("stance_label", t1View.stanceLabel());
+        document.put("aigc_score", t1View.aigcScore());
+        document.put("aigc_type", t1View.aigcType());
+        document.put("narrative_hint", t1View.entitiesHintJson());
         document.put("updated_at", mc.getUpdatedAt() != null ? mc.getUpdatedAt().toString() : null);
         return document;
     }

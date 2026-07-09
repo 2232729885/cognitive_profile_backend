@@ -9,7 +9,6 @@ import com.idata.profile.infra.mybatis.StringArrayTypeHandler;
 import com.idata.profile.infra.mybatis.UuidArrayTypeHandler;
 import lombok.Data;
 
-import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
@@ -64,90 +63,8 @@ public class MediaContent {
     private String[] newsTags;
 
     private OffsetDateTime t1AnnotatedAt;
-    private String t1ModelVersion;
-
     @TableField(typeHandler = JsonbStringTypeHandler.class)
     private String t1Annotation;
-
-    // 以下字段自T1多模态改造起不再由代码写入，仅保留历史数据，完整标注结果见 t1Annotation 字段。
-    @Deprecated
-    private String topicCategory;
-    @Deprecated
-    private String topicSubcategory;
-    @Deprecated
-    private BigDecimal eventHeatScore;
-    @Deprecated
-    private String sentimentLabel;
-    @Deprecated
-    private BigDecimal sentimentScore;
-    @Deprecated
-    private String stanceLabel;
-    @Deprecated
-    private String stanceTarget;
-    @Deprecated
-    private BigDecimal aigcScore;
-    @Deprecated
-    private String aigcType;
-    @TableField(typeHandler = JsonbStringTypeHandler.class)
-    @Deprecated
-    private String entitiesHint;
-    @Deprecated
-    private String narrativeHint;
-    @TableField(typeHandler = StringArrayTypeHandler.class)
-    @Deprecated
-    private String[] keywords;
-    @Deprecated
-    private String summary;
-    @Deprecated
-    private String ideologyLabel;
-    @Deprecated
-    private String ideologyIntensity;
-    @Deprecated
-    private String overallStance;
-    @Deprecated
-    private String coreStanceStrength;
-    @Deprecated
-    private String eventHeat;
-    @Deprecated
-    private String accountTypeHint;
-    @Deprecated
-    private String riskLevel;
-    @TableField(typeHandler = StringArrayTypeHandler.class)
-    @Deprecated
-    private String[] riskTypes;
-    @Deprecated
-    private String riskEvidence;
-    @TableField(typeHandler = StringArrayTypeHandler.class)
-    @Deprecated
-    private String[] languageStyleTags;
-    @Deprecated
-    private String sentimentPrimaryEmotion;
-    @TableField(typeHandler = StringArrayTypeHandler.class)
-    @Deprecated
-    private String[] emotionLabels;
-    @TableField(typeHandler = JsonbStringTypeHandler.class)
-    @Deprecated
-    private String bendTactics;
-    @Deprecated
-    private String contentPurposePrimary;
-    @Deprecated
-    private String publicAttitudeGroup;
-    @Deprecated
-    private String publicAttitudeLabel;
-    @Deprecated
-    private String publicAttitudeIntensity;
-    @Deprecated
-    private String eventTypeLabel;
-    @Deprecated
-    private BigDecimal t1OverallConfidence;
-    @TableField(typeHandler = StringArrayTypeHandler.class)
-    @Deprecated
-    private String[] t1ReviewReasons;
-    @TableField(typeHandler = StringArrayTypeHandler.class)
-    @Deprecated
-    private String[] t1FailedModules;
-    @Deprecated
-    private Boolean needHumanReview;
 
     private String humanReviewStatus;
     private Boolean propagationSyncedToNeo4j;

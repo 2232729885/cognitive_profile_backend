@@ -100,10 +100,7 @@ public class ContentPropagationBackfillJob {
         putIfNotNull(contentProps, "publishedAt",
                 content.getPublishedAt() != null ? content.getPublishedAt().toString() : null);
         putIfHasText(contentProps, "url", content.getUrl());
-        putIfHasText(contentProps, "topicCategory", content.getTopicCategory());
-        putIfHasText(contentProps, "sentimentLabel", content.getSentimentLabel());
-        putIfNotNull(contentProps, "aigcScore",
-                content.getAigcScore() != null ? content.getAigcScore().doubleValue() : null);
+        putIfHasText(contentProps, "t1Annotation", content.getT1Annotation());
         contentProps.put("source", "backend_structural");
         neo4jGraphService.mergeNode("MediaContent", content.getId().toString(), contentProps);
     }
