@@ -7,13 +7,11 @@ import com.idata.profile.common.constant.AllowedRelationTypes;
 import com.idata.profile.common.constant.PipelineStatus;
 import com.idata.profile.common.util.T1AnnotationView;
 import com.idata.profile.entity.account.SocialAccount;
-import com.idata.profile.entity.content.MediaAsset;
 import com.idata.profile.entity.content.MediaContent;
 import com.idata.profile.entity.raw.RawRecord;
 import com.idata.profile.entity.task.PipelineTask;
 import com.idata.profile.infra.neo4j.Neo4jGraphService;
 import com.idata.profile.mapper.account.SocialAccountMapper;
-import com.idata.profile.mapper.content.MediaAssetMapper;
 import com.idata.profile.mapper.content.MediaContentMapper;
 import com.idata.profile.mapper.raw.RawRecordMapper;
 import com.idata.profile.mapper.task.PipelineTaskMapper;
@@ -41,7 +39,6 @@ public class T2ExtractionStep {
     private final PipelineTaskMapper pipelineTaskMapper;
     private final Neo4jGraphService neo4jGraphService;
     private final SocialAccountMapper socialAccountMapper;
-    private final MediaAssetMapper mediaAssetMapper;
     private final EntityResolutionService entityResolutionService;
 
     public void run(PipelineTask task) {
@@ -197,51 +194,9 @@ public class T2ExtractionStep {
                 mediaContentMapper.markPropagationSyncedToNeo4j(content.getId());
             }
 
-            writeMediaAssetNodes(content);
         } catch (Exception e) {
             log.warn("Structural MediaContent Neo4j write failed, taskId={}, contentId={}",
                     task.getId(), task.getContentId(), e);
-        }
-    }
-
-    private void writeMediaAssetNodes(MediaContent content) {
-        UUID[] assetIds = content.getMediaAssetIds();
-        if (assetIds == null || assetIds.length == 0) {
-            return;
-        }
-
-        for (UUID assetId : assetIds) {
-            try {
-                MediaAsset asset = mediaAssetMapper.selectById(assetId);
-                if (asset == null || "thumbnail".equals(asset.getAssetType())) {
-                    continue;
-                }
-
-                Map<String, Object> props = new HashMap<>();
-                putIfHasText(props, "assetType", asset.getAssetType());
-                putIfHasText(props, "mimeType", asset.getMimeType());
-                putIfHasText(props, "sourceUrl", asset.getSourceUrl());
-                putIfHasText(props, "minioBucket", asset.getMinioBucket());
-                putIfHasText(props, "minioKey", asset.getMinioKey());
-                putIfNotNull(props, "fileSizeBytes", asset.getFileSizeBytes());
-                putIfNotNull(props, "width", asset.getWidth());
-                putIfNotNull(props, "height", asset.getHeight());
-                putIfNotNull(props, "durationSeconds", asset.getDurationSeconds());
-                putIfHasText(props, "asrText", asset.getAsrText());
-                props.put("source", "backend_structural");
-
-                neo4jGraphService.mergeNode("MediaAsset", asset.getId().toString(), props);
-                Map<String, Object> relationProps = new HashMap<>();
-                putIfHasText(relationProps, "assetType", asset.getAssetType());
-                relationProps.put("source", "backend_structural");
-                neo4jGraphService.mergeRelation(
-                        "MediaContent", content.getId().toString(),
-                        "MediaAsset", asset.getId().toString(),
-                        "HAS_MEDIA",
-                        relationProps);
-            } catch (Exception e) {
-                log.warn("Failed to write MediaAsset to Neo4j, assetId={}", assetId, e);
-            }
         }
     }
 

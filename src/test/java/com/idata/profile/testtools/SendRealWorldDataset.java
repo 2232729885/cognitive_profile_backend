@@ -764,7 +764,7 @@ public class SendRealWorldDataset {
         System.out.println();
         System.out.println("图片资产：assetId1 已关联到 postId1，assetId1 = " + assetId1);
         System.out.println("可在 Neo4j 里查询：");
-        System.out.println("  MATCH (c:MediaContent)-[:HAS_MEDIA]->(a:MediaAsset) RETURN c, a LIMIT 5");
+        System.out.println("  MATCH (c:MediaContent)-[:PUBLISHED_BY]->(a:SocialAccount) RETURN c, a LIMIT 5");
         System.out.println();
         System.out.println("全局验证SQL:");
         System.out.println("  SELECT language, count(*) FROM raw_records");

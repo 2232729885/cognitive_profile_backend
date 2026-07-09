@@ -123,7 +123,7 @@ public class SearchController {
 
     /**
      * Entity fuzzy search.
-     * Valid label values: Person/Organization/Event/Location/Narrative/SocialAccount/MediaContent/MediaAsset.
+     * Valid label values: Person/Organization/Event/Location/Narrative/SocialAccount/MediaContent.
      * If label is empty, all supported node types are searched.
      */
     @GetMapping("/entities")
