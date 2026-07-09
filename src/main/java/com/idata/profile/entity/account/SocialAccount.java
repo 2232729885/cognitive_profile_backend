@@ -5,27 +5,21 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
-/**
- * L1标准化层：账号/频道/群组最新状态。
- * 适用 record_type：social_account。
- * 按(platform, platformUserId)UPSERT，历史变化追加到 SocialAccountSnapshot。
- *
- * 对应表：social_accounts
- */
 @Data
 @TableName("social_accounts")
 public class SocialAccount {
 
     @TableId(type = IdType.ASSIGN_UUID)
-    private UUID id;     // 与Neo4j SocialAccount节点id保持一致
+    private UUID id;
 
     private String platform;
-    private String platformUserId;      // 联合唯一: platform+platformUserId
-    private String accountEntityType;   // user|channel|page|group|community|forum_board|news_source
-    private String platformNativeType;  // youtube_channel|telegram_group等
+    private String platformUserId;
+    private String accountEntityType;
+    private String platformNativeType;
 
     private String handle;
     private String displayName;
@@ -34,7 +28,7 @@ public class SocialAccount {
     private String profileUrl;
     private String selfDeclaredLocation;
     private Boolean verified;
-    private String verifiedType;        // none|blue|org|government|media
+    private String verifiedType;
     private Boolean isSuspended;
     private OffsetDateTime accountCreatedAt;
 
@@ -45,19 +39,12 @@ public class SocialAccount {
     private Long postCount;
     private Long viewCount;
 
-    /**
-     * T1标注（v0.5 primary_account_category）：ordinary_user|news_media|state_affiliated_media|
-     * government_agency|political_actor|political_party_or_campaign|military_security_agency|
-     * international_organization|ngo_or_civil_society|academic_or_expert|commercial_brand|
-     * platform_official|influencer_kol|community_group|anonymous_account|
-     * suspected_bot_or_automated|unknown|other
-     */
     private String accountType;
-    private java.math.BigDecimal accountTypeConfidence;
+    private BigDecimal accountTypeConfidence;
 
-    private UUID entityPersonId;        // EntityDeduplicationJob融合后回填
-    private UUID entityOrgId;           // EntityDeduplicationJob融合后回填
-
+    private UUID entityPersonId;
+    private UUID entityOrgId;
+    private OffsetDateTime identityResolvedAt;
     private OffsetDateTime latestSnapshotAt;
     private OffsetDateTime firstSeenAt;
     private OffsetDateTime lastActiveAt;

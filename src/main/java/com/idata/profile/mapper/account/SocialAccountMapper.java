@@ -71,4 +71,15 @@ public interface SocialAccountMapper extends BaseMapper<SocialAccount> {
     @Update("UPDATE social_accounts SET entity_person_id = #{entityPersonId}, updated_at = NOW() WHERE id = #{accountId}")
     int updateEntityPersonId(@Param("accountId") UUID accountId,
                              @Param("entityPersonId") UUID entityPersonId);
+
+    @Update("UPDATE social_accounts SET entity_org_id = #{entityOrgId}, updated_at = NOW() WHERE id = #{accountId}")
+    int updateEntityOrgId(@Param("accountId") UUID accountId,
+                          @Param("entityOrgId") UUID entityOrgId);
+
+    @Update("UPDATE social_accounts SET identity_resolved_at = NOW() WHERE id = #{accountId}")
+    int markIdentityResolved(@Param("accountId") UUID accountId);
+
+    @Select("SELECT * FROM social_accounts WHERE identity_resolved_at IS NULL " +
+            "AND account_type IS NOT NULL ORDER BY created_at ASC LIMIT #{limit}")
+    List<SocialAccount> selectPendingIdentityResolution(@Param("limit") int limit);
 }
