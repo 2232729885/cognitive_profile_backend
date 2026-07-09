@@ -120,10 +120,12 @@ public class T1AnnotationStep {
                     mc.setOverallStance(hvs.getCoreStance().getStanceLabel());
                     mc.setCoreStanceStrength(hvs.getCoreStance().getStanceStrength());
                 }
-                if (hvs.getPublicAttitude() != null) {
-                    mc.setPublicAttitudeGroup(hvs.getPublicAttitude().getPublicGroup());
-                    mc.setPublicAttitudeLabel(hvs.getPublicAttitude().getAttitudeLabel());
-                    mc.setPublicAttitudeIntensity(hvs.getPublicAttitude().getAttitudeIntensity());
+                if (hvs.getBendTactics() != null && !hvs.getBendTactics().isEmpty()) {
+                    try {
+                        mc.setBendTactics(OBJECT_MAPPER.writeValueAsString(hvs.getBendTactics()));
+                    } catch (JacksonException e) {
+                        log.warn("Failed to serialize T1 bend tactics, contentId={}", mc.getId(), e);
+                    }
                 }
                 if (hvs.getOpinionEmotion() != null) {
                     mc.setSentimentLabel(hvs.getOpinionEmotion().getSentimentPolarity());
@@ -234,9 +236,14 @@ public class T1AnnotationStep {
                         putStr(props, "coreStanceLabel", hvs.getCoreStance().getStanceLabel());
                         putStr(props, "coreStanceStrength", hvs.getCoreStance().getStanceStrength());
                     }
-                    if (hvs.getPublicAttitude() != null) {
-                        putStr(props, "publicAttitudeGroup", hvs.getPublicAttitude().getPublicGroup());
-                        putStr(props, "publicAttitudeLabel", hvs.getPublicAttitude().getAttitudeLabel());
+                    if (hvs.getBendTactics() != null && !hvs.getBendTactics().isEmpty()) {
+                        String[] tactics = hvs.getBendTactics().stream()
+                                .map(T1AnnotateResponse.Annotations.HighValueSubjective.BendTactic::getTactic)
+                                .filter(t -> t != null && !t.isBlank())
+                                .toArray(String[]::new);
+                        if (tactics.length > 0) {
+                            props.put("bendTactics", tactics);
+                        }
                     }
                     if (hvs.getOpinionEmotion() != null) {
                         putStr(props, "sentimentPolarity", hvs.getOpinionEmotion().getSentimentPolarity());

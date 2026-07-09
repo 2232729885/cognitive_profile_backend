@@ -113,11 +113,17 @@ public class MediaContent {
     private String[] emotionLabels;
     /** 维度8：内容目的主分类 */
     private String contentPurposePrimary;
+    /** @deprecated v0.5 修正版已去掉 public_attitude 维度，此字段不再写入，仅保留历史数据 */
     /** 维度4：民众/公众群体类型 */
+    @Deprecated
     private String publicAttitudeGroup;
+    /** @deprecated v0.5 修正版已去掉 public_attitude 维度，此字段不再写入，仅保留历史数据 */
     /** 维度4：民众态度标签 */
+    @Deprecated
     private String publicAttitudeLabel;
+    /** @deprecated v0.5 修正版已去掉 public_attitude 维度，此字段不再写入，仅保留历史数据 */
     /** 维度4：民众态度强度 */
+    @Deprecated
     private String publicAttitudeIntensity;
     /** 维度15：事件类型 */
     private String eventTypeLabel;

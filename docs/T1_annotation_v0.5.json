@@ -75,29 +75,14 @@
         "evidence_ids": []
       },
 
-      "entities_hint_stance": [
+      "bend_tactics": [
         {
-          "stance_unit_id": "string",
-          "stance_holder": {
-            "stance_holder_id": "string | null",
-            "text": "string | null"
-          },
-          "stance_target": {
-            "stance_target_id": "string | null",
-            "text": "string | null"
-          },
-          "stance_label": "support | oppose | neutral | mixed | unclear",
-          "evidence_ids": []
+          "tactic": "Engage | Explain | Excite | Enhance | Dismiss | Distort | Dismay | Distract",
+          "confidence": "number | null",
+          "evidence": "string | null",
+          "reason": "string | null"
         }
       ],
-
-      "public_attitude": {
-        "public_group": "general_public | netizens | local_residents | protesters | supporters | opponents | consumers | voters | community_members | unclear | not_applicable",
-        "attitude_label": "supportive | approving | critical | distrustful | hostile | sympathetic | concerned | dissatisfied | fearful | mocking | indifferent | mixed | unclear | not_applicable",
-        "attitude_intensity": "low | medium | high | unclear | not_applicable",
-        "public_attitude_confidence": "number | null",
-        "evidence_ids": []
-      },
 
       "opinion_emotion": {
         "sentiment_polarity": "positive | negative | neutral | mixed | unclear",
@@ -225,7 +210,7 @@
       "low_confidence | insufficient_context | conflicting_signals | multimodal_inconsistency | aigc_suspicious | high_risk_content | missing_metadata | module_failure | too_short_input | manual_policy_required | none | other"
     ],
     "failed_modules": [
-      "text_aigc_detection | image_aigc_detection | video_aigc_detection | multimodal_aigc_detection | ideology | core_stance | entities_hint_stance | public_attitude | opinion_emotion | event_heat | language_style | content_purpose | risk_level | topic_tags | account_type | entities_hint | keywords | summary | event_type | none | other"
+      "text_aigc_detection | image_aigc_detection | video_aigc_detection | multimodal_aigc_detection | ideology | core_stance | bend_tactics | opinion_emotion | event_heat | language_style | content_purpose | risk_level | topic_tags | account_type | entities_hint | keywords | summary | event_type | none | other"
     ]
   },
 

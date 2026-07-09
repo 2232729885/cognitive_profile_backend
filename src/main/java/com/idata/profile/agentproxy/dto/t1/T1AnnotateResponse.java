@@ -125,8 +125,7 @@ public class T1AnnotateResponse {
         public static class HighValueSubjective {
             private Ideology ideology;
             private CoreStance coreStance;
-            private List<EntityHintStance> entitiesHintStance;
-            private PublicAttitude publicAttitude;
+            private List<BendTactic> bendTactics;
             private OpinionEmotion opinionEmotion;
             private EventHeat eventHeat;
             private LanguageStyle languageStyle;
@@ -155,45 +154,15 @@ public class T1AnnotateResponse {
                 private List<String> evidenceIds;
             }
 
-            /** 维度3：实体/对象级立场标注（数组，一条内容可以有多条） */
+            /** 维度：BEND 叙事操纵手法（对齐 T1_标注属性.md 维度10） */
             @Data
-            public static class EntityHintStance {
-                private String stanceUnitId;
-                private StanceHolder stanceHolder;
-                private StanceTarget stanceTarget;
-                /** support | oppose | neutral | mixed | unclear */
-                private String stanceLabel;
-                private List<String> evidenceIds;
-
-                @Data
-                public static class StanceHolder {
-                    /** 建议优先引用 basic_objective.entitiesHint[].entityHintId */
-                    private String stanceHolderId;
-                    private String text;
-                }
-
-                @Data
-                public static class StanceTarget {
-                    private String stanceTargetId;
-                    private String text;
-                }
+            public static class BendTactic {
+                /** Engage | Explain | Excite | Enhance | Dismiss | Distort | Dismay | Distract */
+                private String tactic;
+                private Double confidence;
+                private String evidence;
+                private String reason;
             }
-
-            /** 维度4：民众态度 */
-            @Data
-            public static class PublicAttitude {
-                /** general_public/netizens/local_residents/protesters/supporters/opponents/
-                 *  consumers/voters/community_members/unclear/not_applicable */
-                private String publicGroup;
-                /** supportive/approving/critical/distrustful/hostile/sympathetic/concerned/
-                 *  dissatisfied/fearful/mocking/indifferent/mixed/unclear/not_applicable */
-                private String attitudeLabel;
-                /** low | medium | high | unclear | not_applicable */
-                private String attitudeIntensity;
-                private Double publicAttitudeConfidence;
-                private List<String> evidenceIds;
-            }
-
             /** 维度5：观点情绪 */
             @Data
             public static class OpinionEmotion {
@@ -384,7 +353,7 @@ public class T1AnnotateResponse {
          *  manual_policy_required/none/other */
         private List<String> reviewReasons;
         /** text_aigc_detection/image_aigc_detection/video_aigc_detection/multimodal_aigc_detection/
-         *  ideology/core_stance/entities_hint_stance/public_attitude/opinion_emotion/event_heat/
+         *  ideology/core_stance/bend_tactics/opinion_emotion/event_heat/
          *  language_style/content_purpose/risk_level/topic_tags/account_type/entities_hint/
          *  keywords/summary/event_type/none/other */
         private List<String> failedModules;

@@ -86,13 +86,12 @@ public class LlmAgentController {
                 "highValueSubjective": {
                   "ideology": {"ideologyLabel": "left_leaning|right_leaning|liberal|conservative|nationalist|populist|pro_government|anti_government|pro_western|anti_western|neutral|unclear|other", "targetEntityHintIds": [], "ideologyConfidence": 0.0, "evidenceIds": []},
                   "coreStance": {"stanceLabel": "support|oppose|neutral|mixed|unclear", "stanceStrength": "weak|medium|strong|unclear", "coreStanceConfidence": 0.0, "evidenceIds": []},
-                  "entitiesHintStance": [{"stanceUnitId": "stance_001", "stanceHolder": {"stanceHolderId": "ent_001", "text": "..."}, "stanceTarget": {"stanceTargetId": "ent_002", "text": "..."}, "stanceLabel": "support|oppose|neutral|mixed|unclear", "evidenceIds": []}],
-                  "publicAttitude": {"publicGroup": "general_public|netizens|local_residents|protesters|supporters|opponents|consumers|voters|community_members|unclear|not_applicable", "attitudeLabel": "supportive|approving|critical|distrustful|hostile|sympathetic|concerned|dissatisfied|fearful|mocking|indifferent|mixed|unclear|not_applicable", "attitudeIntensity": "low|medium|high|unclear|not_applicable", "publicAttitudeConfidence": 0.0, "evidenceIds": []},
                   "opinionEmotion": {"sentimentPolarity": "positive|negative|neutral|mixed|unclear", "emotionLabels": ["anger|fear|sadness|anxiety|disgust|contempt|joy|hope|sympathy|surprise|sarcasm|none|unclear"], "emotionIntensity": "low|medium|high|unclear", "opinionEmotionConfidence": 0.0, "evidenceIds": []},
                   "eventHeat": {"heatLevel": "low|medium|high|explosive|unclear", "heatScore": 0.0, "heatSignalTypes": ["textual_heat_signal|engagement_metrics|platform_trending_signal|media_coverage_signal|temporal_burst_signal|unclear"], "eventHeatConfidence": 0.0, "evidenceIds": []},
                   "languageStyle": {"styleLabels": ["neutral|aggressive|sarcastic|mocking|alarmist|threatening|sensationalized|emotional|conspiratorial|accusatory|slogan_like|rhetorical_questioning|rational_analytical|unclear"], "languageStyleConfidence": 0.0, "evidenceIds": []},
                   "contentPurpose": {"primaryPurpose": "information_sharing|opinion_expression|persuasion|mobilization|propaganda|attack_or_smear|debunking|warning|attention_seeking|rumor_spreading|unclear", "secondaryPurposes": [], "contentPurposeConfidence": 0.0, "evidenceIds": []},
-                  "riskLevel": {"riskLabel": "none|low|medium|high|severe|unclear", "riskTypes": ["misinformation|rumor|polarization|hostility|panic_amplification|mobilization_risk|reputation_attack|manipulation|aigc_deception|none|unclear"], "riskLevelConfidence": 0.0, "evidenceIds": []}
+                  "riskLevel": {"riskLabel": "none|low|medium|high|severe|unclear", "riskTypes": ["misinformation|rumor|polarization|hostility|panic_amplification|mobilization_risk|reputation_attack|manipulation|aigc_deception|none|unclear"], "riskLevelConfidence": 0.0, "evidenceIds": []},
+                  "bendTactics": [{"tactic": "Engage|Explain|Excite|Enhance|Dismiss|Distort|Dismay|Distract", "confidence": 0.0, "evidence": "...", "reason": "..."}]
                 },
                 "basicObjective": {
                   "topicTags": {"primaryDomain": "politics|military|economy_finance|technology_cyber|public_health|social_livelihood|ethnic_religious|energy_environment|disaster_accident|crime_public_safety|culture_education|migration_refugee|other|unclear", "subtopicTags": [], "topicTagsConfidence": 0.0, "evidenceIds": []},
@@ -120,6 +119,7 @@ public class LlmAgentController {
             5. Use "unclear"/"not_applicable" per the field's own enum when signal is insufficient - never guess
                or invent a confident label without support.
             6. entities_hint / keywords / evidence_clues: keep to at most 10 items each.
+            7. bendTactics: only include tactics with clear textual evidence; return an empty array if none apply.
             """;
 
     private static final String T1_ACCOUNT_SYSTEM_PROMPT = """
@@ -500,7 +500,7 @@ public class LlmAgentController {
         sb.append("Annotate the following image. This input has no text content, only an image.\n\n");
         sb.append("Image URL: ").append(request.getImageUrl() != null ? request.getImageUrl() : "(inline data)").append("\n");
         sb.append("\nSince there is no text, textAigcDetection must be not_applicable, and any subjective ")
-                .append("dimensions with insufficient visual signal (ideology, coreStance, publicAttitude, ")
+                .append("dimensions with insufficient visual signal (ideology, coreStance, ")
                 .append("languageStyle, contentPurpose) should use unclear/not_applicable rather than guessing. ")
                 .append("Use image_ocr as the keyword source for any text visible in the image, and image_region ")
                 .append("as the evidence_type for visual evidence.");
@@ -561,7 +561,7 @@ public class LlmAgentController {
         qc.setNeedHumanReview(true);
         qc.setReviewReasons(List.of("module_failure"));
         qc.setFailedModules(List.of(
-                "text_aigc_detection", "ideology", "core_stance", "entities_hint_stance", "public_attitude",
+                "text_aigc_detection", "ideology", "core_stance", "bend_tactics",
                 "opinion_emotion", "event_heat", "language_style", "content_purpose", "risk_level",
                 "topic_tags", "account_type", "entities_hint", "keywords", "summary", "event_type"));
         resp.setQualityControl(qc);

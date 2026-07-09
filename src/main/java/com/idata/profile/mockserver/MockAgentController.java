@@ -97,31 +97,12 @@ public class MockAgentController {
         coreStance.setCoreStanceConfidence(0.85);
         coreStance.setEvidenceIds(List.of("ev_002"));
 
-        T1AnnotateResponse.Annotations.HighValueSubjective.EntityHintStance.StanceHolder stanceHolder =
-                new T1AnnotateResponse.Annotations.HighValueSubjective.EntityHintStance.StanceHolder();
-        stanceHolder.setStanceHolderId("ent_001");
-        stanceHolder.setText("Leila Farzan");
-
-        T1AnnotateResponse.Annotations.HighValueSubjective.EntityHintStance.StanceTarget stanceTarget =
-                new T1AnnotateResponse.Annotations.HighValueSubjective.EntityHintStance.StanceTarget();
-        stanceTarget.setStanceTargetId("ent_002");
-        stanceTarget.setText("U.S. Central Command");
-
-        T1AnnotateResponse.Annotations.HighValueSubjective.EntityHintStance entityHintStance =
-                new T1AnnotateResponse.Annotations.HighValueSubjective.EntityHintStance();
-        entityHintStance.setStanceUnitId("stance_001");
-        entityHintStance.setStanceHolder(stanceHolder);
-        entityHintStance.setStanceTarget(stanceTarget);
-        entityHintStance.setStanceLabel("oppose");
-        entityHintStance.setEvidenceIds(List.of("ev_002"));
-
-        T1AnnotateResponse.Annotations.HighValueSubjective.PublicAttitude publicAttitude =
-                new T1AnnotateResponse.Annotations.HighValueSubjective.PublicAttitude();
-        publicAttitude.setPublicGroup("netizens");
-        publicAttitude.setAttitudeLabel("critical");
-        publicAttitude.setAttitudeIntensity("medium");
-        publicAttitude.setPublicAttitudeConfidence(0.60);
-        publicAttitude.setEvidenceIds(List.of("ev_003"));
+        T1AnnotateResponse.Annotations.HighValueSubjective.BendTactic bendTactic =
+                new T1AnnotateResponse.Annotations.HighValueSubjective.BendTactic();
+        bendTactic.setTactic("Distort");
+        bendTactic.setConfidence(0.68);
+        bendTactic.setEvidence("对外部势力行为表达质疑和反对，存在对立放大表述");
+        bendTactic.setReason("对军事对峙的责任归属进行单方面定性表述");
 
         T1AnnotateResponse.Annotations.HighValueSubjective.OpinionEmotion opinionEmotion =
                 new T1AnnotateResponse.Annotations.HighValueSubjective.OpinionEmotion();
@@ -163,8 +144,7 @@ public class MockAgentController {
                 new T1AnnotateResponse.Annotations.HighValueSubjective();
         highValueSubjective.setIdeology(ideology);
         highValueSubjective.setCoreStance(coreStance);
-        highValueSubjective.setEntitiesHintStance(List.of(entityHintStance));
-        highValueSubjective.setPublicAttitude(publicAttitude);
+        highValueSubjective.setBendTactics(List.of(bendTactic));
         highValueSubjective.setOpinionEmotion(opinionEmotion);
         highValueSubjective.setEventHeat(eventHeat);
         highValueSubjective.setLanguageStyle(languageStyle);
@@ -346,13 +326,6 @@ public class MockAgentController {
         coreStance.setStanceStrength("unclear");
         coreStance.setEvidenceIds(List.of());
 
-        T1AnnotateResponse.Annotations.HighValueSubjective.PublicAttitude publicAttitude =
-                new T1AnnotateResponse.Annotations.HighValueSubjective.PublicAttitude();
-        publicAttitude.setPublicGroup("not_applicable");
-        publicAttitude.setAttitudeLabel("not_applicable");
-        publicAttitude.setAttitudeIntensity("not_applicable");
-        publicAttitude.setEvidenceIds(List.of());
-
         T1AnnotateResponse.Annotations.HighValueSubjective.OpinionEmotion opinionEmotion =
                 new T1AnnotateResponse.Annotations.HighValueSubjective.OpinionEmotion();
         opinionEmotion.setSentimentPolarity("neutral");
@@ -389,8 +362,7 @@ public class MockAgentController {
                 new T1AnnotateResponse.Annotations.HighValueSubjective();
         highValueSubjective.setIdeology(ideology);
         highValueSubjective.setCoreStance(coreStance);
-        highValueSubjective.setEntitiesHintStance(List.of());
-        highValueSubjective.setPublicAttitude(publicAttitude);
+        highValueSubjective.setBendTactics(List.of());
         highValueSubjective.setOpinionEmotion(opinionEmotion);
         highValueSubjective.setEventHeat(eventHeat);
         highValueSubjective.setLanguageStyle(languageStyle);
