@@ -37,7 +37,7 @@ public class AgentProxyClient {
      * 调用指定Agent的指定action。
      *
      * @param agentCode T1~T6
-     * @param action    具体能力名，如 "annotate_text"（见 sub_agent_registry.actions 字段定义）
+     * @param action    具体能力名，如 "annotate"（见 sub_agent_registry.actions 字段定义）
      * @param request   请求体，由各 agentproxy.dto.tN 包下DTO序列化
      * @param responseType 响应体类型
      */

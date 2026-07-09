@@ -5,14 +5,17 @@ import com.idata.profile.agentproxy.dto.t1.T1AnnotateRequest;
 import com.idata.profile.agentproxy.dto.t1.T1AnnotateResponse;
 import com.idata.profile.common.util.ImageAnnotationUtil;
 import com.idata.profile.entity.content.MediaAsset;
+import com.idata.profile.entity.content.MediaContent;
 import com.idata.profile.mapper.content.MediaAssetMapper;
 import com.idata.profile.mapper.content.MediaContentMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
+import java.util.UUID;
 
 @Slf4j
 @Component
@@ -21,6 +24,7 @@ public class ImageEmbeddingJob {
 
     private static final int BATCH_LIMIT = 200;
     private static final int T1_BACKFILL_LIMIT = 200;
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final ImageEmbeddingService imageEmbeddingService;
     private final MediaAssetMapper mediaAssetMapper;
@@ -30,7 +34,7 @@ public class ImageEmbeddingJob {
 
     @Scheduled(fixedDelay = 10 * 60 * 1000)
     public void run() {
-        log.info("[ImageEmbeddingJob] 开始处理");
+        log.info("[ImageEmbeddingJob] start");
 
         backfillContentIds();
         backfillT1ImageAnnotations();
@@ -49,40 +53,66 @@ public class ImageEmbeddingJob {
     }
 
     private void backfillT1ImageAnnotations() {
-        List<MediaAsset> pending = mediaAssetMapper.selectPendingT1Annotation(T1_BACKFILL_LIMIT);
-        if (pending.isEmpty()) {
+        List<UUID> contentIds = mediaAssetMapper.selectContentIdsPendingT1Annotation(T1_BACKFILL_LIMIT);
+        if (contentIds.isEmpty()) {
             return;
         }
 
-        log.info("[ImageEmbeddingJob] T1图像标注回填, count={}", pending.size());
+        log.info("[ImageEmbeddingJob] T1 multimodal re-annotation backfill, count={}", contentIds.size());
         int success = 0;
-        for (MediaAsset asset : pending) {
+        for (UUID contentId : contentIds) {
             try {
-                String imageUrl = imageAnnotationUtil.buildImageUrl(asset);
-                if (imageUrl == null) {
-                    log.debug("[ImageEmbeddingJob] 图片无法构造URL，跳过, assetId={}", asset.getId());
+                MediaContent mc = mediaContentMapper.selectById(contentId);
+                if (mc == null) {
                     continue;
                 }
+                List<MediaAsset> assets = mediaAssetMapper.selectByContentId(contentId);
 
                 T1AnnotateRequest request = new T1AnnotateRequest();
-                request.setImageUrl(imageUrl);
-                request.setAnnotationTypes(List.of("objects", "scene", "text_ocr"));
+                request.setTitle(mc.getTitle());
+                request.setText(mc.getBodyText());
+                request.setLanguage(mc.getLanguage());
+                request.setMedias(assets.stream()
+                        .filter(a -> "image".equals(a.getAssetType()) || "video".equals(a.getAssetType()))
+                        .map(a -> {
+                            T1AnnotateRequest.MediaItem item = new T1AnnotateRequest.MediaItem();
+                            item.setId(a.getId().toString());
+                            item.setUrl(imageAnnotationUtil.buildImageUrl(a));
+                            item.setMediaType(a.getAssetType());
+                            return item;
+                        })
+                        .filter(item -> item.getUrl() != null)
+                        .toList());
+                T1AnnotateRequest.Context context = new T1AnnotateRequest.Context();
+                context.setContentId(mc.getId().toString());
+                context.setPlatform(mc.getPlatform());
+                context.setContentType(mc.getContentType());
+                context.setAuthorHandle(mc.getAuthorPlatformUserId());
+                context.setPublishedAt(mc.getPublishedAt() != null ? mc.getPublishedAt().toString() : null);
+                context.setHashtags(mc.getHashtags() != null ? List.of(mc.getHashtags()) : null);
+                context.setParentContentId(mc.getParentContentId());
+                context.setUrl(mc.getUrl());
+                request.setContext(context);
 
                 T1AnnotateResponse response = agentProxyClient.call(
-                        "T1", "annotate_image", request, T1AnnotateResponse.class);
+                        "T1", "annotate", request, T1AnnotateResponse.class);
                 if (response == null) {
                     continue;
                 }
 
-                imageAnnotationUtil.applyImageAnnotations(asset, response);
-                asset.setT1Annotated(true);
-                mediaAssetMapper.updateById(asset);
-                imageAnnotationUtil.updateNeo4jAnnotations(asset);
+                mc.setT1Annotation(OBJECT_MAPPER.writeValueAsString(response));
+                mc.setT1AnnotatedAt(java.time.OffsetDateTime.now());
+                mediaContentMapper.updateById(mc);
+
+                for (MediaAsset asset : assets) {
+                    mediaAssetMapper.markT1Annotated(asset.getId());
+                }
+
                 success++;
             } catch (Exception e) {
-                log.warn("[ImageEmbeddingJob] T1图像标注回填失败, assetId={}", asset.getId(), e);
+                log.warn("[ImageEmbeddingJob] T1 multimodal re-annotation failed, contentId={}", contentId, e);
             }
         }
-        log.info("[ImageEmbeddingJob] T1图像标注回填完成, success={}/{}", success, pending.size());
+        log.info("[ImageEmbeddingJob] T1 multimodal re-annotation completed, success={}/{}", success, contentIds.size());
     }
 }

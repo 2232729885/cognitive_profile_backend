@@ -6,41 +6,42 @@ import java.util.List;
 
 @Data
 public class T1AnnotateRequest {
-    /** 待标注文本（RZDK字段名为 text，不是 bodyText）*/
+    /** 标题，新闻类内容可能有单独标题，社交内容通常为空 */
+    private String title;
+
+    /** 正文文本，可以为空（纯图片/视频内容） */
     private String text;
 
-    /** 语言代码，默认 zh */
+    /** 语言代码 */
     private String language;
 
-    /**
-     * 标注类型，控制T1返回哪些维度。
-     * 可选值：topics/keywords/summary/language_style/sentiment/
-     *         event_type/content_purpose/aigc_suspicion/entities_hint
-     * 不传则默认全部9项。
-     */
-    private List<String> annotationTypes;
+    /** 图片/视频列表，可以为空（纯文本内容），也可以同时有多张图和多个视频 */
+    private List<MediaItem> medias;
 
-    /** 图像 URL，图像标注时必填（MinIO 可访问地址）*/
-    private String imageUrl;
-
-    /** 图像 base64，imageUrl 不可用时传此字段（可选）*/
-    private String imageData;
-
-    /** 内容上下文，辅助提升标注质量（v1.1 新增，可选） */
+    /** 内容上下文，辅助提升标注质量 */
     private Context context;
 
     @Data
+    public static class MediaItem {
+        /** 对应 media_assets.id，用于结果里 evidence_clues.media_id 回填定位 */
+        private String id;
+
+        /** MinIO 可访问地址 */
+        private String url;
+
+        /** image | video */
+        private String mediaType;
+    }
+
+    @Data
     public static class Context {
-        /** 内容ID，用于日志追踪 */
-        private String docId;
-        /** 来源平台，辅助账户类别判断 */
+        private String contentId;
         private String platform;
         private String url;
         /** post/comment/reply/article */
         private String contentType;
         private String authorHandle;
         private String publishedAt;
-        /** 话题标签，辅助话题判断 */
         private List<String> hashtags;
         private String parentContentId;
     }

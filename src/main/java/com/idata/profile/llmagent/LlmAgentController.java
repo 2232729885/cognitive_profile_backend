@@ -77,9 +77,9 @@ public class LlmAgentController {
                   "textAigcConfidence": 0.0,
                   "evidenceIds": ["ev_001"]
                 },
-                "imageAigcDetection": {"imageAigcLabel": "not_applicable", "imageAigcSignalLabels": ["none"], "evidenceIds": []},
-                "videoAigcDetection": {"videoAigcLabel": "not_applicable", "videoAigcSignalLabels": ["none"], "evidenceIds": []},
-                "multimodalAigcDetection": {"multimodalAigcLabel": "not_applicable", "modalityCombination": "not_applicable", "multimodalSignalLabels": ["none"], "evidenceIds": []},
+                "imageAigcDetection": {"imageAigcLabel": "ai_generated|human_generated|mixed|suspicious|unclear|not_applicable", "imageAigcSignalLabels": ["deepfake_artifact|rendering_artifact|ocr_inconsistency|metadata_inconsistency|none|unclear"], "evidenceIds": []},
+                "videoAigcDetection": {"videoAigcLabel": "ai_generated|human_generated|mixed|suspicious|unclear|not_applicable", "videoAigcSignalLabels": ["deepfake_artifact|temporal_inconsistency|audio_visual_mismatch|metadata_inconsistency|none|unclear"], "evidenceIds": []},
+                "multimodalAigcDetection": {"multimodalAigcLabel": "consistent|inconsistent|suspicious|unclear|not_applicable", "modalityCombination": "text|image|video|text_image|text_video|text_image_video|not_applicable", "multimodalSignalLabels": ["cross_modal_consistency|cross_modal_conflict|none|unclear"], "evidenceIds": []},
                 "aigcDetectionConfidence": 0.0
               },
               "annotations": {
@@ -108,8 +108,8 @@ public class LlmAgentController {
             }
 
             Rules:
-            1. Input is text only: imageAigcDetection/videoAigcDetection/multimodalAigcDetection must use
-               "not_applicable" and evidenceIds: [].
+            1. Use "not_applicable" and evidenceIds: [] for modalities that are not present in the input.
+               When text and at least one image/video are present, make a real multimodal judgment.
             2. accountType here is only a lightweight best-effort guess from weak signals (e.g. platform).
                If no account profile info is available, use primaryAccountCategory="unknown",
                automationSuspicion="unclear", accountTypeConfidence=null. The authoritative account
@@ -324,47 +324,29 @@ public class LlmAgentController {
     @Value("${llm.embedding.model}")
     private String embeddingModel;
 
-    @PostMapping("/t1/annotate_text")
-    public T1AnnotateResponse annotateText(@RequestBody T1AnnotateRequest request) {
-        log.info("[LLM-T1] annotate_text, textLength={}",
-                request.getText() != null ? request.getText().length() : 0);
+    @PostMapping("/t1/annotate")
+    public T1AnnotateResponse annotate(@RequestBody T1AnnotateRequest request) {
+        boolean hasText = request.getText() != null && !request.getText().isBlank();
+        boolean hasImages = request.getMedias() != null
+                && request.getMedias().stream().anyMatch(m -> "image".equals(m.getMediaType()));
+        boolean hasVideos = request.getMedias() != null
+                && request.getMedias().stream().anyMatch(m -> "video".equals(m.getMediaType()));
 
-        String userPrompt = buildT1UserPrompt(request);
+        log.info("[LLM-T1] annotate, hasText={}, hasImages={}, hasVideos={}", hasText, hasImages, hasVideos);
+
+        String userPrompt = buildT1UserPrompt(request, hasText, hasImages, hasVideos);
 
         try {
             String raw = callJsonLlm(T1_SYSTEM_PROMPT, userPrompt);
 
-            T1AnnotateResponse response = parseT1Response(raw, request, "text");
+            T1AnnotateResponse response = parseT1Response(raw, request, hasText, hasImages, hasVideos);
             response.setProcessedAt(java.time.OffsetDateTime.now().toString());
             response.setLanguage(request.getLanguage());
             return response;
 
         } catch (Exception e) {
-            logLlmFailure("[LLM-T1] annotate_text failed, returning fallback", e);
-            T1AnnotateResponse response = buildFallbackT1Response(request, "text");
-            response.setLanguage(request.getLanguage());
-            return response;
-        }
-    }
-
-    @PostMapping("/t1/annotate_image")
-    public T1AnnotateResponse annotateImage(@RequestBody T1AnnotateRequest request) {
-        log.info("[LLM-T1] annotate_image, imageUrl={}, hasImageData={}",
-                request.getImageUrl(), request.getImageData() != null);
-
-        String userPrompt = buildT1ImageUserPrompt(request);
-
-        try {
-            String raw = callJsonLlm(T1_SYSTEM_PROMPT, userPrompt);
-
-            T1AnnotateResponse response = parseT1Response(raw, request, "image");
-            response.setProcessedAt(java.time.OffsetDateTime.now().toString());
-            response.setLanguage(request.getLanguage());
-            return response;
-
-        } catch (Exception e) {
-            logLlmFailure("[LLM-T1] annotate_image failed, returning fallback", e);
-            T1AnnotateResponse response = buildFallbackT1Response(request, "image");
+            logLlmFailure("[LLM-T1] annotate failed, returning fallback", e);
+            T1AnnotateResponse response = buildFallbackT1Response(request, hasText, hasImages, hasVideos);
             response.setLanguage(request.getLanguage());
             return response;
         }
@@ -478,9 +460,12 @@ public class LlmAgentController {
         }
     }
 
-    private String buildT1UserPrompt(T1AnnotateRequest request) {
+    private String buildT1UserPrompt(T1AnnotateRequest request, boolean hasText, boolean hasImages, boolean hasVideos) {
         StringBuilder sb = new StringBuilder();
         sb.append("Annotate the following content.\n\n");
+        if (request.getTitle() != null && !request.getTitle().isBlank()) {
+            sb.append("Title: ").append(request.getTitle()).append("\n");
+        }
         sb.append("Language: ").append(request.getLanguage() != null ? request.getLanguage() : "unknown").append("\n");
         if (request.getContext() != null) {
             T1AnnotateRequest.Context context = request.getContext();
@@ -491,19 +476,23 @@ public class LlmAgentController {
                 sb.append("Hashtags: ").append(String.join(", ", context.getHashtags())).append("\n");
             }
         }
-        sb.append("\nText content:\n").append(request.getText());
-        return sb.toString();
-    }
-
-    private String buildT1ImageUserPrompt(T1AnnotateRequest request) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("Annotate the following image. This input has no text content, only an image.\n\n");
-        sb.append("Image URL: ").append(request.getImageUrl() != null ? request.getImageUrl() : "(inline data)").append("\n");
-        sb.append("\nSince there is no text, textAigcDetection must be not_applicable, and any subjective ")
-                .append("dimensions with insufficient visual signal (ideology, coreStance, ")
-                .append("languageStyle, contentPurpose) should use unclear/not_applicable rather than guessing. ")
-                .append("Use image_ocr as the keyword source for any text visible in the image, and image_region ")
-                .append("as the evidence_type for visual evidence.");
+        if (hasText) {
+            sb.append("\nText content:\n").append(request.getText()).append("\n");
+        }
+        if (hasImages) {
+            sb.append("\nImages (with mediaId for evidence_clues.media_id attribution):\n");
+            request.getMedias().stream().filter(m -> "image".equals(m.getMediaType()))
+                    .forEach(m -> sb.append("- mediaId=").append(m.getId()).append(", url=").append(m.getUrl()).append("\n"));
+        }
+        if (hasVideos) {
+            sb.append("\nVideos (with mediaId for evidence_clues.media_id attribution):\n");
+            request.getMedias().stream().filter(m -> "video".equals(m.getMediaType()))
+                    .forEach(m -> sb.append("- mediaId=").append(m.getId()).append(", url=").append(m.getUrl()).append("\n"));
+        }
+        sb.append("\nOnly fill in AIGC detection / annotation fields for modalities that are actually present above; ")
+                .append("use not_applicable for missing modalities. If both text and at least one image/video are ")
+                .append("present, attempt a genuine multimodalAigcDetection judgment comparing them, not just ")
+                .append("not_applicable.");
         return sb.toString();
     }
 
@@ -527,23 +516,25 @@ public class LlmAgentController {
         return sb.toString();
     }
 
-    private T1AnnotateResponse parseT1Response(String raw, T1AnnotateRequest request, String contentType)
+    private T1AnnotateResponse parseT1Response(String raw, T1AnnotateRequest request,
+                                               boolean hasText, boolean hasImages, boolean hasVideos)
             throws Exception {
         T1AnnotateResponse response = objectMapper.readValue(cleanJson(raw), T1AnnotateResponse.class);
         if (response.getSchemaVersion() == null) {
             response.setSchemaVersion("t1_annotation_v0.5");
         }
         if (response.getInputReference() == null) {
-            response.setInputReference(buildT1InputReference(request, contentType));
+            response.setInputReference(buildT1InputReference(request, hasText, hasImages, hasVideos));
         }
         return response;
     }
 
-    private T1AnnotateResponse.InputReference buildT1InputReference(T1AnnotateRequest request, String contentType) {
+    private T1AnnotateResponse.InputReference buildT1InputReference(
+            T1AnnotateRequest request, boolean hasText, boolean hasImages, boolean hasVideos) {
         T1AnnotateResponse.InputReference ref = new T1AnnotateResponse.InputReference();
         T1AnnotateRequest.Context context = request.getContext();
-        ref.setContentId(context != null ? context.getDocId() : null);
-        ref.setContentType(contentType);
+        ref.setContentId(context != null ? context.getContentId() : null);
+        ref.setContentType(resolveT1ContentType(hasText, hasImages, hasVideos));
         ref.setPlatform(context != null ? context.getPlatform() : null);
         ref.setUrl(context != null ? context.getUrl() : null);
         ref.setAuthorId(context != null ? context.getAuthorHandle() : null);
@@ -551,10 +542,24 @@ public class LlmAgentController {
         return ref;
     }
 
-    private T1AnnotateResponse buildFallbackT1Response(T1AnnotateRequest request, String contentType) {
+    private String resolveT1ContentType(boolean hasText, boolean hasImages, boolean hasVideos) {
+        if (hasText && (hasImages || hasVideos)) {
+            return "text_image_mixed";
+        }
+        if (hasVideos) {
+            return "video";
+        }
+        if (hasImages) {
+            return "image";
+        }
+        return "text";
+    }
+
+    private T1AnnotateResponse buildFallbackT1Response(
+            T1AnnotateRequest request, boolean hasText, boolean hasImages, boolean hasVideos) {
         T1AnnotateResponse resp = new T1AnnotateResponse();
         resp.setSchemaVersion("t1_annotation_v0.5");
-        resp.setInputReference(buildT1InputReference(request, contentType));
+        resp.setInputReference(buildT1InputReference(request, hasText, hasImages, hasVideos));
         resp.setEvidenceClues(List.of());
 
         T1AnnotateResponse.QualityControl qc = new T1AnnotateResponse.QualityControl();

@@ -38,10 +38,15 @@ public interface MediaAssetMapper extends BaseMapper<MediaAsset> {
             "AND asset_type IN ('image','video') LIMIT #{limit}")
     List<MediaAsset> selectPendingEmbedding(@Param("limit") int limit);
 
-    /** 查找尚未完成 T1 图像标注的图片资产 */
-    @Select("SELECT * FROM media_assets WHERE asset_type = 'image' " +
-            "AND t1_annotated = FALSE ORDER BY created_at ASC LIMIT #{limit}")
-    List<MediaAsset> selectPendingT1Annotation(@Param("limit") int limit);
+    /** 查找有资产待T1标注、且资产已关联内容的内容ID列表（去重，用于ImageEmbeddingJob按内容重新标注） */
+    @Select("SELECT DISTINCT content_id FROM media_assets " +
+            "WHERE t1_annotated = FALSE AND content_id IS NOT NULL " +
+            "ORDER BY content_id LIMIT #{limit}")
+    List<UUID> selectContentIdsPendingT1Annotation(@Param("limit") int limit);
+
+    @Select("SELECT * FROM media_assets WHERE content_id = #{contentId} " +
+            "AND asset_type IN ('image','video') ORDER BY created_at ASC")
+    List<MediaAsset> selectByContentId(@Param("contentId") UUID contentId);
 
     @Update("UPDATE media_assets SET t1_annotated = TRUE WHERE id = #{id}")
     int markT1Annotated(@Param("id") UUID id);

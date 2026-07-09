@@ -33,6 +33,7 @@ import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
@@ -103,12 +104,9 @@ public class T2ExtractionStep {
         request.setDocId(mc.getId().toString());
         request.setText(mc.getBodyText());
         request.setLanguage(mc.getLanguage());
-        if (hasText(mc.getNarrativeHint())) {
-            try {
-                request.setAnnotation(OBJECT_MAPPER.readValue(mc.getNarrativeHint(), Object.class));
-            } catch (Exception e) {
-                log.warn("Failed to parse T1 entities hint for T2, contentId={}", mc.getId(), e);
-            }
+        Object t1EntitiesHint = extractT1EntitiesHint(mc);
+        if (t1EntitiesHint != null) {
+            request.setAnnotation(t1EntitiesHint);
         }
 
         T2ExtractRequest.SourceInfo source = new T2ExtractRequest.SourceInfo();
@@ -123,6 +121,24 @@ public class T2ExtractionStep {
         source.setQuotedContentId(mc.getQuotedContentId());
         request.setSource(source);
         return request;
+    }
+
+    private Object extractT1EntitiesHint(MediaContent mc) {
+        if (!hasText(mc.getT1Annotation())) {
+            return null;
+        }
+        try {
+            JsonNode root = OBJECT_MAPPER.readTree(mc.getT1Annotation());
+            JsonNode entitiesHint = root.path("annotations").path("basicObjective").path("entitiesHint");
+            if (entitiesHint.isMissingNode() || entitiesHint.isNull()
+                    || (entitiesHint.isArray() && entitiesHint.isEmpty())) {
+                return null;
+            }
+            return OBJECT_MAPPER.readValue(entitiesHint.toString(), Object.class);
+        } catch (Exception e) {
+            log.warn("Failed to parse T1 entities hint for T2, contentId={}", mc.getId(), e);
+            return null;
+        }
     }
 
     private Map<String, ResolvedMention> processMentions(T2ExtractResponse response, MediaContent content) {
@@ -498,12 +514,7 @@ public class T2ExtractionStep {
                 putIfNotNull(props, "width", asset.getWidth());
                 putIfNotNull(props, "height", asset.getHeight());
                 putIfNotNull(props, "durationSeconds", asset.getDurationSeconds());
-                putIfHasText(props, "ocrText", asset.getOcrText());
                 putIfHasText(props, "asrText", asset.getAsrText());
-                putIfHasText(props, "sceneLabel", asset.getSceneLabel());
-                putIfHasText(props, "objectAnnotations", asset.getObjectAnnotations());
-                putIfNotNull(props, "aigcScore",
-                        asset.getAigcScore() != null ? asset.getAigcScore().doubleValue() : null);
                 props.put("source", "backend_structural");
 
                 neo4jGraphService.mergeNode("MediaAsset", asset.getId().toString(), props);
@@ -560,10 +571,7 @@ public class T2ExtractionStep {
         putIfNotNull(contentProps, "publishedAt",
                 content.getPublishedAt() != null ? content.getPublishedAt().toString() : null);
         putIfHasText(contentProps, "url", content.getUrl());
-        putIfHasText(contentProps, "topicCategory", content.getTopicCategory());
-        putIfHasText(contentProps, "sentimentLabel", content.getSentimentLabel());
-        putIfNotNull(contentProps, "aigcScore",
-                content.getAigcScore() != null ? content.getAigcScore().doubleValue() : null);
+        putIfHasText(contentProps, "t1Annotation", content.getT1Annotation());
         contentProps.put("source", "backend_structural");
         neo4jGraphService.mergeNode("MediaContent", content.getId().toString(), contentProps);
     }

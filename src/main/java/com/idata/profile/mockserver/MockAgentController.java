@@ -24,6 +24,7 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -36,14 +37,33 @@ public class MockAgentController {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
-    @PostMapping("/mock/t1/annotate_text")
-    public T1AnnotateResponse annotateText(@RequestBody T1AnnotateRequest request) {
-        log.info("[MOCK-T1] annotate_text, textLength={}",
+    @PostMapping("/mock/t1/annotate")
+    public T1AnnotateResponse annotate(@RequestBody T1AnnotateRequest request) {
+        boolean hasText = request.getText() != null && !request.getText().isBlank();
+        List<T1AnnotateRequest.MediaItem> images = filterMedias(request, "image");
+        List<T1AnnotateRequest.MediaItem> videos = filterMedias(request, "video");
+        boolean hasImages = !images.isEmpty();
+        boolean hasVideos = !videos.isEmpty();
+
+        log.info("[MOCK-T1] annotate, hasText={}, images={}, videos={}", hasText, images.size(), videos.size());
+
+        T1AnnotateResponse response = hasText
+                ? buildTextAnnotation(request)
+                : buildMediaAnnotation(request, hasImages, hasVideos);
+        response.setInputReference(buildInputReference(request, hasText, hasImages, hasVideos));
+        applyModalityAigc(response, hasText, images, videos);
+        applyMediaHints(response, hasText, images, videos);
+        response.setOverallConfidence(hasText ? 0.80 : 0.60);
+        return response;
+    }
+
+    private T1AnnotateResponse buildTextAnnotation(T1AnnotateRequest request) {
+        log.info("[MOCK-T1] build text annotation, textLength={}",
                 request.getText() != null ? request.getText().length() : 0);
 
         T1AnnotateResponse resp = new T1AnnotateResponse();
         resp.setSchemaVersion("t1_annotation_v0.5");
-        resp.setInputReference(buildInputReference(request, "text"));
+        resp.setInputReference(buildInputReference(request, true, false, false));
         resp.setLanguage(request.getLanguage() != null ? request.getLanguage() : "zh");
 
         T1AnnotateResponse.AigcDetection.TextAigcDetection textAigc =
@@ -266,14 +286,12 @@ public class MockAgentController {
         return resp;
     }
 
-    @PostMapping("/mock/t1/annotate_image")
-    public T1AnnotateResponse annotateImage(@RequestBody T1AnnotateRequest request) {
-        log.info("[MOCK-T1] annotate_image, imageUrl={}, hasImageData={}",
-                request.getImageUrl(), request.getImageData() != null);
+    private T1AnnotateResponse buildMediaAnnotation(T1AnnotateRequest request, boolean hasImages, boolean hasVideos) {
+        log.info("[MOCK-T1] annotate_media, hasImages={}, hasVideos={}", hasImages, hasVideos);
 
         T1AnnotateResponse resp = new T1AnnotateResponse();
         resp.setSchemaVersion("t1_annotation_v0.5");
-        resp.setInputReference(buildInputReference(request, "image"));
+        resp.setInputReference(buildInputReference(request, false, hasImages, hasVideos));
         resp.setLanguage(request.getLanguage() != null ? request.getLanguage() : "zh");
 
         T1AnnotateResponse.AigcDetection.TextAigcDetection textAigcNa =
@@ -432,7 +450,7 @@ public class MockAgentController {
         evImg1.setEvidenceId("ev_img_001");
         evImg1.setEvidenceType("image_region");
         evImg1.setSource("image");
-        evImg1.setMediaId("asset_001");
+        evImg1.setMediaId(firstMediaId(request, "image"));
         evImg1.setRegion(shipRegion);
 
         T1AnnotateResponse.EvidenceClue.Region ocrRegion = new T1AnnotateResponse.EvidenceClue.Region();
@@ -446,7 +464,7 @@ public class MockAgentController {
         evImg2.setEvidenceType("image_region");
         evImg2.setSource("ocr");
         evImg2.setEvidenceText("HORMUZ 2026");
-        evImg2.setMediaId("asset_001");
+        evImg2.setMediaId(firstMediaId(request, "image"));
         evImg2.setRegion(ocrRegion);
 
         resp.setEvidenceClues(List.of(evImg1, evImg2));
@@ -503,16 +521,195 @@ public class MockAgentController {
         return resp;
     }
 
-    private T1AnnotateResponse.InputReference buildInputReference(T1AnnotateRequest request, String contentType) {
+    private List<T1AnnotateRequest.MediaItem> filterMedias(T1AnnotateRequest request, String type) {
+        if (request.getMedias() == null) {
+            return List.of();
+        }
+        return request.getMedias().stream()
+                .filter(m -> type.equals(m.getMediaType()))
+                .toList();
+    }
+
+    private void applyModalityAigc(T1AnnotateResponse response, boolean hasText,
+                                   List<T1AnnotateRequest.MediaItem> images,
+                                   List<T1AnnotateRequest.MediaItem> videos) {
+        boolean hasImages = !images.isEmpty();
+        boolean hasVideos = !videos.isEmpty();
+        T1AnnotateResponse.AigcDetection aigc = response.getAigcDetection();
+        if (aigc == null) {
+            aigc = new T1AnnotateResponse.AigcDetection();
+            response.setAigcDetection(aigc);
+        }
+
+        T1AnnotateResponse.AigcDetection.TextAigcDetection textAigc =
+                new T1AnnotateResponse.AigcDetection.TextAigcDetection();
+        if (hasText) {
+            textAigc.setTextAigcLabel("human_generated");
+            textAigc.setTextAigcScore(0.15);
+            textAigc.setTextAigcSignalLabels(List.of("none"));
+            textAigc.setTextAigcConfidence(0.80);
+            textAigc.setEvidenceIds(List.of("ev_001"));
+        } else {
+            textAigc.setTextAigcLabel("not_applicable");
+            textAigc.setTextAigcSignalLabels(List.of("none"));
+            textAigc.setEvidenceIds(List.of());
+        }
+        aigc.setTextAigcDetection(textAigc);
+
+        T1AnnotateResponse.AigcDetection.ImageAigcDetection imageAigc =
+                new T1AnnotateResponse.AigcDetection.ImageAigcDetection();
+        if (hasImages) {
+            imageAigc.setImageAigcLabel("human_generated");
+            imageAigc.setImageAigcScore(0.20);
+            imageAigc.setImageAigcSignalLabels(List.of("none"));
+            imageAigc.setImageAigcConfidence(0.80);
+            imageAigc.setEvidenceIds(List.of("ev_img_001"));
+        } else {
+            imageAigc.setImageAigcLabel("not_applicable");
+            imageAigc.setImageAigcSignalLabels(List.of("none"));
+            imageAigc.setEvidenceIds(List.of());
+        }
+        aigc.setImageAigcDetection(imageAigc);
+
+        T1AnnotateResponse.AigcDetection.VideoAigcDetection videoAigc =
+                new T1AnnotateResponse.AigcDetection.VideoAigcDetection();
+        if (hasVideos) {
+            videoAigc.setVideoAigcLabel("human_generated");
+            videoAigc.setVideoAigcScore(0.25);
+            videoAigc.setVideoAigcSignalLabels(List.of("none"));
+            videoAigc.setVideoAigcConfidence(0.75);
+            videoAigc.setEvidenceIds(List.of("ev_vid_001"));
+        } else {
+            videoAigc.setVideoAigcLabel("not_applicable");
+            videoAigc.setVideoAigcSignalLabels(List.of("none"));
+            videoAigc.setEvidenceIds(List.of());
+        }
+        aigc.setVideoAigcDetection(videoAigc);
+
+        T1AnnotateResponse.AigcDetection.MultimodalAigcDetection multimodal =
+                new T1AnnotateResponse.AigcDetection.MultimodalAigcDetection();
+        if (hasText && (hasImages || hasVideos)) {
+            multimodal.setMultimodalAigcLabel("consistent");
+            multimodal.setModalityCombination(hasImages && hasVideos ? "text_image_video"
+                    : hasImages ? "text_image" : "text_video");
+            multimodal.setMultimodalSignalLabels(List.of("none"));
+            multimodal.setMultimodalAigcConfidence(0.75);
+            multimodal.setEvidenceIds(List.of(hasImages ? "ev_img_001" : "ev_vid_001"));
+        } else {
+            multimodal.setMultimodalAigcLabel("not_applicable");
+            multimodal.setModalityCombination("not_applicable");
+            multimodal.setMultimodalSignalLabels(List.of("none"));
+            multimodal.setEvidenceIds(List.of());
+        }
+        aigc.setMultimodalAigcDetection(multimodal);
+        aigc.setOverallAigcLabel("human_generated");
+        aigc.setOverallAigcScore(hasImages || hasVideos ? 0.18 : 0.15);
+        aigc.setAigcDetectionConfidence(0.78);
+    }
+
+    private void applyMediaHints(T1AnnotateResponse response, boolean hasText,
+                                 List<T1AnnotateRequest.MediaItem> images,
+                                 List<T1AnnotateRequest.MediaItem> videos) {
+        List<T1AnnotateResponse.EvidenceClue> evidence = new ArrayList<>(
+                response.getEvidenceClues() != null ? response.getEvidenceClues() : List.of());
+        if (!hasText && images.isEmpty() && !videos.isEmpty()) {
+            evidence.clear();
+            clearImageOnlyHints(response);
+        }
+        if (hasText && !images.isEmpty()) {
+            evidence.add(buildMediaEvidence("ev_img_001", "image_region", "image",
+                    images.get(0).getId(), 10.0, 20.0, 300.0, 200.0));
+            addShipEntityHint(response);
+        }
+        if (!videos.isEmpty()) {
+            evidence.add(buildMediaEvidence("ev_vid_001", "video_segment", "video",
+                    videos.get(0).getId(), null, null, null, null));
+        }
+        response.setEvidenceClues(evidence);
+    }
+
+    private void clearImageOnlyHints(T1AnnotateResponse response) {
+        T1AnnotateResponse.Annotations.BasicObjective basicObjective =
+                response.getAnnotations() != null ? response.getAnnotations().getBasicObjective() : null;
+        if (basicObjective == null) {
+            return;
+        }
+        basicObjective.setEntitiesHint(List.of());
+        basicObjective.setKeywords(List.of());
+        T1AnnotateResponse.Annotations.BasicObjective.Summary summary =
+                new T1AnnotateResponse.Annotations.BasicObjective.Summary();
+        summary.setSummaryText("Video content is available for multimodal annotation, but visual details are mocked.");
+        summary.setSummaryConfidence(0.60);
+        basicObjective.setSummary(summary);
+    }
+
+    private void addShipEntityHint(T1AnnotateResponse response) {
+        T1AnnotateResponse.Annotations.BasicObjective basicObjective =
+                response.getAnnotations() != null ? response.getAnnotations().getBasicObjective() : null;
+        if (basicObjective == null) {
+            return;
+        }
+        List<T1AnnotateResponse.Annotations.BasicObjective.EntityHint> hints =
+                new ArrayList<>(basicObjective.getEntitiesHint() != null ? basicObjective.getEntitiesHint() : List.of());
+        T1AnnotateResponse.Annotations.BasicObjective.EntityHint shipHint =
+                new T1AnnotateResponse.Annotations.BasicObjective.EntityHint();
+        shipHint.setEntityHintId("ent_101");
+        shipHint.setText("military ship");
+        shipHint.setTypeHint("others");
+        shipHint.setEntityHintConfidence(0.85);
+        shipHint.setEvidenceIds(List.of("ev_img_001"));
+        hints.add(shipHint);
+        basicObjective.setEntitiesHint(hints);
+    }
+
+    private T1AnnotateResponse.EvidenceClue buildMediaEvidence(
+            String id, String type, String source, String mediaId,
+            Double x, Double y, Double width, Double height) {
+        T1AnnotateResponse.EvidenceClue ev = new T1AnnotateResponse.EvidenceClue();
+        ev.setEvidenceId(id);
+        ev.setEvidenceType(type);
+        ev.setSource(source);
+        ev.setMediaId(mediaId);
+        if (x != null) {
+            T1AnnotateResponse.EvidenceClue.Region region = new T1AnnotateResponse.EvidenceClue.Region();
+            region.setX(x);
+            region.setY(y);
+            region.setWidth(width);
+            region.setHeight(height);
+            ev.setRegion(region);
+        }
+        return ev;
+    }
+
+    private String firstMediaId(T1AnnotateRequest request, String type) {
+        List<T1AnnotateRequest.MediaItem> medias = filterMedias(request, type);
+        return medias.isEmpty() ? null : medias.get(0).getId();
+    }
+
+    private T1AnnotateResponse.InputReference buildInputReference(
+            T1AnnotateRequest request, boolean hasText, boolean hasImages, boolean hasVideos) {
         T1AnnotateResponse.InputReference ref = new T1AnnotateResponse.InputReference();
         T1AnnotateRequest.Context context = request.getContext();
-        ref.setContentId(context != null ? context.getDocId() : null);
-        ref.setContentType(contentType);
+        ref.setContentId(context != null ? context.getContentId() : null);
+        ref.setContentType(resolveContentType(hasText, hasImages, hasVideos));
         ref.setPlatform(context != null ? context.getPlatform() : null);
         ref.setUrl(context != null ? context.getUrl() : null);
         ref.setAuthorId(context != null ? context.getAuthorHandle() : null);
         ref.setCreatedAt(context != null ? context.getPublishedAt() : null);
         return ref;
+    }
+
+    private String resolveContentType(boolean hasText, boolean hasImages, boolean hasVideos) {
+        if (hasText && (hasImages || hasVideos)) {
+            return "text_image_mixed";
+        }
+        if (hasVideos) {
+            return "video";
+        }
+        if (hasImages) {
+            return "image";
+        }
+        return "text";
     }
 
     @PostMapping("/mock/t2/extract_entities")
