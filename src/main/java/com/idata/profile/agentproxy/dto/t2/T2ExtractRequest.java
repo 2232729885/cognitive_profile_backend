@@ -4,6 +4,7 @@ import lombok.Data;
 
 @Data
 public class T2ExtractRequest {
+    private String title;
     private String text;
     private Object annotation;
     private Context context;

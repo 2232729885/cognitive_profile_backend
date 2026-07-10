@@ -747,7 +747,8 @@ public class MockAgentController {
         person.setMentionId("m1");
         person.setName("Leila Farzan");
         person.setType("person");
-        person.setNormalizedName("Leila Farzan");
+        person.setCanonicalName("Leila Farzan");
+        person.setSpan(List.of(0, 12));
         person.setImportanceScore(88.0);
         person.setConfidence(0.92);
         person.setAliases(List.of("L. Farzan", "莱拉·法尔赞"));
@@ -757,7 +758,8 @@ public class MockAgentController {
         organization.setMentionId("m3");
         organization.setName("U.S. Central Command");
         organization.setType("organization");
-        organization.setNormalizedName("U.S. Central Command");
+        organization.setCanonicalName("U.S. Central Command");
+        organization.setSpan(List.of(20, 41));
         organization.setImportanceScore(84.0);
         organization.setConfidence(0.95);
         organization.setAliases(List.of("CENTCOM"));
@@ -767,7 +769,8 @@ public class MockAgentController {
         location.setMentionId("m4");
         location.setName("Strait of Hormuz");
         location.setType("location");
-        location.setNormalizedName("Strait of Hormuz");
+        location.setCanonicalName("Strait of Hormuz");
+        location.setSpan(List.of(60, 74));
         location.setImportanceScore(85.0);
         location.setConfidence(0.95);
         location.setAliases(List.of("霍尔木兹海峡"));
@@ -777,7 +780,8 @@ public class MockAgentController {
         event.setMentionId("e1");
         event.setName("2026 Persian Gulf Military Standoff");
         event.setType("event");
-        event.setNormalizedName("2026 Persian Gulf Military Standoff");
+        event.setCanonicalName("2026 Persian Gulf Military Standoff");
+        event.setSpan(List.of());
         event.setImportanceScore(90.0);
         event.setConfidence(0.90);
         event.setAliases(List.of());

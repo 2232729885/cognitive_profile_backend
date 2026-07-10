@@ -77,6 +77,7 @@ public class T2ExtractionStep {
 
     private T2ExtractRequest buildRequest(MediaContent mc) {
         T2ExtractRequest request = new T2ExtractRequest();
+        request.setTitle(mc.getTitle());
         request.setText(mc.getBodyText());
         request.setLanguage(mc.getLanguage());
         Object t1EntitiesHint = extractT1EntitiesHint(mc);

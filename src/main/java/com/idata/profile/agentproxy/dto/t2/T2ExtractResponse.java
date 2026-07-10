@@ -50,8 +50,9 @@ public class T2ExtractResponse {
     public static class ExtractedMention {
         private String mentionId;
         private String name;
-        private String normalizedName;
+        private String canonicalName;
         private String type;
+        private List<Integer> span;
         private List<String> aliases;
         private Double importanceScore;
         private Double confidence;

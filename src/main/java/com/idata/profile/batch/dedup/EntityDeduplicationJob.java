@@ -347,7 +347,7 @@ public class EntityDeduplicationJob {
         T3ResolveBatchRequest.Mention mention = new T3ResolveBatchRequest.Mention();
         mention.setMentionId(candidate.getId());
         mention.setName(candidate.getCanonicalName());
-        mention.setNormalizedName(candidate.getCanonicalName());
+        mention.setCanonicalName(candidate.getCanonicalName());
         mention.setType(candidate.getEntityType());
         mention.setAliases(candidate.getAliases());
         mention.setAttributes(Map.of());

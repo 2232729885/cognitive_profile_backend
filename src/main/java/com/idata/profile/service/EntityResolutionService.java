@@ -76,8 +76,8 @@ public class EntityResolutionService {
         }
         mention.setType(hasText(mention.getType()) ? mention.getType().trim().toLowerCase() : null);
         mention.setName(trimToNull(mention.getName()));
-        mention.setNormalizedName(hasText(mention.getNormalizedName())
-                ? mention.getNormalizedName().trim()
+        mention.setCanonicalName(hasText(mention.getCanonicalName())
+                ? mention.getCanonicalName().trim()
                 : mention.getName());
         mention.setAliases(distinctText(mention.getAliases()));
         if (mention.getAttributes() == null) {
@@ -139,7 +139,7 @@ public class EntityResolutionService {
         T3ResolveBatchRequest.Mention result = new T3ResolveBatchRequest.Mention();
         result.setMentionId(mention.getMentionId());
         result.setName(mention.getName());
-        result.setNormalizedName(mention.getNormalizedName());
+        result.setCanonicalName(mention.getCanonicalName());
         result.setType(mention.getType());
         result.setAliases(mention.getAliases());
         result.setAttributes(mention.getAttributes());
@@ -222,7 +222,7 @@ public class EntityResolutionService {
         entityEsService.indexEntity(
                 nodeId,
                 entityName(entity),
-                entity.getNormalizedName(),
+                entity.getCanonicalName(),
                 entity.getAliases(),
                 entity.getType(),
                 entity.getImportanceScore() != null ? entity.getImportanceScore() : 0D);
@@ -289,7 +289,7 @@ public class EntityResolutionService {
     }
 
     private String entityName(T2ExtractResponse.ExtractedMention mention) {
-        return hasText(mention.getNormalizedName()) ? mention.getNormalizedName() : mention.getName();
+        return hasText(mention.getCanonicalName()) ? mention.getCanonicalName() : mention.getName();
     }
 
     private String trimToNull(String value) {

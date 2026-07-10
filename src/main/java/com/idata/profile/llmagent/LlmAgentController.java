@@ -188,8 +188,9 @@ public class LlmAgentController {
                 {
                   "mentionId": "m1",
                   "name": "surface form in text",
-                  "normalizedName": "canonical cross-lingual name",
+                  "canonicalName": "canonical cross-lingual name",
                   "type": "person|organization|event|location",
+                  "span": [0, 10],
                   "aliases": [],
                   "importanceScore": 0.0,
                   "confidence": 0.0,
@@ -738,6 +739,9 @@ public class LlmAgentController {
         if (request.getContext() != null) {
             sb.append("平台：").append(request.getContext().getPlatform()).append("\n");
         }
+        if (request.getTitle() != null && !request.getTitle().isBlank()) {
+            sb.append("Title: ").append(request.getTitle()).append("\n");
+        }
 
         sb.append("\n文本内容：\n").append(request.getText());
         return sb.toString();
@@ -831,7 +835,7 @@ public class LlmAgentController {
                 sb.append("Mention: ")
                         .append(mention != null ? mention.getMentionId() : null)
                         .append(" | type=").append(mention != null ? mention.getType() : null)
-                        .append(" | name=").append(mention != null ? mention.getNormalizedName() : null)
+                        .append(" | name=").append(mention != null ? mention.getCanonicalName() : null)
                         .append("\nCandidates: ").append(item.getCandidates())
                         .append("\nContext: ").append(item.getContext())
                         .append("\n\n");

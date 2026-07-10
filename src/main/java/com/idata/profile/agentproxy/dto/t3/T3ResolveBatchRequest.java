@@ -21,7 +21,7 @@ public class T3ResolveBatchRequest {
     public static class Mention {
         private String mentionId;
         private String name;
-        private String normalizedName;
+        private String canonicalName;
         private String type;
         private List<String> aliases;
         private Map<String, Object> attributes;

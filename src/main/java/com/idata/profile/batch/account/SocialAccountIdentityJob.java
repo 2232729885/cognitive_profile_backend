@@ -71,7 +71,7 @@ public class SocialAccountIdentityJob {
         T2ExtractResponse.ExtractedMention mention = new T2ExtractResponse.ExtractedMention();
         mention.setMentionId(account.getId().toString());
         mention.setName(name);
-        mention.setNormalizedName(name);
+        mention.setCanonicalName(name);
         mention.setType(targetType);
         mention.setAliases(List.of());
         Map<String, Object> attributes = new HashMap<>();
