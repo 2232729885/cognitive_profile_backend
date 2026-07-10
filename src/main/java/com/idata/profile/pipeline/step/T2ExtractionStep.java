@@ -77,7 +77,6 @@ public class T2ExtractionStep {
 
     private T2ExtractRequest buildRequest(MediaContent mc) {
         T2ExtractRequest request = new T2ExtractRequest();
-        request.setContentId(mc.getId().toString());
         request.setText(mc.getBodyText());
         request.setLanguage(mc.getLanguage());
         Object t1EntitiesHint = extractT1EntitiesHint(mc);
@@ -85,17 +84,18 @@ public class T2ExtractionStep {
             request.setAnnotation(t1EntitiesHint);
         }
 
-        T2ExtractRequest.SourceInfo source = new T2ExtractRequest.SourceInfo();
-        source.setPlatform(mc.getPlatform());
-        source.setUrl(mc.getUrl());
-        source.setPublishedAt(mc.getPublishedAt() != null ? mc.getPublishedAt().toString() : null);
-        source.setAuthorHandle(mc.getAuthorPlatformUserId());
-        source.setHashtags(mc.getHashtags());
-        source.setMentions(mc.getMentions());
-        source.setParentContentId(mc.getParentContentId());
-        source.setRepostOfContentId(mc.getRepostOfContentId());
-        source.setQuotedContentId(mc.getQuotedContentId());
-        request.setSource(source);
+        T2ExtractRequest.Context context = new T2ExtractRequest.Context();
+        context.setContentId(mc.getId().toString());
+        context.setPlatform(mc.getPlatform());
+        context.setUrl(mc.getUrl());
+        context.setPublishedAt(mc.getPublishedAt() != null ? mc.getPublishedAt().toString() : null);
+        context.setAuthorHandle(mc.getAuthorPlatformUserId());
+        context.setHashtags(mc.getHashtags());
+        context.setMentions(mc.getMentions());
+        context.setParentContentId(mc.getParentContentId());
+        context.setRepostOfContentId(mc.getRepostOfContentId());
+        context.setQuotedContentId(mc.getQuotedContentId());
+        request.setContext(context);
         return request;
     }
 

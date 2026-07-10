@@ -609,12 +609,12 @@ public class LlmAgentController {
                     .append(request.getAnnotation()).append("\n\n");
         }
 
-        if (request.getSource() != null && request.getSource().getHashtags() != null
-                && request.getSource().getHashtags().length > 0) {
-            sb.append("话题标签：").append(String.join(", ", request.getSource().getHashtags())).append("\n");
+        if (request.getContext() != null && request.getContext().getHashtags() != null
+                && request.getContext().getHashtags().length > 0) {
+            sb.append("话题标签：").append(String.join(", ", request.getContext().getHashtags())).append("\n");
         }
-        if (request.getSource() != null) {
-            sb.append("平台：").append(request.getSource().getPlatform()).append("\n");
+        if (request.getContext() != null) {
+            sb.append("平台：").append(request.getContext().getPlatform()).append("\n");
         }
 
         sb.append("\n文本内容：\n").append(request.getText());

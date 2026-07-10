@@ -4,14 +4,14 @@ import lombok.Data;
 
 @Data
 public class T2ExtractRequest {
-    private String contentId;
     private String text;
     private Object annotation;
-    private SourceInfo source;
+    private Context context;
     private String language;
 
     @Data
-    public static class SourceInfo {
+    public static class Context {
+        private String contentId;
         private String platform;
         private String url;
         private String publishedAt;

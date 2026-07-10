@@ -785,7 +785,7 @@ public class MockAgentController {
         rel3.setEvidence("U.S. Central Command is involved in the standoff");
 
         T2ExtractResponse resp = new T2ExtractResponse();
-        resp.setContentId(request.getContentId());
+        resp.setContentId(request.getContext() != null ? request.getContext().getContentId() : null);
         resp.setEntities(List.of(person, organization, location, event));
         resp.setRelations(List.of(rel1, rel2, rel3));
         resp.setResolvedAuthorAccountId(null);
