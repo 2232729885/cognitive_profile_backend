@@ -77,7 +77,7 @@ public class T2ExtractionStep {
 
     private T2ExtractRequest buildRequest(MediaContent mc) {
         T2ExtractRequest request = new T2ExtractRequest();
-        request.setDocId(mc.getId().toString());
+        request.setContentId(mc.getId().toString());
         request.setText(mc.getBodyText());
         request.setLanguage(mc.getLanguage());
         Object t1EntitiesHint = extractT1EntitiesHint(mc);
@@ -86,9 +86,9 @@ public class T2ExtractionStep {
         }
 
         T2ExtractRequest.SourceInfo source = new T2ExtractRequest.SourceInfo();
-        source.setPlatformId(mc.getPlatform());
-        source.setContentUrl(mc.getUrl());
-        source.setPublishTime(mc.getPublishedAt() != null ? mc.getPublishedAt().toString() : null);
+        source.setPlatform(mc.getPlatform());
+        source.setUrl(mc.getUrl());
+        source.setPublishedAt(mc.getPublishedAt() != null ? mc.getPublishedAt().toString() : null);
         source.setAuthorHandle(mc.getAuthorPlatformUserId());
         source.setHashtags(mc.getHashtags());
         source.setMentions(mc.getMentions());

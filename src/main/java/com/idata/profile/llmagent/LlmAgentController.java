@@ -155,7 +155,7 @@ public class LlmAgentController {
 
             Required JSON shape:
             {
-              "docId": "same docId from request or null",
+              "contentId": "same contentId from request or null",
               "entities": [
                 {
                   "mentionId": "m1",
@@ -609,11 +609,12 @@ public class LlmAgentController {
                     .append(request.getAnnotation()).append("\n\n");
         }
 
-        if (request.getHashtags() != null && request.getHashtags().length > 0) {
-            sb.append("话题标签：").append(String.join(", ", request.getHashtags())).append("\n");
+        if (request.getSource() != null && request.getSource().getHashtags() != null
+                && request.getSource().getHashtags().length > 0) {
+            sb.append("话题标签：").append(String.join(", ", request.getSource().getHashtags())).append("\n");
         }
-        if (request.getSourceInfo() != null) {
-            sb.append("平台：").append(request.getSourceInfo().getPlatformId()).append("\n");
+        if (request.getSource() != null) {
+            sb.append("平台：").append(request.getSource().getPlatform()).append("\n");
         }
 
         sb.append("\n文本内容：\n").append(request.getText());

@@ -7,7 +7,7 @@ import java.util.Map;
 
 @Data
 public class T2ExtractResponse {
-    private String docId;
+    private String contentId;
     private List<ExtractedMention> entities;
     private List<ExtractedRelationMention> relations;
     private String resolvedAuthorAccountId;
