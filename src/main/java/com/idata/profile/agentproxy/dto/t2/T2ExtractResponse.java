@@ -52,11 +52,25 @@ public class T2ExtractResponse {
         private String name;
         private String canonicalName;
         private String type;
-        private List<Integer> span;
+        private Span span;
         private List<String> aliases;
         private Double importanceScore;
         private Double confidence;
         private Map<String, Object> attributes;
+
+        public void assignSpan(Span span) {
+            this.span = span;
+        }
+
+        public Span spanValue() {
+            return span;
+        }
+
+        @Data
+        public static class Span {
+            private Integer start;
+            private Integer end;
+        }
     }
 
     @Data

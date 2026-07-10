@@ -50,7 +50,8 @@ public class EntityResolutionService {
     private final EntityFusionRecordMapper entityFusionRecordMapper;
 
     public Map<String, ResolvedMention> resolveMentions(
-            List<T2ExtractResponse.ExtractedMention> rawMentions, String docId, String language) {
+            List<T2ExtractResponse.ExtractedMention> rawMentions,
+            String contentId, String platform, String language) {
         Map<String, ResolvedMention> resolved = new LinkedHashMap<>();
         if (rawMentions == null || rawMentions.isEmpty()) {
             return resolved;
@@ -60,7 +61,8 @@ public class EntityResolutionService {
                 .map(this::normalizeMention)
                 .filter(m -> hasText(m.getMentionId()) && hasText(m.getType()) && hasText(entityName(m)))
                 .toList();
-        Map<String, T3ResolveBatchResponse.ResolveResult> results = resolveWithT3(mentions, docId, language);
+        Map<String, T3ResolveBatchResponse.ResolveResult> results =
+                resolveWithT3(mentions, contentId, platform, language);
 
         for (T2ExtractResponse.ExtractedMention mention : mentions) {
             T3ResolveBatchResponse.ResolveResult result = results.get(mention.getMentionId());
@@ -87,10 +89,11 @@ public class EntityResolutionService {
     }
 
     private Map<String, T3ResolveBatchResponse.ResolveResult> resolveWithT3(
-            List<T2ExtractResponse.ExtractedMention> mentions, String docId, String language) {
+            List<T2ExtractResponse.ExtractedMention> mentions,
+            String contentId, String platform, String language) {
         T3ResolveBatchRequest request = new T3ResolveBatchRequest();
         request.setItems(mentions.stream()
-                .map(mention -> toResolveItem(mention, docId, language))
+                .map(mention -> toResolveItem(mention, contentId, platform, language))
                 .filter(item -> item.getCandidates() != null && !item.getCandidates().isEmpty())
                 .toList());
         T3ResolveBatchRequest.Strategy strategy = new T3ResolveBatchRequest.Strategy();
@@ -117,18 +120,19 @@ public class EntityResolutionService {
             }
             return result;
         } catch (Exception e) {
-            log.warn("[EntityResolutionService] T3 resolve_batch failed, docId={}", docId, e);
+            log.warn("[EntityResolutionService] T3 resolve_batch failed, contentId={}", contentId, e);
             return Map.of();
         }
     }
 
     private T3ResolveBatchRequest.ResolveItem toResolveItem(
-            T2ExtractResponse.ExtractedMention mention, String docId, String language) {
+            T2ExtractResponse.ExtractedMention mention, String contentId, String platform, String language) {
         T3ResolveBatchRequest.ResolveItem item = new T3ResolveBatchRequest.ResolveItem();
         item.setMention(toT3Mention(mention));
         item.setCandidates(candidateRetrievalService.retrieveCandidates(entityName(mention), mention.getType(), 10));
         T3ResolveBatchRequest.Context context = new T3ResolveBatchRequest.Context();
-        context.setDocId(docId);
+        context.setContentId(contentId);
+        context.setPlatform(platform);
         context.setTextWindow(entityName(mention));
         context.setLanguage(language);
         item.setContext(context);
@@ -140,6 +144,12 @@ public class EntityResolutionService {
         result.setMentionId(mention.getMentionId());
         result.setName(mention.getName());
         result.setCanonicalName(mention.getCanonicalName());
+        if (mention.spanValue() != null) {
+            T3ResolveBatchRequest.Mention.Span span = new T3ResolveBatchRequest.Mention.Span();
+            span.setStart(mention.spanValue().getStart());
+            span.setEnd(mention.spanValue().getEnd());
+            result.assignSpan(span);
+        }
         result.setType(mention.getType());
         result.setAliases(mention.getAliases());
         result.setAttributes(mention.getAttributes());

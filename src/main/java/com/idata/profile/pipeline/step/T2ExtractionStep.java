@@ -55,6 +55,7 @@ public class T2ExtractionStep {
                 entityResolutionService.resolveMentions(
                         response != null ? response.getEntities() : null,
                         mc.getId().toString(),
+                        mc.getPlatform(),
                         mc.getLanguage());
 
         if (mc.getAuthorAccountId() == null && hasText(response.getResolvedAuthorAccountId())) {

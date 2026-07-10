@@ -81,7 +81,8 @@ public class SocialAccountIdentityJob {
         mention.setAttributes(attributes);
 
         Map<String, EntityResolutionService.ResolvedMention> resolvedMap =
-                entityResolutionService.resolveMentions(List.of(mention), account.getId().toString(), null);
+                entityResolutionService.resolveMentions(
+                        List.of(mention), account.getId().toString(), account.getPlatform(), null);
         EntityResolutionService.ResolvedMention resolvedMention = resolvedMap.get(account.getId().toString());
 
         if (resolvedMention != null && resolvedMention.getNodeId() != null) {

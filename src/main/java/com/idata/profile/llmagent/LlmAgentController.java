@@ -190,7 +190,7 @@ public class LlmAgentController {
                   "name": "surface form in text",
                   "canonicalName": "canonical cross-lingual name",
                   "type": "person|organization|event|location",
-                  "span": [0, 10],
+                  "span": {"start": 0, "end": 10},
                   "aliases": [],
                   "importanceScore": 0.0,
                   "confidence": 0.0,

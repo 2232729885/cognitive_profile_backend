@@ -748,7 +748,10 @@ public class MockAgentController {
         person.setName("Leila Farzan");
         person.setType("person");
         person.setCanonicalName("Leila Farzan");
-        person.setSpan(List.of(0, 12));
+        T2ExtractResponse.ExtractedMention.Span personSpan = new T2ExtractResponse.ExtractedMention.Span();
+        personSpan.setStart(0);
+        personSpan.setEnd(12);
+        person.assignSpan(personSpan);
         person.setImportanceScore(88.0);
         person.setConfidence(0.92);
         person.setAliases(List.of("L. Farzan", "莱拉·法尔赞"));
@@ -759,7 +762,10 @@ public class MockAgentController {
         organization.setName("U.S. Central Command");
         organization.setType("organization");
         organization.setCanonicalName("U.S. Central Command");
-        organization.setSpan(List.of(20, 41));
+        T2ExtractResponse.ExtractedMention.Span organizationSpan = new T2ExtractResponse.ExtractedMention.Span();
+        organizationSpan.setStart(20);
+        organizationSpan.setEnd(41);
+        organization.assignSpan(organizationSpan);
         organization.setImportanceScore(84.0);
         organization.setConfidence(0.95);
         organization.setAliases(List.of("CENTCOM"));
@@ -770,7 +776,10 @@ public class MockAgentController {
         location.setName("Strait of Hormuz");
         location.setType("location");
         location.setCanonicalName("Strait of Hormuz");
-        location.setSpan(List.of(60, 74));
+        T2ExtractResponse.ExtractedMention.Span locationSpan = new T2ExtractResponse.ExtractedMention.Span();
+        locationSpan.setStart(60);
+        locationSpan.setEnd(74);
+        location.assignSpan(locationSpan);
         location.setImportanceScore(85.0);
         location.setConfidence(0.95);
         location.setAliases(List.of("霍尔木兹海峡"));
@@ -781,7 +790,6 @@ public class MockAgentController {
         event.setName("2026 Persian Gulf Military Standoff");
         event.setType("event");
         event.setCanonicalName("2026 Persian Gulf Military Standoff");
-        event.setSpan(List.of());
         event.setImportanceScore(90.0);
         event.setConfidence(0.90);
         event.setAliases(List.of());

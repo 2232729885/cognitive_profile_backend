@@ -23,8 +23,19 @@ public class T3ResolveBatchRequest {
         private String name;
         private String canonicalName;
         private String type;
+        private Span span;
         private List<String> aliases;
         private Map<String, Object> attributes;
+
+        public void assignSpan(Span span) {
+            this.span = span;
+        }
+
+        @Data
+        public static class Span {
+            private Integer start;
+            private Integer end;
+        }
     }
 
     @Data
@@ -41,7 +52,8 @@ public class T3ResolveBatchRequest {
 
     @Data
     public static class Context {
-        private String docId;
+        private String contentId;
+        private String platform;
         private String textWindow;
         private String language;
     }
