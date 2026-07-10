@@ -27,10 +27,6 @@ public class T3ResolveBatchRequest {
         private List<String> aliases;
         private Map<String, Object> attributes;
 
-        public void assignSpan(Span span) {
-            this.span = span;
-        }
-
         @Data
         public static class Span {
             private Integer start;

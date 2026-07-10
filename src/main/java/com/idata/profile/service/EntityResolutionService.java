@@ -144,11 +144,11 @@ public class EntityResolutionService {
         result.setMentionId(mention.getMentionId());
         result.setName(mention.getName());
         result.setCanonicalName(mention.getCanonicalName());
-        if (mention.spanValue() != null) {
+        if (mention.getSpan() != null) {
             T3ResolveBatchRequest.Mention.Span span = new T3ResolveBatchRequest.Mention.Span();
-            span.setStart(mention.spanValue().getStart());
-            span.setEnd(mention.spanValue().getEnd());
-            result.assignSpan(span);
+            span.setStart(mention.getSpan().getStart());
+            span.setEnd(mention.getSpan().getEnd());
+            result.setSpan(span);
         }
         result.setType(mention.getType());
         result.setAliases(mention.getAliases());
