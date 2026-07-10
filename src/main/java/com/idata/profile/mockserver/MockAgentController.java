@@ -2,6 +2,8 @@ package com.idata.profile.mockserver;
 
 import com.idata.profile.agentproxy.dto.t1.T1AnnotateAccountRequest;
 import com.idata.profile.agentproxy.dto.t1.T1AnnotateAccountResponse;
+import com.idata.profile.agentproxy.dto.t1.T1AnnotateEventHeatRequest;
+import com.idata.profile.agentproxy.dto.t1.T1AnnotateEventHeatResponse;
 import com.idata.profile.agentproxy.dto.t1.T1AnnotateRequest;
 import com.idata.profile.agentproxy.dto.t1.T1AnnotateResponse;
 import com.idata.profile.agentproxy.dto.t2.T2ExtractRequest;
@@ -132,14 +134,6 @@ public class MockAgentController {
         opinionEmotion.setOpinionEmotionConfidence(0.82);
         opinionEmotion.setEvidenceIds(List.of("ev_002"));
 
-        T1AnnotateResponse.Annotations.HighValueSubjective.EventHeat eventHeat =
-                new T1AnnotateResponse.Annotations.HighValueSubjective.EventHeat();
-        eventHeat.setHeatLevel("medium");
-        eventHeat.setHeatScore(55.0);
-        eventHeat.setHeatSignalTypes(List.of("textual_heat_signal"));
-        eventHeat.setEventHeatConfidence(0.70);
-        eventHeat.setEvidenceIds(List.of("ev_004"));
-
         T1AnnotateResponse.Annotations.HighValueSubjective.LanguageStyle languageStyle =
                 new T1AnnotateResponse.Annotations.HighValueSubjective.LanguageStyle();
         languageStyle.setStyleLabels(List.of("accusatory", "rational_analytical"));
@@ -166,7 +160,6 @@ public class MockAgentController {
         highValueSubjective.setCoreStance(coreStance);
         highValueSubjective.setBendTactics(List.of(bendTactic));
         highValueSubjective.setOpinionEmotion(opinionEmotion);
-        highValueSubjective.setEventHeat(eventHeat);
         highValueSubjective.setLanguageStyle(languageStyle);
         highValueSubjective.setContentPurpose(contentPurpose);
         highValueSubjective.setRiskLevel(riskLevel);
@@ -266,14 +259,7 @@ public class MockAgentController {
         ev3.setEvidenceText("网民对此反应强烈，批评声音较多");
         ev3.setSpan(List.of(67, 82));
 
-        T1AnnotateResponse.EvidenceClue ev4 = new T1AnnotateResponse.EvidenceClue();
-        ev4.setEvidenceId("ev_004");
-        ev4.setEvidenceType("text_span");
-        ev4.setSource("text");
-        ev4.setEvidenceText("事件在社交媒体上持续发酵");
-        ev4.setSpan(List.of(83, 95));
-
-        resp.setEvidenceClues(List.of(ev1, ev2, ev3, ev4));
+        resp.setEvidenceClues(List.of(ev1, ev2, ev3));
 
         T1AnnotateResponse.QualityControl qualityControl = new T1AnnotateResponse.QualityControl();
         qualityControl.setNeedHumanReview(false);
@@ -352,12 +338,6 @@ public class MockAgentController {
         opinionEmotion.setOpinionEmotionConfidence(0.40);
         opinionEmotion.setEvidenceIds(List.of("ev_img_002"));
 
-        T1AnnotateResponse.Annotations.HighValueSubjective.EventHeat eventHeat =
-                new T1AnnotateResponse.Annotations.HighValueSubjective.EventHeat();
-        eventHeat.setHeatLevel("unclear");
-        eventHeat.setHeatSignalTypes(List.of("unclear"));
-        eventHeat.setEvidenceIds(List.of());
-
         T1AnnotateResponse.Annotations.HighValueSubjective.LanguageStyle languageStyle =
                 new T1AnnotateResponse.Annotations.HighValueSubjective.LanguageStyle();
         languageStyle.setStyleLabels(List.of("unclear"));
@@ -382,7 +362,6 @@ public class MockAgentController {
         highValueSubjective.setCoreStance(coreStance);
         highValueSubjective.setBendTactics(List.of());
         highValueSubjective.setOpinionEmotion(opinionEmotion);
-        highValueSubjective.setEventHeat(eventHeat);
         highValueSubjective.setLanguageStyle(languageStyle);
         highValueSubjective.setContentPurpose(contentPurpose);
         highValueSubjective.setRiskLevel(riskLevel);
@@ -517,6 +496,52 @@ public class MockAgentController {
         resp.setQualityControl(qualityControl);
 
         resp.setOverallConfidence(0.82);
+        resp.setProcessedAt(java.time.OffsetDateTime.now().toString());
+        return resp;
+    }
+
+    @PostMapping("/mock/t1/annotate_event_heat")
+    public T1AnnotateEventHeatResponse annotateEventHeat(@RequestBody T1AnnotateEventHeatRequest request) {
+        log.info("[MOCK-T1] annotate_event_heat, eventId={}, relatedEntities={}",
+                request.getEvent() != null ? request.getEvent().getEventId() : null,
+                request.getRelatedEntities() != null ? request.getRelatedEntities().size() : 0);
+
+        int contentCount = request.getAggregateStats() != null
+                && request.getAggregateStats().getTotalRelatedContentCount() != null
+                ? request.getAggregateStats().getTotalRelatedContentCount() : 0;
+        long totalEngagement = request.getAggregateStats() != null
+                && request.getAggregateStats().getTotalEngagement() != null
+                ? request.getAggregateStats().getTotalEngagement() : 0L;
+
+        T1AnnotateEventHeatResponse.EventHeat heat = new T1AnnotateEventHeatResponse.EventHeat();
+        if (contentCount == 0) {
+            heat.setHeatLevel("unclear");
+            heat.setHeatSignalTypes(List.of("insufficient_data"));
+            heat.setReasoning("No related content is available, so event heat is unclear.");
+            heat.setConfidence(0.2);
+        } else if (contentCount >= 50 || totalEngagement >= 100000) {
+            heat.setHeatLevel("high");
+            heat.setHeatSignalTypes(List.of("content_volume", "engagement_surge"));
+            heat.setReasoning("Related content volume or total engagement is high.");
+            heat.setConfidence(0.85);
+        } else if (contentCount >= 10) {
+            heat.setHeatLevel("medium");
+            heat.setHeatSignalTypes(List.of("content_volume"));
+            heat.setReasoning("Related content volume is moderate.");
+            heat.setConfidence(0.75);
+        } else {
+            heat.setHeatLevel("low");
+            heat.setHeatSignalTypes(List.of("content_volume"));
+            heat.setReasoning("Related content volume is low.");
+            heat.setConfidence(0.65);
+        }
+        heat.setHeatScore(Math.min(100.0, contentCount * 2.0 + totalEngagement / 1000.0));
+
+        T1AnnotateEventHeatResponse resp = new T1AnnotateEventHeatResponse();
+        resp.setSchemaVersion("t1_event_heat_v1");
+        resp.setEventId(request.getEvent() != null ? request.getEvent().getEventId() : null);
+        resp.setEventHeat(heat);
+        resp.setOverallConfidence(heat.getConfidence());
         resp.setProcessedAt(java.time.OffsetDateTime.now().toString());
         return resp;
     }

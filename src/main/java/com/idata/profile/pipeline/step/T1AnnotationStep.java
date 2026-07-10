@@ -96,6 +96,11 @@ public class T1AnnotationStep {
         context.setAuthorHandle(mc.getAuthorPlatformUserId());
         context.setPublishedAt(mc.getPublishedAt() != null ? mc.getPublishedAt().toString() : null);
         context.setHashtags(mc.getHashtags() != null ? List.of(mc.getHashtags()) : null);
+        context.setLikeCount(mc.getLikeCount());
+        context.setCommentCount(mc.getCommentCount());
+        context.setShareCount(mc.getShareCount());
+        context.setRepostCount(mc.getRepostCount());
+        context.setViewCount(mc.getViewCount());
         context.setParentContentId(mc.getParentContentId());
         context.setUrl(mc.getUrl());
         request.setContext(context);

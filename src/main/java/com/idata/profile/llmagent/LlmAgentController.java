@@ -2,6 +2,8 @@ package com.idata.profile.llmagent;
 
 import com.idata.profile.agentproxy.dto.t1.T1AnnotateAccountRequest;
 import com.idata.profile.agentproxy.dto.t1.T1AnnotateAccountResponse;
+import com.idata.profile.agentproxy.dto.t1.T1AnnotateEventHeatRequest;
+import com.idata.profile.agentproxy.dto.t1.T1AnnotateEventHeatResponse;
 import com.idata.profile.agentproxy.dto.t1.T1AnnotateRequest;
 import com.idata.profile.agentproxy.dto.t1.T1AnnotateResponse;
 import com.idata.profile.agentproxy.dto.t2.T2ExtractRequest;
@@ -87,7 +89,6 @@ public class LlmAgentController {
                   "ideology": {"ideologyLabel": "left_leaning|right_leaning|liberal|conservative|nationalist|populist|pro_government|anti_government|pro_western|anti_western|neutral|unclear|other", "targetEntityHintIds": [], "ideologyConfidence": 0.0, "evidenceIds": []},
                   "coreStance": {"stanceLabel": "support|oppose|neutral|mixed|unclear", "stanceStrength": "weak|medium|strong|unclear", "coreStanceConfidence": 0.0, "evidenceIds": []},
                   "opinionEmotion": {"sentimentPolarity": "positive|negative|neutral|mixed|unclear", "emotionLabels": ["anger|fear|sadness|anxiety|disgust|contempt|joy|hope|sympathy|surprise|sarcasm|none|unclear"], "emotionIntensity": "low|medium|high|unclear", "opinionEmotionConfidence": 0.0, "evidenceIds": []},
-                  "eventHeat": {"heatLevel": "low|medium|high|explosive|unclear", "heatScore": 0.0, "heatSignalTypes": ["textual_heat_signal|engagement_metrics|platform_trending_signal|media_coverage_signal|temporal_burst_signal|unclear"], "eventHeatConfidence": 0.0, "evidenceIds": []},
                   "languageStyle": {"styleLabels": ["neutral|aggressive|sarcastic|mocking|alarmist|threatening|sensationalized|emotional|conspiratorial|accusatory|slogan_like|rhetorical_questioning|rational_analytical|unclear"], "languageStyleConfidence": 0.0, "evidenceIds": []},
                   "contentPurpose": {"primaryPurpose": "information_sharing|opinion_expression|persuasion|mobilization|propaganda|attack_or_smear|debunking|warning|attention_seeking|rumor_spreading|unclear", "secondaryPurposes": [], "contentPurposeConfidence": 0.0, "evidenceIds": []},
                   "riskLevel": {"riskLabel": "none|low|medium|high|severe|unclear", "riskTypes": ["misinformation|rumor|polarization|hostility|panic_amplification|mobilization_risk|reputation_attack|manipulation|aigc_deception|none|unclear"], "riskLevelConfidence": 0.0, "evidenceIds": []},
@@ -147,6 +148,33 @@ public class LlmAgentController {
                confidently, use primaryAccountCategory="unknown" and automationSuspicion="unclear" rather
                than guessing.
             2. Every evidenceId referenced must have a matching entry in evidenceClues.
+            """;
+
+    private static final String T1_EVENT_HEAT_SYSTEM_PROMPT = """
+            You are an event heat annotation system. Return only one valid JSON object.
+            Estimate heat from event metadata, one-hop related entities, sampled media content,
+            and aggregate engagement statistics. Do not output markdown code fences, <think> tags,
+            or any explanation outside the JSON.
+
+            Required JSON shape:
+            {
+              "schemaVersion": "t1_event_heat_v1",
+              "eventId": "same eventId from request or null",
+              "eventHeat": {
+                "heatLevel": "low|medium|high|explosive|unclear",
+                "heatScore": 0.0,
+                "heatSignalTypes": ["content_volume|engagement_surge|rapid_growth|wide_platform_spread|sustained_attention|declining|insufficient_data|unclear"],
+                "reasoning": "brief reason",
+                "confidence": 0.0
+              },
+              "overallConfidence": 0.0
+            }
+
+            Rules:
+            1. Use unclear with insufficient_data when there are no related media_content samples.
+            2. heatScore must be between 0 and 100.
+            3. Use aggregateStats.totalRelatedContentCount as the true content count, not the sample size.
+            4. Consider total engagement, platform spread, and temporal spread when selecting heatSignalTypes.
             """;
 
     private static final String T2_SYSTEM_PROMPT_V11 = """
@@ -372,6 +400,34 @@ public class LlmAgentController {
         }
     }
 
+    @PostMapping("/t1/annotate_event_heat")
+    public T1AnnotateEventHeatResponse annotateEventHeat(@RequestBody T1AnnotateEventHeatRequest request) {
+        log.info("[LLM-T1] annotate_event_heat, eventId={}, relatedEntities={}",
+                request.getEvent() != null ? request.getEvent().getEventId() : null,
+                request.getRelatedEntities() != null ? request.getRelatedEntities().size() : 0);
+
+        String userPrompt = buildT1EventHeatUserPrompt(request);
+        try {
+            String raw = callJsonLlm(T1_EVENT_HEAT_SYSTEM_PROMPT, userPrompt);
+            T1AnnotateEventHeatResponse response =
+                    objectMapper.readValue(cleanJson(raw), T1AnnotateEventHeatResponse.class);
+            if (response.getSchemaVersion() == null) {
+                response.setSchemaVersion("t1_event_heat_v1");
+            }
+            if (response.getEventId() == null && request.getEvent() != null) {
+                response.setEventId(request.getEvent().getEventId());
+            }
+            if (response.getOverallConfidence() == null && response.getEventHeat() != null) {
+                response.setOverallConfidence(response.getEventHeat().getConfidence());
+            }
+            response.setProcessedAt(java.time.OffsetDateTime.now().toString());
+            return response;
+        } catch (Exception e) {
+            logLlmFailure("[LLM-T1] annotate_event_heat failed, returning fallback", e);
+            return buildFallbackT1EventHeatResponse(request);
+        }
+    }
+
     @PostMapping("/t2/extract_entities")
     public T2ExtractResponse extractEntities(@RequestBody T2ExtractRequest request) {
         log.info("[LLM-T2] extract_entities, textLength={}",
@@ -475,6 +531,13 @@ public class LlmAgentController {
             if (context.getHashtags() != null && !context.getHashtags().isEmpty()) {
                 sb.append("Hashtags: ").append(String.join(", ", context.getHashtags())).append("\n");
             }
+            if (context.getLikeCount() != null) {
+                sb.append("Engagement: likes=").append(context.getLikeCount())
+                        .append(", comments=").append(context.getCommentCount())
+                        .append(", shares=").append(context.getShareCount())
+                        .append(", reposts=").append(context.getRepostCount())
+                        .append(", views=").append(context.getViewCount()).append("\n");
+            }
         }
         if (hasText) {
             sb.append("\nText content:\n").append(request.getText()).append("\n");
@@ -511,6 +574,48 @@ public class LlmAgentController {
             sb.append("Recent posts:\n");
             for (String sample : request.getRecentPostSamples()) {
                 sb.append("- ").append(sample).append("\n");
+            }
+        }
+        return sb.toString();
+    }
+
+    private String buildT1EventHeatUserPrompt(T1AnnotateEventHeatRequest request) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Annotate event heat for the following event.\n\n");
+        if (request.getEvent() != null) {
+            T1AnnotateEventHeatRequest.EventInfo event = request.getEvent();
+            sb.append("Event ID: ").append(event.getEventId()).append("\n");
+            sb.append("Canonical name: ").append(event.getCanonicalName()).append("\n");
+            sb.append("Event type: ").append(event.getEventType()).append("\n");
+            sb.append("Occurred at: ").append(event.getOccurredAtStart())
+                    .append(" to ").append(event.getOccurredAtEnd()).append("\n");
+            sb.append("Country: ").append(event.getCountry()).append("\n");
+        }
+        if (request.getAggregateStats() != null) {
+            T1AnnotateEventHeatRequest.AggregateStats stats = request.getAggregateStats();
+            sb.append("\nAggregate stats:\n");
+            sb.append("Total related content count: ").append(stats.getTotalRelatedContentCount()).append("\n");
+            sb.append("Total engagement: ").append(stats.getTotalEngagement()).append("\n");
+            sb.append("Distinct platform count: ").append(stats.getDistinctPlatformCount()).append("\n");
+            sb.append("Earliest content at: ").append(stats.getEarliestContentAt()).append("\n");
+            sb.append("Latest content at: ").append(stats.getLatestContentAt()).append("\n");
+        }
+        if (request.getRelatedEntities() != null && !request.getRelatedEntities().isEmpty()) {
+            sb.append("\nRelated entities and sampled content:\n");
+            for (T1AnnotateEventHeatRequest.RelatedEntity entity : request.getRelatedEntities()) {
+                sb.append("- type=").append(entity.getEntityType())
+                        .append(", id=").append(entity.getEntityId())
+                        .append(", name=").append(entity.getName());
+                if ("media_content".equals(entity.getEntityType())) {
+                    sb.append(", platform=").append(entity.getPlatform())
+                            .append(", publishedAt=").append(entity.getPublishedAt())
+                            .append(", likes=").append(entity.getLikeCount())
+                            .append(", comments=").append(entity.getCommentCount())
+                            .append(", shares=").append(entity.getShareCount())
+                            .append(", reposts=").append(entity.getRepostCount())
+                            .append(", views=").append(entity.getViewCount());
+                }
+                sb.append("\n");
             }
         }
         return sb.toString();
@@ -567,7 +672,7 @@ public class LlmAgentController {
         qc.setReviewReasons(List.of("module_failure"));
         qc.setFailedModules(List.of(
                 "text_aigc_detection", "ideology", "core_stance", "bend_tactics",
-                "opinion_emotion", "event_heat", "language_style", "content_purpose", "risk_level",
+                "opinion_emotion", "language_style", "content_purpose", "risk_level",
                 "topic_tags", "account_type", "entities_hint", "keywords", "summary", "event_type"));
         resp.setQualityControl(qc);
 
@@ -595,6 +700,23 @@ public class LlmAgentController {
         qc.setFailedModules(List.of("account_type"));
         resp.setQualityControl(qc);
 
+        resp.setOverallConfidence(0.0);
+        resp.setProcessedAt(java.time.OffsetDateTime.now().toString());
+        return resp;
+    }
+
+    private T1AnnotateEventHeatResponse buildFallbackT1EventHeatResponse(T1AnnotateEventHeatRequest request) {
+        T1AnnotateEventHeatResponse.EventHeat heat = new T1AnnotateEventHeatResponse.EventHeat();
+        heat.setHeatLevel("unclear");
+        heat.setHeatScore(0.0);
+        heat.setHeatSignalTypes(List.of("insufficient_data"));
+        heat.setReasoning("Event heat annotation failed or did not return a valid result.");
+        heat.setConfidence(0.0);
+
+        T1AnnotateEventHeatResponse resp = new T1AnnotateEventHeatResponse();
+        resp.setSchemaVersion("t1_event_heat_v1");
+        resp.setEventId(request.getEvent() != null ? request.getEvent().getEventId() : null);
+        resp.setEventHeat(heat);
         resp.setOverallConfidence(0.0);
         resp.setProcessedAt(java.time.OffsetDateTime.now().toString());
         return resp;

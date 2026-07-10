@@ -32,6 +32,10 @@ public interface EventMapper extends BaseMapper<Event> {
             "ORDER BY created_at ASC LIMIT #{limit}")
     List<Event> selectByDedupStatus(@Param("status") String status, @Param("limit") int limit);
 
+    @Select("SELECT * FROM events WHERE dedup_status = 'canonical' " +
+            "ORDER BY event_heat_computed_at ASC NULLS FIRST LIMIT #{limit}")
+    List<Event> selectReadyForHeatComputation(@Param("limit") int limit);
+
     @Select("SELECT * FROM events WHERE canonical_name = #{canonicalName} " +
             "AND dedup_status = 'pending' ORDER BY created_at ASC")
     List<Event> selectPendingByCanonicalName(@Param("canonicalName") String canonicalName);
@@ -75,4 +79,19 @@ public interface EventMapper extends BaseMapper<Event> {
             WHERE id = #{id}
             """)
     int appendMergeHistory(@Param("id") UUID id, @Param("mergedIds") UUID[] mergedIds);
+
+    @Update("""
+            UPDATE events SET
+                event_heat_level = #{heatLevel},
+                event_heat_score = #{heatScore},
+                event_heat_confidence = #{confidence},
+                event_related_content_count = #{relatedContentCount},
+                event_heat_computed_at = NOW()
+            WHERE id = #{id}
+            """)
+    int updateEventHeat(@Param("id") UUID id,
+                        @Param("heatLevel") String heatLevel,
+                        @Param("heatScore") BigDecimal heatScore,
+                        @Param("confidence") BigDecimal confidence,
+                        @Param("relatedContentCount") int relatedContentCount);
 }

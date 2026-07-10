@@ -43,6 +43,11 @@ public class T1AnnotateRequest {
         private String authorHandle;
         private String publishedAt;
         private List<String> hashtags;
+        private Long likeCount;
+        private Long commentCount;
+        private Long shareCount;
+        private Long repostCount;
+        private Long viewCount;
         private String parentContentId;
     }
 }

@@ -127,7 +127,6 @@ public class T1AnnotateResponse {
             private CoreStance coreStance;
             private List<BendTactic> bendTactics;
             private OpinionEmotion opinionEmotion;
-            private EventHeat eventHeat;
             private LanguageStyle languageStyle;
             private ContentPurpose contentPurpose;
             private RiskLevel riskLevel;
@@ -173,19 +172,6 @@ public class T1AnnotateResponse {
                 /** low | medium | high | unclear */
                 private String emotionIntensity;
                 private Double opinionEmotionConfidence;
-                private List<String> evidenceIds;
-            }
-
-            /** 维度6：事件热度 */
-            @Data
-            public static class EventHeat {
-                /** low | medium | high | explosive | unclear */
-                private String heatLevel;
-                private Double heatScore;
-                /** textual_heat_signal/engagement_metrics/platform_trending_signal/
-                 *  media_coverage_signal/temporal_burst_signal/unclear */
-                private List<String> heatSignalTypes;
-                private Double eventHeatConfidence;
                 private List<String> evidenceIds;
             }
 
@@ -353,9 +339,8 @@ public class T1AnnotateResponse {
          *  manual_policy_required/none/other */
         private List<String> reviewReasons;
         /** text_aigc_detection/image_aigc_detection/video_aigc_detection/multimodal_aigc_detection/
-         *  ideology/core_stance/bend_tactics/opinion_emotion/event_heat/
-         *  language_style/content_purpose/risk_level/topic_tags/account_type/entities_hint/
-         *  keywords/summary/event_type/none/other */
+         *  ideology/core_stance/bend_tactics/opinion_emotion/language_style/content_purpose/
+         *  risk_level/topic_tags/account_type/entities_hint/keywords/summary/event_type/none/other */
         private List<String> failedModules;
     }
 }

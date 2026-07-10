@@ -30,6 +30,11 @@ public class Event {
     private Integer contentCount;
     private String dedupStatus;
     private UUID[] mergeHistory;
+    private String eventHeatLevel;
+    private java.math.BigDecimal eventHeatScore;
+    private java.math.BigDecimal eventHeatConfidence;
+    private Integer eventRelatedContentCount;
+    private OffsetDateTime eventHeatComputedAt;
 
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;

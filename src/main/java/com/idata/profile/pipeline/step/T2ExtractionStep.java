@@ -240,6 +240,11 @@ public class T2ExtractionStep {
                 content.getPublishedAt() != null ? content.getPublishedAt().toString() : null);
         putIfHasText(contentProps, "url", content.getUrl());
         putIfHasText(contentProps, "t1Annotation", content.getT1Annotation());
+        putIfNotNull(contentProps, "likeCount", content.getLikeCount());
+        putIfNotNull(contentProps, "commentCount", content.getCommentCount());
+        putIfNotNull(contentProps, "shareCount", content.getShareCount());
+        putIfNotNull(contentProps, "repostCount", content.getRepostCount());
+        putIfNotNull(contentProps, "viewCount", content.getViewCount());
         contentProps.put("source", "backend_structural");
         neo4jGraphService.mergeNode("MediaContent", content.getId().toString(), contentProps);
     }
