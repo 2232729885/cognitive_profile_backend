@@ -6,7 +6,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * Step1去重检查，所有六种record_type共用。
- * 见 docs/课题四_数据处理流程_v2.md 各类型流程的Step1。
+ * 见 docs/数据处理流程.md 各类型流程的Step1。
  */
 @Component
 @RequiredArgsConstructor

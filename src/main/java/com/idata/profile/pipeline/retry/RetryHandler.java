@@ -14,7 +14,7 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 
 /**
- * 失败重试统一处理。见 docs/课题四_数据处理流程_v2.md 第九章。
+ * 失败重试统一处理。见 docs/数据处理流程.md 第九章。
  * 指数退避：1s/2s/4s（重试次数从0开始，delay = 2^retryCount秒）。
  * 超过max_retries(默认3)后推死信队列，不影响其他记录继续处理。
  */

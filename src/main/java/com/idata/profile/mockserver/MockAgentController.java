@@ -243,8 +243,8 @@ public class MockAgentController {
 
         T1AnnotateResponse.QualityControl qualityControl = new T1AnnotateResponse.QualityControl();
         qualityControl.setNeedHumanReview(false);
-        qualityControl.setReviewReasons(List.of("none"));
-        qualityControl.setFailedModules(List.of("none"));
+        qualityControl.setReviewReasons(List.of());
+        qualityControl.setFailedModules(List.of());
         resp.setQualityControl(qualityControl);
 
         resp.setOverallConfidence(0.80);
@@ -424,7 +424,7 @@ public class MockAgentController {
         T1AnnotateResponse.QualityControl qualityControl = new T1AnnotateResponse.QualityControl();
         qualityControl.setNeedHumanReview(false);
         qualityControl.setReviewReasons(List.of("insufficient_context"));
-        qualityControl.setFailedModules(List.of("none"));
+        qualityControl.setFailedModules(List.of());
         resp.setQualityControl(qualityControl);
 
         resp.setOverallConfidence(0.60);

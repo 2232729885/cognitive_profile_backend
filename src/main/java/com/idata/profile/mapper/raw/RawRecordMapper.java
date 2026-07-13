@@ -23,7 +23,7 @@ public interface RawRecordMapper extends BaseMapper<RawRecord> {
     boolean existsByPayloadHash(@Param("payloadHash") String payloadHash);
 
     /**
-     * 单行追溯全部处理过程，见 docs/课题四_数据处理流程_v2.md 第10.1节。
+     * 单行追溯全部处理过程，见 docs/数据处理流程.md 第10.1节。
      * 用法示例：mapper.selectFullTraceBySourceRecordId("x_post_123456")
      */
     @Select("SELECT id, source_record_id, pipeline_status, t1_output, t2_output, t3_output, t4_output " +
