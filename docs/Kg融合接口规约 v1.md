@@ -244,6 +244,7 @@ T1 annotate_account（判断账号类别）
 - **实体解析编排**（`EntityResolutionService`）：调 T3、按 action 分层处理、写 PG/Neo4j/ES/Milvus，这套逻辑内容抽取场景和账号身份识别场景共用同一份实现。
 - **关系落图**：`predicate` 校验（对照 `docs/关系词表与头尾实体类型说明.md` 的16个关系类型）→ Neo4j 查重（`relationExists`）→ 不存在则创建，已存在则追加证据。
 - **`HAS_ACCOUNT` 关系**：由账号身份识别流程（`SocialAccountIdentityJob`）产出，写 `(Person|Organization)-[HAS_ACCOUNT]->(SocialAccount)`，同时把匹配/新建的实体ID写回 `social_accounts.entity_person_id`/`entity_org_id`。
+- **内容与实体的关系**：T2 每条内容里成功解析（MERGE/REVIEW/CREATE 任意一种）出来的实体，后端会自动补一条内容指向该实体的关系，不需要算法组在 `relations[]` 里额外输出——`event` 类型走 `(MediaContent)-[DESCRIBES]->(Event)`，`person`/`organization`/`location` 类型走 `(MediaContent)-[MENTIONS]->(实体)`。这样图谱上才能查"这个事件被哪些内容描述过""这个人被哪些内容提到过"，算法组不用关心这一步，只要 `entities[]` 抽取完整、`canonicalName` 准确即可。
 
 ---
 
