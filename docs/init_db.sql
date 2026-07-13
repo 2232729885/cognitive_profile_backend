@@ -1134,6 +1134,10 @@ CREATE TABLE IF NOT EXISTS entity_fusion_records (
     content_count_after  INTEGER,                  -- 融合后累加后的 content_count
     neo4j_merged         BOOLEAN      NOT NULL DEFAULT FALSE,  -- Neo4j 节点是否已完成合并
     job_run_id           UUID,                     -- 同一批次任务的批次 ID，方便按批次查询
+    match_method         VARCHAR(50),
+    match_score          DECIMAL(5,4),
+    resolver_model       VARCHAR(100),
+    is_auto_merged       BOOLEAN      DEFAULT TRUE,
     created_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_fusion_records_entity_type ON entity_fusion_records(entity_type);
