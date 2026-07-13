@@ -64,7 +64,7 @@ public class MockAgentController {
                 request.getText() != null ? request.getText().length() : 0);
 
         T1AnnotateResponse resp = new T1AnnotateResponse();
-        resp.setSchemaVersion("t1_annotation_v0.5");
+        resp.setSchemaVersion("t1_annotation_v0.6");
         resp.setInputReference(buildInputReference(request, true, false, false));
         resp.setLanguage(request.getLanguage() != null ? request.getLanguage() : "zh");
 
@@ -91,7 +91,7 @@ public class MockAgentController {
         T1AnnotateResponse.AigcDetection.MultimodalAigcDetection multimodalNa =
                 new T1AnnotateResponse.AigcDetection.MultimodalAigcDetection();
         multimodalNa.setMultimodalAigcLabel("not_applicable");
-        multimodalNa.setModalityCombination("not_applicable");
+        multimodalNa.setCheckedModalityPairs(List.of());
         multimodalNa.setMultimodalSignalLabels(List.of("none"));
         multimodalNa.setEvidenceIds(List.of());
 
@@ -108,23 +108,27 @@ public class MockAgentController {
         T1AnnotateResponse.Annotations.HighValueSubjective.Ideology ideology =
                 new T1AnnotateResponse.Annotations.HighValueSubjective.Ideology();
         ideology.setIdeologyLabel("anti_western");
-        ideology.setTargetEntityHintIds(List.of("ent_002"));
         ideology.setIdeologyConfidence(0.75);
         ideology.setEvidenceIds(List.of("ev_002"));
 
+        T1AnnotateResponse.Annotations.HighValueSubjective.CoreStance.StanceTarget stanceTarget =
+                new T1AnnotateResponse.Annotations.HighValueSubjective.CoreStance.StanceTarget();
+        stanceTarget.setTargetType("organization");
+        stanceTarget.setTargetText("U.S. Central Command");
+
         T1AnnotateResponse.Annotations.HighValueSubjective.CoreStance coreStance =
                 new T1AnnotateResponse.Annotations.HighValueSubjective.CoreStance();
+        coreStance.setStanceTarget(stanceTarget);
         coreStance.setStanceLabel("oppose");
         coreStance.setStanceStrength("strong");
         coreStance.setCoreStanceConfidence(0.85);
         coreStance.setEvidenceIds(List.of("ev_002"));
 
-        T1AnnotateResponse.Annotations.HighValueSubjective.BendTactic bendTactic =
-                new T1AnnotateResponse.Annotations.HighValueSubjective.BendTactic();
-        bendTactic.setTactic("Distort");
-        bendTactic.setConfidence(0.68);
-        bendTactic.setEvidence("对外部势力行为表达质疑和反对，存在对立放大表述");
-        bendTactic.setReason("对军事对峙的责任归属进行单方面定性表述");
+        T1AnnotateResponse.Annotations.HighValueSubjective.ManipulationMethod manipulationMethod =
+                new T1AnnotateResponse.Annotations.HighValueSubjective.ManipulationMethod();
+        manipulationMethod.setMethodLabels(List.of("distort"));
+        manipulationMethod.setManipulationMethodConfidence(0.68);
+        manipulationMethod.setEvidenceIds(List.of("ev_002"));
 
         T1AnnotateResponse.Annotations.HighValueSubjective.OpinionEmotion opinionEmotion =
                 new T1AnnotateResponse.Annotations.HighValueSubjective.OpinionEmotion();
@@ -140,13 +144,6 @@ public class MockAgentController {
         languageStyle.setLanguageStyleConfidence(0.70);
         languageStyle.setEvidenceIds(List.of("ev_002"));
 
-        T1AnnotateResponse.Annotations.HighValueSubjective.ContentPurpose contentPurpose =
-                new T1AnnotateResponse.Annotations.HighValueSubjective.ContentPurpose();
-        contentPurpose.setPrimaryPurpose("opinion_expression");
-        contentPurpose.setSecondaryPurposes(List.of("attack_or_smear"));
-        contentPurpose.setContentPurposeConfidence(0.72);
-        contentPurpose.setEvidenceIds(List.of("ev_002"));
-
         T1AnnotateResponse.Annotations.HighValueSubjective.RiskLevel riskLevel =
                 new T1AnnotateResponse.Annotations.HighValueSubjective.RiskLevel();
         riskLevel.setRiskLabel("medium");
@@ -158,33 +155,22 @@ public class MockAgentController {
                 new T1AnnotateResponse.Annotations.HighValueSubjective();
         highValueSubjective.setIdeology(ideology);
         highValueSubjective.setCoreStance(coreStance);
-        highValueSubjective.setBendTactics(List.of(bendTactic));
         highValueSubjective.setOpinionEmotion(opinionEmotion);
         highValueSubjective.setLanguageStyle(languageStyle);
-        highValueSubjective.setContentPurpose(contentPurpose);
+        highValueSubjective.setManipulationMethod(manipulationMethod);
         highValueSubjective.setRiskLevel(riskLevel);
 
         T1AnnotateResponse.Annotations.BasicObjective.TopicTags topicTags =
                 new T1AnnotateResponse.Annotations.BasicObjective.TopicTags();
         topicTags.setPrimaryDomain("military");
-        topicTags.setSubtopicTags(List.of("geopolitics", "gulf_security"));
         topicTags.setTopicTagsConfidence(0.90);
         topicTags.setEvidenceIds(List.of("ev_001"));
-
-        T1AnnotateResponse.Annotations.BasicObjective.AccountType accountType =
-                new T1AnnotateResponse.Annotations.BasicObjective.AccountType();
-        accountType.setPrimaryAccountCategory("unknown");
-        accountType.setAccountSubtypeTags(List.of());
-        accountType.setAutomationSuspicion("unclear");
-        accountType.setAccountTypeConfidence(null);
-        accountType.setEvidenceIds(List.of());
 
         T1AnnotateResponse.Annotations.BasicObjective.EntityHint entityHint1 =
                 new T1AnnotateResponse.Annotations.BasicObjective.EntityHint();
         entityHint1.setEntityHintId("ent_001");
         entityHint1.setText("Leila Farzan");
         entityHint1.setTypeHint("persons");
-        entityHint1.setSpan(List.of(0, 12));
         entityHint1.setEntityHintConfidence(0.90);
         entityHint1.setEvidenceIds(List.of("ev_001"));
 
@@ -193,23 +179,18 @@ public class MockAgentController {
         entityHint2.setEntityHintId("ent_002");
         entityHint2.setText("U.S. Central Command");
         entityHint2.setTypeHint("organizations");
-        entityHint2.setSpan(List.of(20, 41));
         entityHint2.setEntityHintConfidence(0.92);
         entityHint2.setEvidenceIds(List.of("ev_001"));
 
         T1AnnotateResponse.Annotations.BasicObjective.Keyword keyword1 =
                 new T1AnnotateResponse.Annotations.BasicObjective.Keyword();
         keyword1.setKeywordText("霍尔木兹海峡");
-        keyword1.setSource("text");
-        keyword1.setSpan(List.of(5, 11));
         keyword1.setKeywordConfidence(0.88);
         keyword1.setEvidenceIds(List.of("ev_001"));
 
         T1AnnotateResponse.Annotations.BasicObjective.Keyword keyword2 =
                 new T1AnnotateResponse.Annotations.BasicObjective.Keyword();
         keyword2.setKeywordText("军事对峙");
-        keyword2.setSource("text");
-        keyword2.setSpan(List.of(12, 16));
         keyword2.setKeywordConfidence(0.85);
         keyword2.setEvidenceIds(List.of("ev_001"));
 
@@ -227,7 +208,6 @@ public class MockAgentController {
         T1AnnotateResponse.Annotations.BasicObjective basicObjective =
                 new T1AnnotateResponse.Annotations.BasicObjective();
         basicObjective.setTopicTags(topicTags);
-        basicObjective.setAccountType(accountType);
         basicObjective.setEntitiesHint(List.of(entityHint1, entityHint2));
         basicObjective.setKeywords(List.of(keyword1, keyword2));
         basicObjective.setSummary(summary);
@@ -276,7 +256,7 @@ public class MockAgentController {
         log.info("[MOCK-T1] annotate_media, hasImages={}, hasVideos={}", hasImages, hasVideos);
 
         T1AnnotateResponse resp = new T1AnnotateResponse();
-        resp.setSchemaVersion("t1_annotation_v0.5");
+        resp.setSchemaVersion("t1_annotation_v0.6");
         resp.setInputReference(buildInputReference(request, false, hasImages, hasVideos));
         resp.setLanguage(request.getLanguage() != null ? request.getLanguage() : "zh");
 
@@ -303,7 +283,7 @@ public class MockAgentController {
         T1AnnotateResponse.AigcDetection.MultimodalAigcDetection multimodal =
                 new T1AnnotateResponse.AigcDetection.MultimodalAigcDetection();
         multimodal.setMultimodalAigcLabel("consistent");
-        multimodal.setModalityCombination("image_text_ocr");
+        multimodal.setCheckedModalityPairs(List.of("image_ocr"));
         multimodal.setMultimodalSignalLabels(List.of("none"));
         multimodal.setMultimodalAigcConfidence(0.75);
         multimodal.setEvidenceIds(List.of("ev_img_002"));
@@ -321,11 +301,16 @@ public class MockAgentController {
         T1AnnotateResponse.Annotations.HighValueSubjective.Ideology ideology =
                 new T1AnnotateResponse.Annotations.HighValueSubjective.Ideology();
         ideology.setIdeologyLabel("unclear");
-        ideology.setTargetEntityHintIds(List.of());
         ideology.setEvidenceIds(List.of());
+
+        T1AnnotateResponse.Annotations.HighValueSubjective.CoreStance.StanceTarget stanceTarget =
+                new T1AnnotateResponse.Annotations.HighValueSubjective.CoreStance.StanceTarget();
+        stanceTarget.setTargetType("unclear");
+        stanceTarget.setTargetText(null);
 
         T1AnnotateResponse.Annotations.HighValueSubjective.CoreStance coreStance =
                 new T1AnnotateResponse.Annotations.HighValueSubjective.CoreStance();
+        coreStance.setStanceTarget(stanceTarget);
         coreStance.setStanceLabel("unclear");
         coreStance.setStanceStrength("unclear");
         coreStance.setEvidenceIds(List.of());
@@ -343,11 +328,10 @@ public class MockAgentController {
         languageStyle.setStyleLabels(List.of("unclear"));
         languageStyle.setEvidenceIds(List.of());
 
-        T1AnnotateResponse.Annotations.HighValueSubjective.ContentPurpose contentPurpose =
-                new T1AnnotateResponse.Annotations.HighValueSubjective.ContentPurpose();
-        contentPurpose.setPrimaryPurpose("unclear");
-        contentPurpose.setSecondaryPurposes(List.of());
-        contentPurpose.setEvidenceIds(List.of());
+        T1AnnotateResponse.Annotations.HighValueSubjective.ManipulationMethod manipulationMethod =
+                new T1AnnotateResponse.Annotations.HighValueSubjective.ManipulationMethod();
+        manipulationMethod.setMethodLabels(List.of());
+        manipulationMethod.setEvidenceIds(List.of());
 
         T1AnnotateResponse.Annotations.HighValueSubjective.RiskLevel riskLevel =
                 new T1AnnotateResponse.Annotations.HighValueSubjective.RiskLevel();
@@ -360,25 +344,16 @@ public class MockAgentController {
                 new T1AnnotateResponse.Annotations.HighValueSubjective();
         highValueSubjective.setIdeology(ideology);
         highValueSubjective.setCoreStance(coreStance);
-        highValueSubjective.setBendTactics(List.of());
         highValueSubjective.setOpinionEmotion(opinionEmotion);
         highValueSubjective.setLanguageStyle(languageStyle);
-        highValueSubjective.setContentPurpose(contentPurpose);
+        highValueSubjective.setManipulationMethod(manipulationMethod);
         highValueSubjective.setRiskLevel(riskLevel);
 
         T1AnnotateResponse.Annotations.BasicObjective.TopicTags topicTags =
                 new T1AnnotateResponse.Annotations.BasicObjective.TopicTags();
         topicTags.setPrimaryDomain("military");
-        topicTags.setSubtopicTags(List.of("maritime"));
         topicTags.setTopicTagsConfidence(0.75);
         topicTags.setEvidenceIds(List.of("ev_img_001"));
-
-        T1AnnotateResponse.Annotations.BasicObjective.AccountType accountType =
-                new T1AnnotateResponse.Annotations.BasicObjective.AccountType();
-        accountType.setPrimaryAccountCategory("unknown");
-        accountType.setAccountSubtypeTags(List.of());
-        accountType.setAutomationSuspicion("unclear");
-        accountType.setEvidenceIds(List.of());
 
         T1AnnotateResponse.Annotations.BasicObjective.EntityHint shipHint =
                 new T1AnnotateResponse.Annotations.BasicObjective.EntityHint();
@@ -391,7 +366,6 @@ public class MockAgentController {
         T1AnnotateResponse.Annotations.BasicObjective.Keyword ocrKeyword =
                 new T1AnnotateResponse.Annotations.BasicObjective.Keyword();
         ocrKeyword.setKeywordText("HORMUZ 2026");
-        ocrKeyword.setSource("image_ocr");
         ocrKeyword.setKeywordConfidence(0.90);
         ocrKeyword.setEvidenceIds(List.of("ev_img_002"));
 
@@ -408,7 +382,6 @@ public class MockAgentController {
         T1AnnotateResponse.Annotations.BasicObjective basicObjective =
                 new T1AnnotateResponse.Annotations.BasicObjective();
         basicObjective.setTopicTags(topicTags);
-        basicObjective.setAccountType(accountType);
         basicObjective.setEntitiesHint(List.of(shipHint));
         basicObjective.setKeywords(List.of(ocrKeyword));
         basicObjective.setSummary(summary);
@@ -464,35 +437,59 @@ public class MockAgentController {
         log.info("[MOCK-T1] annotate_account, platform={}, handle={}",
                 request.getPlatform(), request.getHandle());
 
-        T1AnnotateResponse.Annotations.BasicObjective.AccountType accountType =
-                new T1AnnotateResponse.Annotations.BasicObjective.AccountType();
-        accountType.setPrimaryAccountCategory("news_media");
-        accountType.setAccountSubtypeTags(List.of("independent_media"));
-        accountType.setAutomationSuspicion("low");
-        accountType.setAccountTypeConfidence(0.82);
-        accountType.setEvidenceIds(List.of("ev_acc_001", "ev_acc_002"));
+        T1AnnotateAccountResponse.AccountReference accountReference =
+                new T1AnnotateAccountResponse.AccountReference();
+        accountReference.setPlatform(request.getPlatform());
+        accountReference.setPlatformUserId(request.getPlatformUserId());
+        accountReference.setAccountEntityType(request.getAccountEntityType());
+        accountReference.setPlatformNativeType(request.getPlatformNativeType());
+        accountReference.setHandle(request.getHandle());
+        accountReference.setDisplayName(request.getDisplayName());
 
-        T1AnnotateResponse.EvidenceClue ev1 = new T1AnnotateResponse.EvidenceClue();
-        ev1.setEvidenceId("ev_acc_001");
-        ev1.setEvidenceType("metadata");
-        ev1.setSource("metadata");
-        ev1.setEvidenceText(request.getBio());
+        T1AnnotateAccountResponse.AccountType.PrimaryAccountCategory primaryAccountCategory =
+                new T1AnnotateAccountResponse.AccountType.PrimaryAccountCategory();
+        primaryAccountCategory.setCategoryLabel("news_media");
+        primaryAccountCategory.setEvidenceIds(List.of("ev_account_001"));
 
-        T1AnnotateResponse.EvidenceClue ev2 = new T1AnnotateResponse.EvidenceClue();
-        ev2.setEvidenceId("ev_acc_002");
-        ev2.setEvidenceType("metadata");
-        ev2.setSource("metadata");
-        ev2.setEvidenceText("verified=" + request.getVerified() + ", verifiedType=" + request.getVerifiedType());
+        T1AnnotateAccountResponse.AccountType.AccountSubtypeTag subtypeTag =
+                new T1AnnotateAccountResponse.AccountType.AccountSubtypeTag();
+        subtypeTag.setSubtypeTag("independent_media");
+        subtypeTag.setEvidenceIds(List.of("ev_account_001"));
+
+        T1AnnotateAccountResponse.AccountType.AutomationSuspicion automationSuspicion =
+                new T1AnnotateAccountResponse.AccountType.AutomationSuspicion();
+        automationSuspicion.setSuspicionLevel("low");
+        automationSuspicion.setEvidenceIds(List.of("ev_account_002"));
+
+        T1AnnotateAccountResponse.AccountType accountType = new T1AnnotateAccountResponse.AccountType();
+        accountType.setPrimaryAccountCategory(primaryAccountCategory);
+        accountType.setAccountSubtypeTags(List.of(subtypeTag));
+        accountType.setAutomationSuspicion(automationSuspicion);
+
+        T1AnnotateAccountResponse.EvidenceClue ev1 = new T1AnnotateAccountResponse.EvidenceClue();
+        ev1.setEvidenceId("ev_account_001");
+        ev1.setEvidenceType("profile_text");
+        ev1.setSourceField("bio");
+        ev1.setMetadataSnapshot(Map.of("value", request.getBio() != null ? request.getBio() : ""));
+
+        T1AnnotateAccountResponse.EvidenceClue ev2 = new T1AnnotateAccountResponse.EvidenceClue();
+        ev2.setEvidenceId("ev_account_002");
+        ev2.setEvidenceType("verification_info");
+        ev2.setSourceField("verified_type");
+        ev2.setMetadataSnapshot(Map.of(
+                "verified", String.valueOf(request.getVerified()),
+                "verifiedType", String.valueOf(request.getVerifiedType())));
 
         T1AnnotateAccountResponse resp = new T1AnnotateAccountResponse();
-        resp.setSchemaVersion("t1_account_annotation_v0.5");
+        resp.setSchemaVersion("t1_annotation_v0.6");
+        resp.setAccountReference(accountReference);
         resp.setAccountType(accountType);
         resp.setEvidenceClues(List.of(ev1, ev2));
 
         T1AnnotateResponse.QualityControl qualityControl = new T1AnnotateResponse.QualityControl();
         qualityControl.setNeedHumanReview(false);
-        qualityControl.setReviewReasons(List.of("none"));
-        qualityControl.setFailedModules(List.of("none"));
+        qualityControl.setReviewReasons(List.of());
+        qualityControl.setFailedModules(List.of());
         resp.setQualityControl(qualityControl);
 
         resp.setOverallConfidence(0.82);
@@ -502,8 +499,8 @@ public class MockAgentController {
 
     @PostMapping("/mock/t1/annotate_event_heat")
     public T1AnnotateEventHeatResponse annotateEventHeat(@RequestBody T1AnnotateEventHeatRequest request) {
-        log.info("[MOCK-T1] annotate_event_heat, eventId={}, relatedEntities={}",
-                request.getEvent() != null ? request.getEvent().getEventId() : null,
+        log.info("[MOCK-T1] annotate_event_heat, hasEvent={}, relatedEntities={}",
+                request.getEvent() != null,
                 request.getRelatedEntities() != null ? request.getRelatedEntities().size() : 0);
 
         int contentCount = request.getAggregateStats() != null
@@ -514,34 +511,37 @@ public class MockAgentController {
                 ? request.getAggregateStats().getTotalEngagement() : 0L;
 
         T1AnnotateEventHeatResponse.EventHeat heat = new T1AnnotateEventHeatResponse.EventHeat();
+        double overallConfidence;
         if (contentCount == 0) {
             heat.setHeatLevel("unclear");
+            heat.setHeatScore(null);
             heat.setHeatSignalTypes(List.of("insufficient_data"));
-            heat.setReasoning("No related content is available, so event heat is unclear.");
-            heat.setConfidence(0.2);
+            heat.setReasoning("当前事件尚未关联到有效内容，无法形成可靠的事件热度判断。");
+            overallConfidence = 0.2;
         } else if (contentCount >= 50 || totalEngagement >= 100000) {
             heat.setHeatLevel("high");
+            heat.setHeatScore(Math.min(1.0, 0.5 + contentCount / 200.0));
             heat.setHeatSignalTypes(List.of("content_volume", "engagement_surge"));
-            heat.setReasoning("Related content volume or total engagement is high.");
-            heat.setConfidence(0.85);
+            heat.setReasoning("关联内容数量和互动总量均处于高位。");
+            overallConfidence = 0.85;
         } else if (contentCount >= 10) {
             heat.setHeatLevel("medium");
+            heat.setHeatScore(Math.min(1.0, 0.3 + contentCount / 200.0));
             heat.setHeatSignalTypes(List.of("content_volume"));
-            heat.setReasoning("Related content volume is moderate.");
-            heat.setConfidence(0.75);
+            heat.setReasoning("关联内容数量中等，持续被讨论。");
+            overallConfidence = 0.75;
         } else {
             heat.setHeatLevel("low");
+            heat.setHeatScore(Math.min(1.0, 0.1 + contentCount / 200.0));
             heat.setHeatSignalTypes(List.of("content_volume"));
-            heat.setReasoning("Related content volume is low.");
-            heat.setConfidence(0.65);
+            heat.setReasoning("关联内容数量较少。");
+            overallConfidence = 0.65;
         }
-        heat.setHeatScore(Math.min(100.0, contentCount * 2.0 + totalEngagement / 1000.0));
 
         T1AnnotateEventHeatResponse resp = new T1AnnotateEventHeatResponse();
-        resp.setSchemaVersion("t1_event_heat_v1");
-        resp.setEventId(request.getEvent() != null ? request.getEvent().getEventId() : null);
+        resp.setSchemaVersion("t1_annotation_v0.6");
         resp.setEventHeat(heat);
-        resp.setOverallConfidence(heat.getConfidence());
+        resp.setOverallConfidence(overallConfidence);
         resp.setProcessedAt(java.time.OffsetDateTime.now().toString());
         return resp;
     }
@@ -615,14 +615,15 @@ public class MockAgentController {
                 new T1AnnotateResponse.AigcDetection.MultimodalAigcDetection();
         if (hasText && (hasImages || hasVideos)) {
             multimodal.setMultimodalAigcLabel("consistent");
-            multimodal.setModalityCombination(hasImages && hasVideos ? "text_image_video"
-                    : hasImages ? "text_image" : "text_video");
+            multimodal.setCheckedModalityPairs(hasImages && hasVideos
+                    ? List.of("text_image", "text_video")
+                    : hasImages ? List.of("text_image") : List.of("text_video"));
             multimodal.setMultimodalSignalLabels(List.of("none"));
             multimodal.setMultimodalAigcConfidence(0.75);
             multimodal.setEvidenceIds(List.of(hasImages ? "ev_img_001" : "ev_vid_001"));
         } else {
             multimodal.setMultimodalAigcLabel("not_applicable");
-            multimodal.setModalityCombination("not_applicable");
+            multimodal.setCheckedModalityPairs(List.of());
             multimodal.setMultimodalSignalLabels(List.of("none"));
             multimodal.setEvidenceIds(List.of());
         }
@@ -716,7 +717,8 @@ public class MockAgentController {
         T1AnnotateResponse.InputReference ref = new T1AnnotateResponse.InputReference();
         T1AnnotateRequest.Context context = request.getContext();
         ref.setContentId(context != null ? context.getContentId() : null);
-        ref.setContentType(resolveContentType(hasText, hasImages, hasVideos));
+        ref.setContentType(context != null ? context.getContentType() : null);
+        ref.setModalityCombination(resolveModalityCombination(hasText, hasImages, hasVideos));
         ref.setPlatform(context != null ? context.getPlatform() : null);
         ref.setUrl(context != null ? context.getUrl() : null);
         ref.setAuthorId(context != null ? context.getAuthorHandle() : null);
@@ -724,9 +726,18 @@ public class MockAgentController {
         return ref;
     }
 
-    private String resolveContentType(boolean hasText, boolean hasImages, boolean hasVideos) {
-        if (hasText && (hasImages || hasVideos)) {
-            return "text_image_mixed";
+    private String resolveModalityCombination(boolean hasText, boolean hasImages, boolean hasVideos) {
+        if (hasText && hasImages && hasVideos) {
+            return "text_image_video";
+        }
+        if (hasText && hasImages) {
+            return "text_image";
+        }
+        if (hasText && hasVideos) {
+            return "text_video";
+        }
+        if (hasImages && hasVideos) {
+            return "image_video";
         }
         if (hasVideos) {
             return "video";

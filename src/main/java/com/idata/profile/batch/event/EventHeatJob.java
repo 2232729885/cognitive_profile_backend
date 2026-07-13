@@ -113,7 +113,7 @@ public class EventHeatJob {
                     event.getId(),
                     heat.getHeatLevel(),
                     heat.getHeatScore() != null ? BigDecimal.valueOf(heat.getHeatScore()) : null,
-                    heat.getConfidence() != null ? BigDecimal.valueOf(heat.getConfidence()) : null,
+                    response.getOverallConfidence() != null ? BigDecimal.valueOf(response.getOverallConfidence()) : null,
                     contentNodes.size());
 
             neo4jGraphService.mergeNode("Event", event.getId().toString(), Map.of(

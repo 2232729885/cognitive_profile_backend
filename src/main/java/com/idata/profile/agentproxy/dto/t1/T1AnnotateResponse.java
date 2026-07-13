@@ -7,7 +7,7 @@ import java.util.List;
 @Data
 public class T1AnnotateResponse {
 
-    /** 固定为 "t1_annotation_v0.5" */
+    /** 固定为 "t1_annotation_v0.6" */
     private String schemaVersion;
 
     /** 输入引用信息 */
@@ -39,8 +39,10 @@ public class T1AnnotateResponse {
     @Data
     public static class InputReference {
         private String contentId;
-        /** text | image | video | text_image_mixed */
+        /** post | comment | reply | article */
         private String contentType;
+        /** text | image | video | text_image | text_video | image_video | text_image_video */
+        private String modalityCombination;
         private String platform;
         private String url;
         private String authorId;
@@ -103,11 +105,12 @@ public class T1AnnotateResponse {
         public static class MultimodalAigcDetection {
             /** consistent | inconsistent | mixed_generated | suspicious | unclear | not_applicable */
             private String multimodalAigcLabel;
-            /** text_image | text_video | image_text_ocr | video_audio | video_subtitle | text_image_video | other | not_applicable */
-            private String modalityCombination;
-            /** text_image_mismatch/text_video_mismatch/image_ocr_mismatch/audio_visual_mismatch/
-             *  subtitle_visual_mismatch/caption_context_mismatch/cross_modal_source_mismatch/
-             *  mixed_generation_signal/none/unclear */
+            /** text_image/text_video/image_video/image_ocr/video_audio/video_subtitle/text_image_video/other，
+             *  可以多选，本次实际检查过的模态组合 */
+            private List<String> checkedModalityPairs;
+            /** text_image_mismatch/text_video_mismatch/image_video_mismatch/image_ocr_mismatch/
+             *  audio_visual_mismatch/subtitle_visual_mismatch/caption_context_mismatch/
+             *  cross_modal_source_mismatch/mixed_generation_signal/none/unclear */
             private List<String> multimodalSignalLabels;
             private Double multimodalAigcConfidence;
             private List<String> evidenceIds;
@@ -125,19 +128,18 @@ public class T1AnnotateResponse {
         public static class HighValueSubjective {
             private Ideology ideology;
             private CoreStance coreStance;
-            private List<BendTactic> bendTactics;
             private OpinionEmotion opinionEmotion;
             private LanguageStyle languageStyle;
-            private ContentPurpose contentPurpose;
+            private ManipulationMethod manipulationMethod;
             private RiskLevel riskLevel;
 
             /** 维度1：意识形态倾向 */
             @Data
             public static class Ideology {
                 /** left_leaning/right_leaning/liberal/conservative/nationalist/populist/
-                 *  pro_government/anti_government/pro_western/anti_western/neutral/unclear/other */
+                 *  pro_government/anti_government/pro_western/anti_western/neutral/
+                 *  not_obvious/mixed/unclear/other */
                 private String ideologyLabel;
-                private List<String> targetEntityHintIds;
                 private Double ideologyConfidence;
                 private List<String> evidenceIds;
             }
@@ -145,65 +147,63 @@ public class T1AnnotateResponse {
             /** 维度2：内容级总体立场 */
             @Data
             public static class CoreStance {
+                private StanceTarget stanceTarget;
                 /** support | oppose | neutral | mixed | unclear */
                 private String stanceLabel;
                 /** weak | medium | strong | unclear */
                 private String stanceStrength;
                 private Double coreStanceConfidence;
                 private List<String> evidenceIds;
+
+                @Data
+                public static class StanceTarget {
+                    /** event/issue/policy/action/person/organization/country_or_region/
+                     *  ideology_or_value/other/unclear */
+                    private String targetType;
+                    private String targetText;
+                }
             }
 
-            /** 维度：BEND 叙事操纵手法（对齐 T1_标注属性.md 维度10） */
-            @Data
-            public static class BendTactic {
-                /** Engage | Explain | Excite | Enhance | Dismiss | Distort | Dismay | Distract */
-                private String tactic;
-                private Double confidence;
-                private String evidence;
-                private String reason;
-            }
-            /** 维度5：观点情绪 */
+            /** 维度3：观点情绪 */
             @Data
             public static class OpinionEmotion {
                 /** positive | negative | neutral | mixed | unclear */
                 private String sentimentPolarity;
-                /** anger/fear/sadness/anxiety/disgust/contempt/joy/hope/sympathy/surprise/sarcasm/none/unclear */
+                /** anger/fear/sadness/anxiety/disgust/contempt/joy/hope/sympathy/surprise/none/unclear */
                 private List<String> emotionLabels;
-                /** low | medium | high | unclear */
+                /** low | medium | high | unclear | not_applicable */
                 private String emotionIntensity;
                 private Double opinionEmotionConfidence;
                 private List<String> evidenceIds;
             }
 
-            /** 维度7：语言表达方式 */
+            /** 维度4：语言表达方式 */
             @Data
             public static class LanguageStyle {
                 /** neutral/aggressive/sarcastic/mocking/alarmist/threatening/sensationalized/
                  *  emotional/conspiratorial/accusatory/slogan_like/rhetorical_questioning/
-                 *  rational_analytical/unclear */
+                 *  rational_analytical/unclear/not_applicable */
                 private List<String> styleLabels;
                 private Double languageStyleConfidence;
                 private List<String> evidenceIds;
             }
 
-            /** 维度8：内容目的 */
+            /** 维度5：BEND 叙事操纵手法（原 bendTactics，v0.6 改成单对象+统一置信度） */
             @Data
-            public static class ContentPurpose {
-                /** information_sharing/opinion_expression/persuasion/mobilization/propaganda/
-                 *  attack_or_smear/debunking/warning/attention_seeking/rumor_spreading/unclear */
-                private String primaryPurpose;
-                private List<String> secondaryPurposes;
-                private Double contentPurposeConfidence;
+            public static class ManipulationMethod {
+                /** engage | explain | excite | enhance | dismiss | distort | dismay | distract，可多选，可为空数组 */
+                private List<String> methodLabels;
+                private Double manipulationMethodConfidence;
                 private List<String> evidenceIds;
             }
 
-            /** 维度9：风险等级 */
+            /** 维度6：风险等级 */
             @Data
             public static class RiskLevel {
                 /** none | low | medium | high | severe | unclear */
                 private String riskLabel;
                 /** misinformation/rumor/polarization/hostility/panic_amplification/
-                 *  mobilization_risk/reputation_attack/manipulation/aigc_deception/none/unclear */
+                 *  mobilization_risk/reputation_attack/manipulation/none/unclear */
                 private List<String> riskTypes;
                 private Double riskLevelConfidence;
                 private List<String> evidenceIds;
@@ -213,77 +213,49 @@ public class T1AnnotateResponse {
         @Data
         public static class BasicObjective {
             private TopicTags topicTags;
-            private AccountType accountType;
             private List<EntityHint> entitiesHint;
             private List<Keyword> keywords;
             private Summary summary;
             private EventType eventType;
 
-            /** 维度10：话题标签 */
+            /** 维度7：话题标签（只输出一个主要领域，不再细分子话题） */
             @Data
             public static class TopicTags {
                 /** politics/military/economy_finance/technology_cyber/public_health/
                  *  social_livelihood/ethnic_religious/energy_environment/disaster_accident/
                  *  crime_public_safety/culture_education/migration_refugee/other/unclear */
                 private String primaryDomain;
-                private List<String> subtopicTags;
                 private Double topicTagsConfidence;
                 private List<String> evidenceIds;
             }
 
-            /**
-             * 维度11：账号类别。
-             * 注意：这是每条内容标注时的"轻量级/兜底"账号类别判断，用现有的弱信号（比如 platform）尽力判断，
-             * 信息不够就老实标 unknown/unclear。权威的、基于完整账号画像的账号类别判断走独立的
-             * annotate_account 接口（下一轮实现），结果落在 SocialAccount.accountType 上。
-             * 这里不是重复实现，是两个不同精度/不同数据来源的判断。
-             */
-            @Data
-            public static class AccountType {
-                /** ordinary_user/news_media/state_affiliated_media/government_agency/political_actor/
-                 *  political_party_or_campaign/military_security_agency/international_organization/
-                 *  ngo_or_civil_society/academic_or_expert/commercial_brand/platform_official/
-                 *  influencer_kol/community_group/anonymous_account/suspected_bot_or_automated/
-                 *  unknown/other */
-                private String primaryAccountCategory;
-                private List<String> accountSubtypeTags;
-                /** none | low | medium | high | unclear */
-                private String automationSuspicion;
-                private Double accountTypeConfidence;
-                private List<String> evidenceIds;
-            }
-
-            /** 维度12：实体线索 */
+            /** 维度8：实体线索（只提供线索，不替代T2正式抽取） */
             @Data
             public static class EntityHint {
                 private String entityHintId;
                 private String text;
                 /** persons/organizations/events/locations/media_contents/social_accounts/narratives/others/unknown */
                 private String typeHint;
-                private List<Integer> span;
                 private Double entityHintConfidence;
                 private List<String> evidenceIds;
             }
 
-            /** 维度13：关键词 */
+            /** 维度9：关键词 */
             @Data
             public static class Keyword {
                 private String keywordText;
-                /** text | image_ocr | video_transcript | metadata | unknown */
-                private String source;
-                private List<Integer> span;
                 private Double keywordConfidence;
                 private List<String> evidenceIds;
             }
 
-            /** 维度14：摘要（不挂 evidenceIds） */
+            /** 维度10：摘要（依据整条多模态输入生成，不设 evidenceIds） */
             @Data
             public static class Summary {
                 private String summaryText;
                 private Double summaryConfidence;
             }
 
-            /** 维度15：事件类型 */
+            /** 维度11：事件类型 */
             @Data
             public static class EventType {
                 /** military_conflict/diplomatic_dispute/policy_announcement/election_campaign/
@@ -336,11 +308,11 @@ public class T1AnnotateResponse {
         private Boolean needHumanReview;
         /** low_confidence/insufficient_context/conflicting_signals/multimodal_inconsistency/
          *  aigc_suspicious/high_risk_content/missing_metadata/module_failure/too_short_input/
-         *  manual_policy_required/none/other */
+         *  manual_policy_required/other */
         private List<String> reviewReasons;
-        /** text_aigc_detection/image_aigc_detection/video_aigc_detection/multimodal_aigc_detection/
-         *  ideology/core_stance/bend_tactics/opinion_emotion/language_style/content_purpose/
-         *  risk_level/topic_tags/account_type/entities_hint/keywords/summary/event_type/none/other */
+        /** aigcDetection/textAigcDetection/imageAigcDetection/videoAigcDetection/multimodalAigcDetection/
+         *  ideology/coreStance/opinionEmotion/languageStyle/manipulationMethod/riskLevel/
+         *  topicTags/entitiesHint/keywords/summary/eventType/other */
         private List<String> failedModules;
     }
 }

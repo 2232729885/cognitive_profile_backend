@@ -99,11 +99,11 @@ public class SocialAccountConsumer {
             T1AnnotateAccountResponse response = agentProxyClient.call(
                     "T1", "annotate_account", request, T1AnnotateAccountResponse.class);
 
-            if (response != null && response.getAccountType() != null) {
-                account.setAccountType(response.getAccountType().getPrimaryAccountCategory());
-                if (response.getAccountType().getAccountTypeConfidence() != null) {
-                    account.setAccountTypeConfidence(
-                            BigDecimal.valueOf(response.getAccountType().getAccountTypeConfidence()));
+            if (response != null && response.getAccountType() != null
+                    && response.getAccountType().getPrimaryAccountCategory() != null) {
+                account.setAccountType(response.getAccountType().getPrimaryAccountCategory().getCategoryLabel());
+                if (response.getOverallConfidence() != null) {
+                    account.setAccountTypeConfidence(BigDecimal.valueOf(response.getOverallConfidence()));
                 }
             }
         } catch (Exception e) {
