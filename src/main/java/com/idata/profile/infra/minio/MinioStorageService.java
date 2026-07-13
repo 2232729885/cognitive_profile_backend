@@ -1,6 +1,8 @@
 package com.idata.profile.infra.minio;
 
 import io.minio.BucketExistsArgs;
+import io.minio.GetObjectArgs;
+import io.minio.GetObjectResponse;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
@@ -44,6 +46,13 @@ public class MinioStorageService {
     }
 
     public byte[] download(String bucket, String key) {
-        throw new UnsupportedOperationException("MinIO download is not implemented yet");
+        try (GetObjectResponse response = minioClient.getObject(GetObjectArgs.builder()
+                .bucket(bucket)
+                .object(key)
+                .build())) {
+            return response.readAllBytes();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to download object from MinIO: " + bucket + "/" + key, e);
+        }
     }
 }

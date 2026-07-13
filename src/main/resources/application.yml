@@ -52,6 +52,9 @@ spring:
       auto-offset-reset: earliest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
 
 # MyBatis-Plus配置，下划线转驼峰是全局约定（见 docs/01-CODEGEN-CONTEXT.md 第0节）
 mybatis-plus:
