@@ -31,7 +31,7 @@ CREATE OR REPLACE FUNCTION update_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
   NEW.updated_at = NOW();
-  RETURN NEW;
+RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -44,7 +44,7 @@ COMMENT ON FUNCTION update_updated_at() IS '通用触发器函数，在每次 UP
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS raw_records (
-    id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                                           id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     schema_version      VARCHAR(32) NOT NULL DEFAULT 'kt3_to_kt4_v1',
     record_type         VARCHAR(32) NOT NULL,
     source_record_id    VARCHAR(256) NOT NULL,
@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS raw_records (
     batch_import_id     UUID,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+    );
 
 COMMENT ON TABLE  raw_records                  IS 'L0原始采集层：Kafka或文件导入的原始消息，每条必须先落这里，一字不改，支持任意步骤失败后重跑';
 COMMENT ON COLUMN raw_records.id               IS '主键，UUID';
@@ -109,8 +109,8 @@ CREATE INDEX IF NOT EXISTS idx_raw_crawl_task  ON raw_records(crawl_task_id) WHE
 CREATE INDEX IF NOT EXISTS idx_raw_created     ON raw_records(created_at DESC);
 
 CREATE TRIGGER trg_raw_records_updated_at
-  BEFORE UPDATE ON raw_records
-  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+    BEFORE UPDATE ON raw_records
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 -- ============================================================
 -- L1：证据标准化层
@@ -121,7 +121,7 @@ CREATE TRIGGER trg_raw_records_updated_at
 -- 适用 record_type：social_content / news_article
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS media_contents (
-    id                      UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                                              id                      UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     raw_record_id           UUID        NOT NULL REFERENCES raw_records(id),
     platform                VARCHAR(64) NOT NULL,
     content_type            VARCHAR(32) NOT NULL,
@@ -154,24 +154,13 @@ CREATE TABLE IF NOT EXISTS media_contents (
     news_section            VARCHAR(64),
     news_tags               TEXT[],
     t1_annotated_at         TIMESTAMPTZ,
-    t1_model_version        VARCHAR(64),
-    topic_category          VARCHAR(64),
-    topic_subcategory       VARCHAR(64),
-    event_heat_score        NUMERIC(5,2),
-    sentiment_label         VARCHAR(16),
-    sentiment_score         NUMERIC(4,3),
-    stance_label            VARCHAR(16),
-    stance_target           VARCHAR(128),
-    aigc_score              NUMERIC(4,3),
-    aigc_type               VARCHAR(32),
-    entities_hint           JSONB,
-    narrative_hint          TEXT,
-    need_human_review       BOOLEAN     NOT NULL DEFAULT FALSE,
     human_review_status     VARCHAR(32),
     propagation_synced_to_neo4j BOOLEAN NOT NULL DEFAULT FALSE,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    t1_annotation           JSONB,
+    source_media_asset_ids  VARCHAR[]
+    );
 
 COMMENT ON TABLE  media_contents                      IS 'L1标准化层：社交内容和新闻报道。一行代表平台上一条可定位的内容对象，T1标注结果直接写在这张表里';
 COMMENT ON COLUMN media_contents.id                   IS '主键，UUID';
@@ -207,21 +196,10 @@ COMMENT ON COLUMN media_contents.news_author          IS '新闻作者，仅 new
 COMMENT ON COLUMN media_contents.news_section         IS '新闻栏目（如 world/politics），仅 news_article 使用';
 COMMENT ON COLUMN media_contents.news_tags            IS '新闻标签数组，仅 news_article 使用';
 COMMENT ON COLUMN media_contents.t1_annotated_at      IS 'T1标注完成时间';
-COMMENT ON COLUMN media_contents.t1_model_version     IS 'T1标注使用的模型版本，用于评测复现';
-COMMENT ON COLUMN media_contents.topic_category       IS 'T1标注：主题分类，如 politics | economy | military | health';
-COMMENT ON COLUMN media_contents.topic_subcategory    IS 'T1标注：主题子分类';
-COMMENT ON COLUMN media_contents.event_heat_score     IS 'T1标注：事件热度评分 0-100';
-COMMENT ON COLUMN media_contents.sentiment_label      IS 'T1标注：情感倾向，positive | negative | neutral';
-COMMENT ON COLUMN media_contents.sentiment_score      IS 'T1标注：情感强度 -1.0~1.0';
-COMMENT ON COLUMN media_contents.stance_label         IS 'T1标注：立场判别，support | oppose | neutral';
-COMMENT ON COLUMN media_contents.stance_target        IS 'T1标注：立场针对的对象（实体名称）';
-COMMENT ON COLUMN media_contents.aigc_score           IS 'T1标注：AIGC可疑度 0.0-1.0，>0.8时触发人工复核';
-COMMENT ON COLUMN media_contents.aigc_type            IS 'T1标注：AIGC类型，human | ai_text | ai_image | ai_mixed | unknown';
-COMMENT ON COLUMN media_contents.entities_hint        IS 'T1输出给T2的实体提示（JSONB），加速T2抽取';
-COMMENT ON COLUMN media_contents.narrative_hint       IS 'T1输出给T2的叙事线索文本';
-COMMENT ON COLUMN media_contents.need_human_review    IS 'T1判断是否需要人工复核，aigc_score>0.8时自动置true';
 COMMENT ON COLUMN media_contents.human_review_status  IS '人工复核状态：pending | confirmed | modified | rejected';
 COMMENT ON COLUMN media_contents.propagation_synced_to_neo4j IS '传播链关系是否已同步到Neo4j。对端内容尚未入库时保持false，由ContentPropagationBackfillJob后续回填';
+COMMENT ON COLUMN media_contents.t1_annotation        IS 'T1完整标注结果JSON（当前schema_version见字段内容本身，不体现在列名里）';
+COMMENT ON COLUMN media_contents.source_media_asset_ids IS '社交内容消息里 data.media_asset_ids 原始字符串ID列表，用于反查关联 media_assets.source_asset_id';
 
 CREATE INDEX IF NOT EXISTS idx_mc_platform     ON media_contents(platform);
 CREATE INDEX IF NOT EXISTS idx_mc_published    ON media_contents(published_at DESC);
@@ -230,23 +208,21 @@ CREATE INDEX IF NOT EXISTS idx_mc_platform_id  ON media_contents(platform, platf
 CREATE INDEX IF NOT EXISTS idx_mc_content_type ON media_contents(content_type);
 CREATE INDEX IF NOT EXISTS idx_mc_language     ON media_contents(language);
 CREATE INDEX IF NOT EXISTS idx_mc_raw          ON media_contents(raw_record_id);
-CREATE INDEX IF NOT EXISTS idx_mc_aigc         ON media_contents(aigc_score DESC) WHERE aigc_score > 0.5;
-CREATE INDEX IF NOT EXISTS idx_mc_review       ON media_contents(need_human_review) WHERE need_human_review = TRUE;
 CREATE INDEX IF NOT EXISTS idx_mc_hashtags     ON media_contents USING GIN(hashtags);
 CREATE INDEX IF NOT EXISTS idx_mc_pending_propagation_sync
     ON media_contents(propagation_synced_to_neo4j)
     WHERE propagation_synced_to_neo4j = FALSE;
 
 CREATE TRIGGER trg_media_contents_updated_at
-  BEFORE UPDATE ON media_contents
-  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+    BEFORE UPDATE ON media_contents
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 -- ------------------------------------------------------------
 -- 账号/频道/群组（最新状态快照）
 -- 适用 record_type：social_account
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS social_accounts (
-    id                      UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                                               id                      UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     platform                VARCHAR(64) NOT NULL,
     platform_user_id        VARCHAR(256) NOT NULL,
     account_entity_type     VARCHAR(32),
@@ -275,8 +251,9 @@ CREATE TABLE IF NOT EXISTS social_accounts (
     first_seen_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_active_at          TIMESTAMPTZ,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    identity_resolved_at    TIMESTAMPTZ
+    );
 
 COMMENT ON TABLE  social_accounts                       IS 'L1标准化层：平台主体最新状态。主表只存最新快照，历史变化存 social_account_snapshots。按 (platform, platform_user_id) UPSERT';
 COMMENT ON COLUMN social_accounts.id                    IS '主键，UUID，与 Neo4j SocialAccount 节点 ID 保持一致';
@@ -307,6 +284,7 @@ COMMENT ON COLUMN social_accounts.entity_org_id         IS '关联 organizations
 COMMENT ON COLUMN social_accounts.latest_snapshot_at    IS '最新快照的采集时间（来自课题三 collected_at）';
 COMMENT ON COLUMN social_accounts.first_seen_at         IS '首次被系统采集到的时间';
 COMMENT ON COLUMN social_accounts.last_active_at        IS '最近一次有活动内容的时间';
+COMMENT ON COLUMN social_accounts.identity_resolved_at  IS '身份识别（匹配/新建Person或Organization、或判定跳过）完成时间，NULL表示还未处理';
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_sa_platform_user ON social_accounts(platform, platform_user_id);
 CREATE INDEX IF NOT EXISTS idx_sa_entity_person ON social_accounts(entity_person_id) WHERE entity_person_id IS NOT NULL;
@@ -314,14 +292,14 @@ CREATE INDEX IF NOT EXISTS idx_sa_account_type  ON social_accounts(account_entit
 CREATE INDEX IF NOT EXISTS idx_sa_handle        ON social_accounts(handle);
 
 CREATE TRIGGER trg_social_accounts_updated_at
-  BEFORE UPDATE ON social_accounts
-  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+    BEFORE UPDATE ON social_accounts
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 -- ------------------------------------------------------------
 -- 账号历史快照（追加写入，不覆盖）
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS social_account_snapshots (
-    id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                                                        id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     account_id          UUID        NOT NULL REFERENCES social_accounts(id),
     raw_record_id       UUID        REFERENCES raw_records(id),
     snapshot_at         TIMESTAMPTZ NOT NULL,
@@ -339,7 +317,7 @@ CREATE TABLE IF NOT EXISTS social_account_snapshots (
     view_count          BIGINT,
     snapshot_payload    JSONB,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+    );
 
 COMMENT ON TABLE  social_account_snapshots                IS '账号历史快照表。主表只存最新状态，每次课题三推来快照就追加一条到这里，不覆盖历史。用于分析账号在特定时间段的特征（如叙事高峰期粉丝数是否异常增长）';
 COMMENT ON COLUMN social_account_snapshots.id             IS '主键，UUID';
@@ -364,7 +342,7 @@ CREATE INDEX IF NOT EXISTS idx_sas_raw     ON social_account_snapshots(raw_recor
 -- 注意：这是课题三告诉我们的事实，置信度1.0，区别于T6推断的协同关系
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS account_relations (
-    id                      UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                                                 id                      UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     raw_record_id           UUID        REFERENCES raw_records(id),
     source_platform_user_id VARCHAR(256) NOT NULL,
     target_platform_user_id VARCHAR(256) NOT NULL,
@@ -378,7 +356,7 @@ CREATE TABLE IF NOT EXISTS account_relations (
     to_account_id           UUID        REFERENCES social_accounts(id),
     synced_to_neo4j         BOOLEAN     NOT NULL DEFAULT FALSE,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+    );
 
 COMMENT ON TABLE  account_relations                         IS 'L1标准化层：账号间事实关系（关注/订阅/成员/管理员等）。课题三v2.0新增类型，替代原interaction中的账号关系部分。入库时from/to_account_id为null，独立的回填批处理任务负责匹配UUID并写入Neo4j（不依赖T3）';
 COMMENT ON COLUMN account_relations.id                      IS '主键，UUID';
@@ -410,7 +388,7 @@ CREATE INDEX IF NOT EXISTS idx_ar_pending_sync    ON account_relations(synced_to
 -- 适用 record_type：media_asset（也可从 social_content.data.media[] 拆分）
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS media_assets (
-    id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                                            id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     raw_record_id       UUID        REFERENCES raw_records(id),
     content_id          UUID        REFERENCES media_contents(id),
     source_asset_id     VARCHAR(256),
@@ -434,7 +412,7 @@ CREATE TABLE IF NOT EXISTS media_assets (
     minio_key           TEXT,
     embedding_id        VARCHAR(128),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+    );
 
 COMMENT ON TABLE  media_assets               IS 'L1标准化层：多媒体附件（图片/视频/音频/缩略图）。sha256去重，同一文件被多条内容引用时只存一份';
 COMMENT ON COLUMN media_assets.id            IS '主键，UUID';
@@ -481,7 +459,7 @@ CREATE INDEX IF NOT EXISTS idx_media_assets_t1_annotated
 -- 适用 record_type：collection_task
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS collection_tasks (
-    id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                                                id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     raw_record_id       UUID        REFERENCES raw_records(id),
     crawl_task_id       VARCHAR(256) NOT NULL,
     collection_method   VARCHAR(32),
@@ -497,7 +475,7 @@ CREATE TABLE IF NOT EXISTS collection_tasks (
     records_collected   INTEGER,
     raw_payload         JSONB,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+    );
 
 COMMENT ON TABLE  collection_tasks                  IS 'L1标准化层：课题三采集任务元数据。验收时靠这张表核查数据覆盖范围（语种、平台、时间窗口、关键词等）';
 COMMENT ON COLUMN collection_tasks.id               IS '主键，UUID';
@@ -529,7 +507,7 @@ CREATE INDEX IF NOT EXISTS idx_ct_languages ON collection_tasks USING GIN(target
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS persons (
-    id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                                       id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     canonical_name      VARCHAR(512) NOT NULL,
     importance_score    NUMERIC(5,2) NOT NULL DEFAULT 0,
     is_high_value       BOOLEAN     NOT NULL DEFAULT FALSE,
@@ -540,7 +518,7 @@ CREATE TABLE IF NOT EXISTS persons (
     merge_history       UUID[],
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+    );
 
 COMMENT ON TABLE  persons                  IS 'L2实体层（精简）：人物实体索引表。详细属性（别名/国籍/职业等）存Neo4j，这里只存统计和检索需要的核心字段';
 COMMENT ON COLUMN persons.id               IS '主键，UUID，与Neo4j Person节点id保持一致';
@@ -559,11 +537,11 @@ CREATE INDEX IF NOT EXISTS idx_persons_importance ON persons(importance_score DE
 CREATE INDEX IF NOT EXISTS idx_persons_dedup      ON persons(dedup_status);
 
 CREATE TRIGGER trg_persons_updated_at
-  BEFORE UPDATE ON persons
-  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+    BEFORE UPDATE ON persons
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE TABLE IF NOT EXISTS organizations (
-    id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                                             id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     canonical_name      VARCHAR(512) NOT NULL,
     org_type            VARCHAR(64),
     country             VARCHAR(64),
@@ -574,7 +552,7 @@ CREATE TABLE IF NOT EXISTS organizations (
     merge_history       UUID[],
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+    );
 
 COMMENT ON TABLE  organizations                IS 'L2实体层（精简）：组织实体索引表。详细属性存Neo4j';
 COMMENT ON COLUMN organizations.id             IS '主键，UUID，与Neo4j Organization节点id保持一致';
@@ -593,11 +571,11 @@ CREATE INDEX IF NOT EXISTS idx_orgs_importance ON organizations(importance_score
 CREATE INDEX IF NOT EXISTS idx_orgs_dedup      ON organizations(dedup_status);
 
 CREATE TRIGGER trg_organizations_updated_at
-  BEFORE UPDATE ON organizations
-  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+    BEFORE UPDATE ON organizations
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE TABLE IF NOT EXISTS events (
-    id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                                      id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     canonical_name      VARCHAR(512) NOT NULL,
     event_type          VARCHAR(64),
     occurred_at_start   TIMESTAMPTZ,
@@ -608,8 +586,13 @@ CREATE TABLE IF NOT EXISTS events (
     dedup_status        VARCHAR(20) NOT NULL DEFAULT 'pending',
     merge_history       UUID[],
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    event_heat_level             VARCHAR(20),
+    event_heat_score             NUMERIC(6,2),
+    event_heat_confidence        NUMERIC(4,3),
+    event_related_content_count  INTEGER,
+    event_heat_computed_at       TIMESTAMPTZ
+    );
 
 COMMENT ON TABLE  events                  IS 'L2实体层（精简）：事件实体索引表。详细属性存Neo4j';
 COMMENT ON COLUMN events.id               IS '主键，UUID，与Neo4j Event节点id保持一致';
@@ -622,6 +605,9 @@ COMMENT ON COLUMN events.importance_score IS '重要性评分0-100';
 COMMENT ON COLUMN events.content_count    IS '涉及该事件的内容数量';
 COMMENT ON COLUMN events.dedup_status     IS '实体去重融合状态：pending=待融合；deduplicated=已被融合处理；canonical=融合后保留的主记录';
 COMMENT ON COLUMN events.merge_history    IS 'EntityDeduplicationJob融合时记录被合并掉的旧实体UUID数组';
+COMMENT ON COLUMN events.event_heat_level IS '事件热度等级：low|medium|high|explosive|unclear';
+COMMENT ON COLUMN events.event_related_content_count IS '计算热度时，图谱里实际关联到的内容数量（不是events.content_count，那个字段含义是去重合并计数，语义不同）';
+COMMENT ON COLUMN events.event_heat_computed_at IS '本次热度计算完成时间，NULL表示还没算过';
 
 CREATE INDEX IF NOT EXISTS idx_events_name     ON events(canonical_name);
 CREATE INDEX IF NOT EXISTS idx_events_type     ON events(event_type);
@@ -629,11 +615,11 @@ CREATE INDEX IF NOT EXISTS idx_events_occurred ON events(occurred_at_start DESC)
 CREATE INDEX IF NOT EXISTS idx_events_dedup    ON events(dedup_status);
 
 CREATE TRIGGER trg_events_updated_at
-  BEFORE UPDATE ON events
-  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+    BEFORE UPDATE ON events
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE TABLE IF NOT EXISTS narratives (
-    id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                                          id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     canonical_label     VARCHAR(512) NOT NULL,
     frame_type          VARCHAR(64),
     lifecycle_state     VARCHAR(32) NOT NULL DEFAULT 'emerging',
@@ -648,7 +634,7 @@ CREATE TABLE IF NOT EXISTS narratives (
     claim_atoms         JSONB       NOT NULL DEFAULT '[]',
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+    );
 
 COMMENT ON TABLE  narratives                IS 'L2实体层（精简）：叙事实体。由T2自动识别，非用户手动创建。T3负责跨源聚类合并';
 COMMENT ON COLUMN narratives.id             IS '主键，UUID，与Neo4j Narrative节点id保持一致';
@@ -671,8 +657,8 @@ CREATE INDEX IF NOT EXISTS idx_narratives_active    ON narratives(is_active, imp
 CREATE INDEX IF NOT EXISTS idx_narratives_dedup     ON narratives(dedup_status);
 
 CREATE TRIGGER trg_narratives_updated_at
-  BEFORE UPDATE ON narratives
-  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+    BEFORE UPDATE ON narratives
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 
 -- Entity deduplication status for existing databases. Duplicate canonical names are allowed;
@@ -698,7 +684,7 @@ CREATE INDEX IF NOT EXISTS idx_narratives_dedup ON narratives(dedup_status);
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS person_profiles (
-    id                      UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                                               id                      UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     person_id               UUID        NOT NULL REFERENCES persons(id),
     portrait_version        INTEGER     NOT NULL DEFAULT 1,
     status                  VARCHAR(32) NOT NULL DEFAULT 'active',
@@ -734,7 +720,7 @@ CREATE TABLE IF NOT EXISTS person_profiles (
     reviewer_id             UUID,      -- 人工修正时记录操作人
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+    );
 
 COMMENT ON TABLE  person_profiles                       IS 'L4画像层：人物全息画像。定时任务批量生成，每次生成新版本时旧版本自动归档。不做差量补全，T5一次性生成15维度全量画像';
 COMMENT ON COLUMN person_profiles.id                    IS '主键，UUID';
@@ -778,8 +764,8 @@ CREATE INDEX IF NOT EXISTS idx_pp_target_type  ON person_profiles(target_type);
 CREATE INDEX IF NOT EXISTS idx_pp_manipulation ON person_profiles(manipulation_score DESC) WHERE manipulation_score IS NOT NULL;
 
 CREATE TRIGGER trg_person_profiles_updated_at
-  BEFORE UPDATE ON person_profiles
-  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+    BEFORE UPDATE ON person_profiles
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 
 
@@ -789,7 +775,7 @@ CREATE TRIGGER trg_person_profiles_updated_at
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS pipeline_tasks (
-    id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                                              id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     raw_record_id       UUID        NOT NULL REFERENCES raw_records(id),
     content_id          UUID        REFERENCES media_contents(id),
     status              VARCHAR(32) NOT NULL DEFAULT 'PENDING',
@@ -815,7 +801,7 @@ CREATE TABLE IF NOT EXISTS pipeline_tasks (
     error_message       TEXT,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+    );
 
 COMMENT ON TABLE  pipeline_tasks               IS '入库流水线调度表。仅 social_content / news_article 会创建对应的任务记录，其余类型到NORMALIZED即完成。T失败时按此表状态决定从哪步重跑';
 COMMENT ON COLUMN pipeline_tasks.id            IS '主键，UUID';
@@ -842,11 +828,11 @@ CREATE INDEX IF NOT EXISTS idx_pt_raw     ON pipeline_tasks(raw_record_id);
 CREATE INDEX IF NOT EXISTS idx_pt_created ON pipeline_tasks(created_at DESC);
 
 CREATE TRIGGER trg_pipeline_tasks_updated_at
-  BEFORE UPDATE ON pipeline_tasks
-  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+    BEFORE UPDATE ON pipeline_tasks
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE TABLE IF NOT EXISTS workflow_tasks (
-    id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                                              id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id          UUID,
     user_id             UUID,
     input_text          TEXT,
@@ -866,7 +852,7 @@ CREATE TABLE IF NOT EXISTS workflow_tasks (
     completed_at        TIMESTAMPTZ,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+    );
 
 COMMENT ON TABLE  workflow_tasks                IS '分析线任务表。用户在前端发起的每个分析请求对应一条记录，协调Agent的执行过程和结果都存在这里';
 COMMENT ON COLUMN workflow_tasks.id             IS '主键，UUID';
@@ -891,11 +877,11 @@ CREATE INDEX IF NOT EXISTS idx_wt_status  ON workflow_tasks(status);
 CREATE INDEX IF NOT EXISTS idx_wt_created ON workflow_tasks(created_at DESC);
 
 CREATE TRIGGER trg_workflow_tasks_updated_at
-  BEFORE UPDATE ON workflow_tasks
-  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+    BEFORE UPDATE ON workflow_tasks
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE TABLE IF NOT EXISTS sessions (
-    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                                        id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id         UUID        NOT NULL,
     title           VARCHAR(512),
     message_count   INTEGER     NOT NULL DEFAULT 0,
@@ -903,7 +889,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     is_archived     BOOLEAN     NOT NULL DEFAULT FALSE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+    );
 
 COMMENT ON TABLE  sessions                IS '多轮对话会话表。一个会话对应前端左侧的一个对话记录，可包含多个 workflow_tasks';
 COMMENT ON COLUMN sessions.id             IS '主键，UUID';
@@ -917,17 +903,17 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user    ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at DESC);
 
 CREATE TRIGGER trg_sessions_updated_at
-  BEFORE UPDATE ON sessions
-  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+    BEFORE UPDATE ON sessions
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE TABLE IF NOT EXISTS session_messages (
-    id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                                                id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id          UUID        NOT NULL REFERENCES sessions(id),
     role                VARCHAR(16) NOT NULL,
     content             TEXT,
     workflow_task_id    UUID        REFERENCES workflow_tasks(id),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+    );
 
 COMMENT ON TABLE  session_messages                 IS '会话消息表。存储对话的每一条消息（用户输入和系统回复）';
 COMMENT ON COLUMN session_messages.id              IS '主键，UUID';
@@ -939,7 +925,7 @@ COMMENT ON COLUMN session_messages.workflow_task_id IS '关联 workflow_tasks.id
 CREATE INDEX IF NOT EXISTS idx_sm_session ON session_messages(session_id, created_at ASC);
 
 CREATE TABLE IF NOT EXISTS identification_tasks (
-    id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                                                    id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     workflow_task_id    UUID        REFERENCES workflow_tasks(id),
     trigger_type        VARCHAR(32),
     narrative_id        UUID        REFERENCES narratives(id),
@@ -951,7 +937,7 @@ CREATE TABLE IF NOT EXISTS identification_tasks (
     started_at          TIMESTAMPTZ,
     completed_at        TIMESTAMPTZ,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+    );
 
 COMMENT ON TABLE  identification_tasks                  IS 'T6目标识别任务表。每次触发T6识别对应一条任务记录';
 COMMENT ON COLUMN identification_tasks.id               IS '主键，UUID';
@@ -968,7 +954,7 @@ CREATE INDEX IF NOT EXISTS idx_it_narrative ON identification_tasks(narrative_id
 CREATE INDEX IF NOT EXISTS idx_it_status    ON identification_tasks(status);
 
 CREATE TABLE IF NOT EXISTS identification_results (
-    id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                                                      id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     task_id             UUID        NOT NULL REFERENCES identification_tasks(id),
     target_type         VARCHAR(16),
     target_entity_type  VARCHAR(32),
@@ -978,7 +964,7 @@ CREATE TABLE IF NOT EXISTS identification_results (
     evidence_text       TEXT,
     evidence_content_ids UUID[],
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+    );
 
 COMMENT ON TABLE  identification_results                  IS 'T6目标识别结果表。每个识别出来的重点目标对应一条记录';
 COMMENT ON COLUMN identification_results.id               IS '主键，UUID';
@@ -1000,7 +986,7 @@ CREATE INDEX IF NOT EXISTS idx_ir_type   ON identification_results(target_type);
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS users (
-    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                                     id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     username        VARCHAR(128) NOT NULL,
     password_hash   VARCHAR(256) NOT NULL,
     display_name    VARCHAR(256),
@@ -1009,7 +995,7 @@ CREATE TABLE IF NOT EXISTS users (
     last_login_at   TIMESTAMPTZ,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+    );
 
 COMMENT ON TABLE  users               IS '系统用户表。支持角色权限控制';
 COMMENT ON COLUMN users.id            IS '主键，UUID';
@@ -1024,15 +1010,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_users_username ON users(username);
 
 INSERT INTO users (id, username, password_hash, display_name, role, is_active, created_at, updated_at)
 VALUES (
-    gen_random_uuid(),
-    'admin',
-    '$2a$10$S7w5YjbP11RdLhfX8t21tOIPszlMGA87vm/Wg4o7/z5GBYiYAlX7e',
-    '系统管理员',
-    'admin',
-    true,
-    NOW(),
-    NOW()
-) ON CONFLICT (username) DO UPDATE SET
+           gen_random_uuid(),
+           'admin',
+           '$2a$10$S7w5YjbP11RdLhfX8t21tOIPszlMGA87vm/Wg4o7/z5GBYiYAlX7e',
+           '系统管理员',
+           'admin',
+           true,
+           NOW(),
+           NOW()
+       ) ON CONFLICT (username) DO UPDATE SET
     password_hash = EXCLUDED.password_hash,
     display_name = EXCLUDED.display_name,
     role = EXCLUDED.role,
@@ -1040,11 +1026,11 @@ VALUES (
     updated_at = NOW();
 
 CREATE TRIGGER trg_users_updated_at
-  BEFORE UPDATE ON users
-  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+    BEFORE UPDATE ON users
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE TABLE IF NOT EXISTS sub_agent_registry (
-    id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                                                  id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     agent_code          VARCHAR(8)  NOT NULL,
     agent_name          VARCHAR(128) NOT NULL,
     description         TEXT,
@@ -1059,7 +1045,7 @@ CREATE TABLE IF NOT EXISTS sub_agent_registry (
     last_health_check   TIMESTAMPTZ,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+    );
 
 COMMENT ON TABLE  sub_agent_registry                  IS 'T1-T6子Agent注册表。存储各Agent的能力描述、接口地址和健康状态，支持Mock/真实地址一键切换';
 COMMENT ON COLUMN sub_agent_registry.id               IS '主键，UUID';
@@ -1079,11 +1065,11 @@ COMMENT ON COLUMN sub_agent_registry.last_health_check IS '最近一次心跳检
 CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_code ON sub_agent_registry(agent_code);
 
 CREATE TRIGGER trg_sub_agent_registry_updated_at
-  BEFORE UPDATE ON sub_agent_registry
-  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+    BEFORE UPDATE ON sub_agent_registry
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE TABLE IF NOT EXISTS batch_import_tasks (
-    id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                                                  id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id             UUID        NOT NULL REFERENCES users(id),
     file_name           VARCHAR(512),
     file_format         VARCHAR(16),
@@ -1098,7 +1084,7 @@ CREATE TABLE IF NOT EXISTS batch_import_tasks (
     completed_at        TIMESTAMPTZ,
     error_message       TEXT,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+    );
 
 COMMENT ON TABLE  batch_import_tasks                   IS '批量文件导入任务表。用户通过前端上传JSON/JSONL/CSV/Excel/ZIP文件时创建';
 COMMENT ON COLUMN batch_import_tasks.id                IS '主键，UUID';
@@ -1122,7 +1108,7 @@ CREATE INDEX IF NOT EXISTS idx_bit_status ON batch_import_tasks(status);
 
 -- 实体融合记录表，每次 EntityDeduplicationJob 执行融合操作都写一条记录
 CREATE TABLE IF NOT EXISTS entity_fusion_records (
-    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                                                     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     entity_type          VARCHAR(20)  NOT NULL,    -- person/organization/event/narrative
     survivor_id          UUID         NOT NULL,    -- 融合后保留的主记录 UUID
     survivor_name        VARCHAR(512) NOT NULL,    -- survivor 的 canonical_name（冗余，方便展示）
@@ -1139,7 +1125,7 @@ CREATE TABLE IF NOT EXISTS entity_fusion_records (
     resolver_model       VARCHAR(100),
     is_auto_merged       BOOLEAN      DEFAULT TRUE,
     created_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW()
-);
+    );
 CREATE INDEX IF NOT EXISTS idx_fusion_records_entity_type ON entity_fusion_records(entity_type);
 CREATE INDEX IF NOT EXISTS idx_fusion_records_survivor    ON entity_fusion_records(survivor_id);
 CREATE INDEX IF NOT EXISTS idx_fusion_records_created_at  ON entity_fusion_records(created_at DESC);
@@ -1150,25 +1136,25 @@ CREATE INDEX IF NOT EXISTS idx_fusion_records_job_run     ON entity_fusion_recor
 -- ============================================================
 
 INSERT INTO sub_agent_registry (agent_code, agent_name, description, active_url_type) VALUES
-('T1', 'T1自动标注Agent',
- '对媒体内容进行9维度自动标注：主题分类、情感倾向、立场判别、事件热度、AIGC检测、账号类型提示、影响力预估、传播潜力评估、实体提示',
- 'mock'),
-('T2', 'T2信息抽取Agent',
- '从内容和传播链字段中抽取人物/组织/事件/叙事等实体及10类实体、6种关系类型，支持多语言抽取',
- 'mock'),
-('T3', 'T3信息融合Agent',
- '跨语言实体归一和关系融合；跨批次归一由后台EntityDeduplicationJob处理',
- 'mock'),
-('T4', 'T4多模态检索Agent',
- '生成文本/图像Embedding写入Milvus向量库，同步全文索引到Elasticsearch，支持三路融合语义检索',
- 'mock'),
-('T5', 'T5画像补全Agent',
- '对高价值目标生成15+维度全息画像（政治倾向/情感/立场/行为/BEND手法/影响力/MBTI/协同网络等），直接覆盖写入画像表',
- 'mock'),
-('T6', 'T6目标识别Agent',
- 'BEND手法分类、协同群体检测、T00-T10目标类型识别，以叙事ID或账号列表为输入',
- 'mock')
-ON CONFLICT (agent_code) DO NOTHING;
+                                                                                          ('T1', 'T1自动标注Agent',
+                                                                                           '对媒体内容进行9维度自动标注：主题分类、情感倾向、立场判别、事件热度、AIGC检测、账号类型提示、影响力预估、传播潜力评估、实体提示',
+                                                                                           'mock'),
+                                                                                          ('T2', 'T2信息抽取Agent',
+                                                                                           '从内容和传播链字段中抽取人物/组织/事件/叙事等实体及10类实体、6种关系类型，支持多语言抽取',
+                                                                                           'mock'),
+                                                                                          ('T3', 'T3信息融合Agent',
+                                                                                           '跨语言实体归一和关系融合；跨批次归一由后台EntityDeduplicationJob处理',
+                                                                                           'mock'),
+                                                                                          ('T4', 'T4多模态检索Agent',
+                                                                                           '生成文本/图像Embedding写入Milvus向量库，同步全文索引到Elasticsearch，支持三路融合语义检索',
+                                                                                           'mock'),
+                                                                                          ('T5', 'T5画像补全Agent',
+                                                                                           '对高价值目标生成15+维度全息画像（政治倾向/情感/立场/行为/BEND手法/影响力/MBTI/协同网络等），直接覆盖写入画像表',
+                                                                                           'mock'),
+                                                                                          ('T6', 'T6目标识别Agent',
+                                                                                           'BEND手法分类、协同群体检测、T00-T10目标类型识别，以叙事ID或账号列表为输入',
+                                                                                           'mock')
+    ON CONFLICT (agent_code) DO NOTHING;
 
 UPDATE sub_agent_registry
 SET agent_name = 'T3 信息融合',
@@ -1191,6 +1177,6 @@ SELECT
      WHERE table_name = t.tablename
        AND table_schema = 'public')                         AS "字段数"
 FROM pg_tables t
-JOIN pg_class c ON c.relname = t.tablename
+         JOIN pg_class c ON c.relname = t.tablename
 WHERE t.schemaname = 'public'
 ORDER BY t.tablename;
