@@ -119,6 +119,7 @@ public class T2ExtractionStep {
         try {
             writeRelations(response, resolvedMentions);
             writeMediaContentToNeo4j(task, mc);
+            writeContentEntityRelations(mc, resolvedMentions);
         } catch (Exception e) {
             log.error("T2 Neo4j write failed, taskId={}", task.getId(), e);
         }
@@ -162,6 +163,33 @@ public class T2ExtractionStep {
             } catch (Exception e) {
                 log.warn("T2 relation write failed, predicate={}, subjectMentionId={}, objectMentionId={}",
                         rel.getPredicate(), rel.getSubjectMentionId(), rel.getObjectMentionId(), e);
+            }
+        }
+    }
+
+    private void writeContentEntityRelations(MediaContent mc,
+                                             Map<String, EntityResolutionService.ResolvedMention> resolvedMentions) {
+        if (mc == null || resolvedMentions == null || resolvedMentions.isEmpty()) {
+            return;
+        }
+        String contentNodeId = mc.getId().toString();
+        for (EntityResolutionService.ResolvedMention resolved : resolvedMentions.values()) {
+            if (resolved == null || !hasText(resolved.getNodeId()) || !hasText(resolved.getLabel())) {
+                continue;
+            }
+            String predicate = "event".equals(resolved.getEntityType()) ? "DESCRIBES" : "MENTIONS";
+            try {
+                Map<String, Object> props = new HashMap<>();
+                props.put("source", "t2_content_entity_link");
+                boolean existed = neo4jGraphService.relationExists(contentNodeId, resolved.getNodeId(), predicate);
+                props.put("evidenceUpsert", existed);
+                neo4jGraphService.mergeRelation(
+                        "MediaContent", contentNodeId,
+                        resolved.getLabel(), resolved.getNodeId(),
+                        predicate, props);
+            } catch (Exception e) {
+                log.warn("T2 content-entity relation write failed, contentId={}, entityId={}, predicate={}",
+                        contentNodeId, resolved.getNodeId(), predicate, e);
             }
         }
     }
