@@ -21,4 +21,12 @@ public class DeduplicationChecker {
         return rawRecordMapper.existsBySourceRecordId(sourceRecordId)
                 || rawRecordMapper.existsByPayloadHash(payloadHash);
     }
+
+    /**
+     * Check duplicates by sourceRecordId only.
+     * collection_task messages often have an empty raw_payload, so payload_hash is not discriminative enough.
+     */
+    public boolean isDuplicateBySourceRecordId(String sourceRecordId) {
+        return rawRecordMapper.existsBySourceRecordId(sourceRecordId);
+    }
 }

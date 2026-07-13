@@ -854,7 +854,7 @@ public class MockAgentController {
                             T3ResolveBatchRequest.Candidate top = item.getCandidates() != null
                                     && !item.getCandidates().isEmpty()
                                     ? item.getCandidates().get(0) : null;
-                            double topScore = top != null && top.getScore() != null ? top.getScore() : 0D;
+                            double topScore = boundedScore(top != null ? top.getScore() : null);
 
                             if (top != null && topScore >= autoMergeThreshold) {
                                 result.setAction("MERGE");
@@ -883,6 +883,19 @@ public class MockAgentController {
         resp.setResults(results);
         resp.setModelVersion("mock-t3-resolve-v2.0");
         return resp;
+    }
+
+    private double boundedScore(Double value) {
+        if (value == null || !Double.isFinite(value)) {
+            return 0D;
+        }
+        if (value < 0D) {
+            return 0D;
+        }
+        if (value > 1D) {
+            return 1D;
+        }
+        return value;
     }
 
     @PostMapping("/mock/t4/generate_text_embedding")

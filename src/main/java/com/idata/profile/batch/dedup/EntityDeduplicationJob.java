@@ -33,6 +33,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -319,7 +320,7 @@ public class EntityDeduplicationJob {
                     || !hasText(result.getMatchedEntityId())) {
                 continue;
             }
-            double confidence = result.getConfidence();
+            double confidence = boundedScore(result.getConfidence(), 0D);
             T3ResolveResponse.MergeGroup group = toMergeGroup(result, entityType, candidatesById);
             try {
                 if ("MERGE".equalsIgnoreCase(result.getAction()) && confidence >= 0.9D) {
@@ -479,7 +480,7 @@ public class EntityDeduplicationJob {
             record.setNeo4jMerged(false);
             record.setJobRunId(jobRunId);
             record.setMatchMethod(matchMethod);
-            record.setMatchScore(BigDecimal.valueOf(confidence));
+            record.setMatchScore(BigDecimal.valueOf(boundedScore(confidence, 0D)).setScale(4, RoundingMode.HALF_UP));
             record.setResolverModel(resolverModel);
             record.setIsAutoMerged(false);
             entityFusionRecordMapper.insert(record);
@@ -725,6 +726,19 @@ public class EntityDeduplicationJob {
         } catch (NumberFormatException e) {
             return 0D;
         }
+    }
+
+    private double boundedScore(Double value, double fallback) {
+        if (value == null || !Double.isFinite(value)) {
+            return fallback;
+        }
+        if (value < 0D) {
+            return 0D;
+        }
+        if (value > 1D) {
+            return 1D;
+        }
+        return value;
     }
 
     private String fusionMethod(T3ResolveResponse.MergeGroup group) {

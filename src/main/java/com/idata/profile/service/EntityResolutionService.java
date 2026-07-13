@@ -21,6 +21,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -159,7 +160,7 @@ public class EntityResolutionService {
     private ResolvedMention applyResolution(T2ExtractResponse.ExtractedMention mention,
                                             T3ResolveBatchResponse.ResolveResult result) {
         String action = result != null && hasText(result.getAction()) ? result.getAction() : "CREATE";
-        double confidence = result != null && result.getConfidence() != null ? result.getConfidence() : 0D;
+        double confidence = boundedScore(result != null ? result.getConfidence() : null, 0D);
         if ("MERGE".equalsIgnoreCase(action) && confidence >= AUTO_MERGE_THRESHOLD
                 && hasText(result.getMatchedEntityId())) {
             writeEntityNode(result.getMatchedEntityId(), mention, "t2_t3_merge");
@@ -273,7 +274,7 @@ public class EntityResolutionService {
             record.setNeo4jMerged(autoMerged);
             record.setJobRunId(UUID.randomUUID());
             record.setMatchMethod(result.getMatchMethod());
-            record.setMatchScore(result.getScore() != null ? BigDecimal.valueOf(result.getScore()) : null);
+            record.setMatchScore(toMatchScore(result));
             record.setResolverModel(result.getModelVersion());
             record.setIsAutoMerged(autoMerged);
             entityFusionRecordMapper.insert(record);
@@ -300,6 +301,30 @@ public class EntityResolutionService {
 
     private String entityName(T2ExtractResponse.ExtractedMention mention) {
         return hasText(mention.getCanonicalName()) ? mention.getCanonicalName() : mention.getName();
+    }
+
+    private BigDecimal toMatchScore(T3ResolveBatchResponse.ResolveResult result) {
+        if (result == null) {
+            return null;
+        }
+        Double score = result.getConfidence() != null ? result.getConfidence() : result.getScore();
+        if (score == null || !Double.isFinite(score)) {
+            return null;
+        }
+        return BigDecimal.valueOf(boundedScore(score, 0D)).setScale(4, RoundingMode.HALF_UP);
+    }
+
+    private double boundedScore(Double value, double fallback) {
+        if (value == null || !Double.isFinite(value)) {
+            return fallback;
+        }
+        if (value < 0D) {
+            return 0D;
+        }
+        if (value > 1D) {
+            return 1D;
+        }
+        return value;
     }
 
     private String trimToNull(String value) {

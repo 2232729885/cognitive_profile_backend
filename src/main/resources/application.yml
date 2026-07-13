@@ -89,6 +89,8 @@ server:
 logging:
   level:
     com.idata.profile: debug
+#  file:
+#    name: logs/cognitive-profile-backend.log
 
 llm:
   embedding:

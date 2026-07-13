@@ -30,13 +30,12 @@ public class CollectionTaskConsumer {
     public void onMessage(String rawMessage) {
         Object kafkaMessage = parseMessage(rawMessage);
         String sourceRecordId = extractSourceRecordId(kafkaMessage);
-        String payloadHash = extractPayloadHash(kafkaMessage);
 
         if (!isValidSchema(kafkaMessage)) {
             log.error("Schema validation failed, sourceRecordId={}", sourceRecordId);
             return;
         }
-        if (deduplicationChecker.isDuplicate(sourceRecordId, payloadHash)) {
+        if (deduplicationChecker.isDuplicateBySourceRecordId(sourceRecordId)) {
             log.debug("Duplicate message skipped, sourceRecordId={}", sourceRecordId);
             return;
         }
@@ -64,10 +63,6 @@ public class CollectionTaskConsumer {
 
     private String extractSourceRecordId(Object kafkaMessage) {
         return IngestionMessageSupport.extractSourceRecordId(kafkaMessage);
-    }
-
-    private String extractPayloadHash(Object kafkaMessage) {
-        return IngestionMessageSupport.extractPayloadHash(kafkaMessage);
     }
 
     private RawRecord buildRawRecord(Object kafkaMessage) {
