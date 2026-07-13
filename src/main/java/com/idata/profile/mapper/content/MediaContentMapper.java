@@ -17,6 +17,9 @@ public interface MediaContentMapper extends BaseMapper<MediaContent> {
     MediaContent selectByPlatformAndContentId(@Param("platform") String platform,
                                               @Param("platformContentId") String platformContentId);
 
+    @Select("SELECT * FROM media_contents WHERE #{assetId} = ANY(source_media_asset_ids) LIMIT 1")
+    MediaContent selectBySourceMediaAssetId(@Param("assetId") String assetId);
+
     /**
      * 按 author_account_id 批量查帖子，供 T6 识别时使用。
      * limit 限制最多返回条数，避免请求体过大。

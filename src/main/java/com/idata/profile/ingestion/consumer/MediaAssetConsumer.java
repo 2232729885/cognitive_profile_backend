@@ -54,7 +54,7 @@ public class MediaAssetConsumer {
         rawRecordMapper.insert(rawRecord);
 
         MediaAsset asset = normalizer.normalize(kafkaMessage, rawRecord);
-        UUID linkedContentId = linkContent(kafkaMessage, asset, rawRecord);
+        UUID linkedContentId = linkContent(asset);
         int inserted = mediaAssetMapper.insertIgnoreOnConflictSha256(asset);
         MediaAsset indexedAsset = inserted > 0 ? asset : mediaAssetMapper.selectBySha256(asset.getSha256());
         if (linkedContentId != null && indexedAsset != null) {
@@ -79,7 +79,7 @@ public class MediaAssetConsumer {
         }
         JsonNode data = IngestionMessageSupport.data(kafkaMessage);
         return IngestionMessageSupport.hasText(IngestionMessageSupport.text(data, "sha256"))
-                && IngestionMessageSupport.hasText(IngestionMessageSupport.text(data, "asset_type"));
+                && IngestionMessageSupport.hasText(IngestionMessageSupport.text(data, "media_type"));
     }
 
     private String extractSourceRecordId(Object kafkaMessage) {
@@ -94,14 +94,11 @@ public class MediaAssetConsumer {
         return IngestionMessageSupport.buildRawRecord(kafkaMessage, KafkaTopicConstants.MEDIA_ASSET);
     }
 
-    private UUID linkContent(Object kafkaMessage, MediaAsset asset, RawRecord rawRecord) {
-        String platformContentId = IngestionMessageSupport.text(
-                IngestionMessageSupport.data(kafkaMessage), "platform_content_id");
-        if (!IngestionMessageSupport.hasText(platformContentId)) {
+    private UUID linkContent(MediaAsset asset) {
+        if (!IngestionMessageSupport.hasText(asset.getSourceAssetId())) {
             return null;
         }
-        MediaContent content = mediaContentMapper.selectByPlatformAndContentId(
-                rawRecord.getPlatform(), platformContentId);
+        MediaContent content = mediaContentMapper.selectBySourceMediaAssetId(asset.getSourceAssetId());
         if (content != null) {
             asset.setContentId(content.getId());
             return content.getId();

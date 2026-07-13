@@ -48,6 +48,15 @@ public interface MediaAssetMapper extends BaseMapper<MediaAsset> {
             "AND asset_type IN ('image','video') ORDER BY created_at ASC")
     List<MediaAsset> selectByContentId(@Param("contentId") UUID contentId);
 
+    @Select("""
+            <script>
+            SELECT * FROM media_assets WHERE source_asset_id IN
+            <foreach item='id' collection='assetIds' open='(' separator=',' close=')'>#{id}</foreach>
+            AND content_id IS NULL
+            </script>
+            """)
+    List<MediaAsset> selectUnlinkedBySourceAssetIds(@Param("assetIds") List<String> assetIds);
+
     @Update("UPDATE media_assets SET t1_annotated = TRUE WHERE id = #{id}")
     int markT1Annotated(@Param("id") UUID id);
 

@@ -43,6 +43,8 @@ public class MediaContent {
     private String[] mentions;
     @TableField(typeHandler = StringArrayTypeHandler.class)
     private String[] externalUrls;
+    @TableField(typeHandler = StringArrayTypeHandler.class)
+    private String[] sourceMediaAssetIds;
 
     private Long likeCount;
     private Long commentCount;

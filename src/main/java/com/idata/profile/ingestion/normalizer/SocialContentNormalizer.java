@@ -18,6 +18,7 @@ public class SocialContentNormalizer {
     public MediaContent normalize(Object kafkaMessage, RawRecord rawRecord) {
         JsonNode root = IngestionMessageSupport.root(kafkaMessage);
         JsonNode data = IngestionMessageSupport.data(kafkaMessage);
+        JsonNode rawPayload = root.path("raw_payload");
         JsonNode metrics = data.path("metrics");
 
         MediaContent mc = new MediaContent();
@@ -28,6 +29,9 @@ public class SocialContentNormalizer {
         mc.setPlatformContentId(IngestionMessageSupport.text(data, "platform_content_id"));
         mc.setAuthorPlatformUserId(IngestionMessageSupport.text(data, "author_platform_user_id"));
         mc.setTitle(IngestionMessageSupport.firstText(data, "title", "headline"));
+        if (!IngestionMessageSupport.hasText(mc.getTitle())) {
+            mc.setTitle(IngestionMessageSupport.text(rawPayload, "title"));
+        }
         mc.setBodyText(IngestionMessageSupport.firstText(data, "body_text", "text", "content"));
         mc.setLanguage(IngestionMessageSupport.firstText(data, "language", "lang"));
         if (!IngestionMessageSupport.hasText(mc.getLanguage())) {
@@ -45,6 +49,7 @@ public class SocialContentNormalizer {
         mc.setHashtags(readStringArray(data.path("hashtags")));
         mc.setMentions(readStringArray(data.path("mentions")));
         mc.setExternalUrls(readStringArray(data.path("external_urls")));
+        mc.setSourceMediaAssetIds(readStringArray(data.path("media_asset_ids")));
         mc.setLikeCount(readLong(data, metrics, "like_count"));
         mc.setCommentCount(readLong(data, metrics, "comment_count"));
         mc.setShareCount(readLong(data, metrics, "share_count"));

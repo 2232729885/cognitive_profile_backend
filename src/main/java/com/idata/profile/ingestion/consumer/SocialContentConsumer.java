@@ -3,6 +3,7 @@ package com.idata.profile.ingestion.consumer;
 import com.idata.profile.common.constant.PipelineStatus;
 import com.idata.profile.common.constant.RecordType;
 import com.idata.profile.entity.account.SocialAccount;
+import com.idata.profile.entity.content.MediaAsset;
 import com.idata.profile.entity.content.MediaContent;
 import com.idata.profile.entity.raw.RawRecord;
 import com.idata.profile.entity.task.PipelineTask;
@@ -10,6 +11,7 @@ import com.idata.profile.infra.kafka.KafkaTopicConstants;
 import com.idata.profile.ingestion.dedup.DeduplicationChecker;
 import com.idata.profile.ingestion.normalizer.SocialContentNormalizer;
 import com.idata.profile.mapper.account.SocialAccountMapper;
+import com.idata.profile.mapper.content.MediaAssetMapper;
 import com.idata.profile.mapper.content.MediaContentMapper;
 import com.idata.profile.mapper.raw.RawRecordMapper;
 import com.idata.profile.mapper.task.PipelineTaskMapper;
@@ -22,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -33,11 +36,10 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class SocialContentConsumer {
 
-    private static final String SCHEMA_VERSION = "kt3_to_kt4_v1";
-
     private final DeduplicationChecker deduplicationChecker;
     private final SocialContentNormalizer normalizer;
     private final SocialAccountMapper socialAccountMapper;
+    private final MediaAssetMapper mediaAssetMapper;
     private final RawRecordMapper rawRecordMapper;
     private final MediaContentMapper mediaContentMapper;
     private final PipelineTaskMapper pipelineTaskMapper;
@@ -71,6 +73,7 @@ public class SocialContentConsumer {
         MediaContent mediaContent = normalizer.normalize(kafkaMessage, rawRecord);
         upsertAuthorAccount(kafkaMessage, rawRecord, mediaContent);
         mediaContentMapper.insert(mediaContent);
+        linkExistingMediaAssets(mediaContent);
 
         PipelineTask task = new PipelineTask();
         task.setId(UUID.randomUUID());
@@ -112,6 +115,19 @@ public class SocialContentConsumer {
         return account;
     }
 
+    private void linkExistingMediaAssets(MediaContent mediaContent) {
+        if (mediaContent.getSourceMediaAssetIds() == null || mediaContent.getSourceMediaAssetIds().length == 0) {
+            return;
+        }
+        List<MediaAsset> assets = mediaAssetMapper.selectUnlinkedBySourceAssetIds(
+                List.of(mediaContent.getSourceMediaAssetIds()));
+        for (MediaAsset asset : assets) {
+            asset.setContentId(mediaContent.getId());
+            mediaAssetMapper.updateById(asset);
+            mediaContentMapper.appendMediaAssetId(mediaContent.getId(), asset.getId().toString());
+        }
+    }
+
     private Object parseMessage(String rawMessage) {
         return IngestionMessageSupport.parseMessage(rawMessage);
     }
@@ -122,12 +138,10 @@ public class SocialContentConsumer {
             return false;
         }
 
-        String schemaVersion = text(root, "schema_version");
         String recordType = text(root, "record_type");
         JsonNode data = root.path("data");
 
-        if (!SCHEMA_VERSION.equals(schemaVersion)
-                || !isPipelineRecordType(recordType)
+        if (!isPipelineRecordType(recordType)
                 || !hasText(extractSourceRecordId(kafkaMessage))
                 || !hasText(extractPayloadHash(kafkaMessage))
                 || !hasText(text(root, "platform"))

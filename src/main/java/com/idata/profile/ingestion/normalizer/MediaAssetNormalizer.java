@@ -37,13 +37,13 @@ public class MediaAssetNormalizer {
     }
 
     private String readAssetType(JsonNode data) {
-        String assetType = IngestionMessageSupport.text(data, "asset_type");
+        String assetType = IngestionMessageSupport.text(data, "media_type");
         if (!IngestionMessageSupport.hasText(assetType)) {
             return null;
         }
         return switch (assetType) {
             case "image", "video", "audio", "thumbnail" -> assetType;
-            default -> throw new IllegalArgumentException("Unsupported media asset_type: " + assetType);
+            default -> throw new IllegalArgumentException("Unsupported media_type: " + assetType);
         };
     }
 

@@ -34,7 +34,7 @@ public class SocialAccountNormalizer {
         account.setVerified(readBoolean(data, "verified"));
         account.setVerifiedType(IngestionMessageSupport.text(data, "verified_type"));
         account.setIsSuspended(readBoolean(data, "is_suspended"));
-        account.setAccountCreatedAt(IngestionMessageSupport.parseOffsetDateTime(data.path("account_created_at")));
+        account.setAccountCreatedAt(IngestionMessageSupport.parseOffsetDateTime(data.path("created_at")));
         account.setFollowersCount(readLong(metrics, "followers_count"));
         account.setFollowingCount(readLong(metrics, "following_count"));
         account.setSubscriberCount(readLong(metrics, "subscriber_count"));

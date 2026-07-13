@@ -15,8 +15,6 @@ import java.util.UUID;
 
 public final class IngestionMessageSupport {
 
-    public static final String SCHEMA_VERSION = "kt3_to_kt4_v1";
-
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private IngestionMessageSupport() {
@@ -84,7 +82,6 @@ public final class IngestionMessageSupport {
         JsonNode data = data(kafkaMessage);
         return root != null
                 && root.isObject()
-                && SCHEMA_VERSION.equals(text(root, "schema_version"))
                 && recordType.equals(text(root, "record_type"))
                 && hasText(extractSourceRecordId(kafkaMessage))
                 && hasText(extractPayloadHash(kafkaMessage))
