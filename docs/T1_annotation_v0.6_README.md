@@ -6,8 +6,8 @@
 
 | 接口 | 处理对象 | 核心输出 |
 |---|---|---|
-| `annotate` | 单条贴文、评论、回复或文章 | AIGC检测、6个高价值主观维度、5个基础客观维度 |
-| `annotate_account` | 账户主页或账户快照 | 主要账户类别、账户细分类标签、自动化嫌疑 |
+| `annotate_content` | 单条贴文、评论、回复或文章 | AIGC检测、6个高价值主观维度、5个基础客观维度 |
+| `annotate_account_type` | 账户主页或账户快照 | 主要账户类别、账户细分类标签、自动化嫌疑 |
 | `annotate_event_heat` | 已识别并聚合后的事件 | 事件热度等级、热度分数、热度信号 |
 
 三个接口统一使用：
@@ -37,8 +37,8 @@ JSON文件顶层结构：
 ```text
 T1_annotation_v0.6
 ├── interfaces
-│   ├── annotate
-│   ├── annotate_account
+│   ├── annotate_content
+│   ├── annotate_account_type
 │   └── annotate_event_heat
 └── commonRules
 ```
@@ -124,11 +124,11 @@ overallConfidence = 对当前接口整套结果有多确定
 
 ---
 
-# 4. `annotate`：内容标注接口
+# 4. `annotate_content`：内容标注接口
 
 ## 4.1 接口作用
 
-`annotate`处理一条独立内容记录，输出：
+`annotate_content`处理一条独立内容记录，输出：
 
 ```text
 AIGC检测
@@ -147,7 +147,7 @@ AIGC检测
 响应顶层结构：
 
 ```text
-annotate
+annotate_content
 ├── schemaVersion
 ├── inputReference
 ├── language
@@ -586,7 +586,7 @@ topicTags
 entitiesHint
 keywords
 summary
-eventType
+topicType
 ```
 
 ### 4.6.1 `topicTags.primaryDomain`
@@ -663,7 +663,18 @@ summaryConfidence
 
 摘要依据整条多模态输入生成，不单独设置`evidenceIds`。
 
-### 4.6.5 `eventType.eventTypeLabel`
+### 4.6.5 `topicType.topicTypeLabel`
+
+`topicTags.primaryDomain`用于识别当前内容所属的宽泛话题领域，属于一级分类；`topicType.topicTypeLabel`用于进一步识别当前内容主要讨论的具体话题类型，属于更细粒度分类。
+
+该字段只针对当前输入的单条贴文、评论、回复或文章进行判断，不进行跨贴文聚合，不创建正式事件实体，也不判断事件整体热度。
+
+例如：
+
+```text
+primaryDomain = military
+topicTypeLabel = military_conflict
+```
 
 | 枚举值 | 含义 |
 |---|---|
@@ -679,11 +690,11 @@ summaryConfidence
 | `crime_public_safety` | 犯罪或公共安全事件 |
 | `social_livelihood_event` | 社会民生事件 |
 | `public_opinion_event` | 舆情事件 |
-| `other` | 明确属于事件，但词表未覆盖 |
-| `unclear` | 可能涉及事件，但无法判断类型 |
-| `not_applicable` | 内容不涉及具体事件 |
+| `other` | 当前内容的话题类型明确，但现有词表未覆盖 |
+| `unclear` | 当前内容可能涉及某类话题，但无法可靠判断具体类型 |
+| `not_applicable` | 当前内容不涉及上述具体话题类型 |
 
-只输出一个主要事件类型。
+只输出当前内容的一个主要话题类型。
 
 
 ---
@@ -791,7 +802,7 @@ topicTags
 entitiesHint
 keywords
 summary
-eventType
+topicType
 other
 ```
 
@@ -825,7 +836,7 @@ other
 
 ---
 
-# 5. `annotate_account`：账户类别标注接口
+# 5. `annotate_account_type`：账户类别标注接口
 
 ## 5.1 接口作用
 
@@ -846,7 +857,7 @@ other
 ## 5.2 请求结构
 
 ```text
-annotate_account请求
+annotate_account_type请求
 ├── platform
 ├── platformUserId
 ├── accountEntityType
@@ -923,7 +934,7 @@ annotate_account请求
 ## 5.3 响应结构
 
 ```text
-annotate_account
+annotate_account_type
 ├── schemaVersion
 ├── accountReference
 ├── accountType
@@ -1438,11 +1449,11 @@ reasoning
 
 | 内容 | 所属接口 |
 |---|---|
-| 单条内容的意识形态、核心立场、情绪和语言风格 | `annotate` |
-| 单条内容的BEND方法和风险等级 | `annotate` |
-| 单条内容的AIGC检测 | `annotate` |
-| 账户的主要类别和细分类标签 | `annotate_account` |
-| 账户的自动化嫌疑 | `annotate_account` |
+| 单条内容的意识形态、核心立场、情绪和语言风格 | `annotate_content` |
+| 单条内容的BEND方法和风险等级 | `annotate_content` |
+| 单条内容的AIGC检测 | `annotate_content` |
+| 账户的主要类别和细分类标签 | `annotate_account_type` |
+| 账户的自动化嫌疑 | `annotate_account_type` |
 | 已聚合事件的整体热度 | `annotate_event_heat` |
 
 边界原则：
@@ -1538,8 +1549,8 @@ t1_annotation_v0.6
 本版本包含三个接口：
 
 ```text
-annotate
-annotate_account
+annotate_content
+annotate_account_type
 annotate_event_heat
 ```
 

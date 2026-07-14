@@ -1,612 +1,612 @@
 {
   "schemaVersion": "t1_annotation_v0.6",
   "interfaces": {
-    "annotate": {
-        "schemaVersion": "t1_annotation_v0.6",
-        "inputReference": {
-          "contentId": "string",
-          "contentType": [
-            "post",
-            "comment",
-            "reply",
-            "article"
-          ],
-          "modalityCombination": [
-            "text",
-            "image",
-            "video",
-            "text_image",
-            "text_video",
-            "image_video",
-            "text_image_video"
-          ],
-          "platform": "string | null",
-          "url": "string | null",
-          "authorId": "string | null",
-          "createdAt": "string | null"
-        },
-        "language": [
-          "zh",
-          "en",
-          "ja",
-          "ko",
-          "vi",
-          "tl",
-          "mixed",
-          "unknown"
+    "annotate_content": {
+      "schemaVersion": "t1_annotation_v0.6",
+      "inputReference": {
+        "contentId": "string",
+        "contentType": [
+          "post",
+          "comment",
+          "reply",
+          "article"
         ],
-        "aigcDetection": {
-          "overallAigcLabel": [
+        "modalityCombination": [
+          "text",
+          "image",
+          "video",
+          "text_image",
+          "text_video",
+          "image_video",
+          "text_image_video"
+        ],
+        "platform": "string | null",
+        "url": "string | null",
+        "authorId": "string | null",
+        "createdAt": "string | null"
+      },
+      "language": [
+        "zh",
+        "en",
+        "ja",
+        "ko",
+        "vi",
+        "tl",
+        "mixed",
+        "unknown"
+      ],
+      "aigcDetection": {
+        "overallAigcLabel": [
+          "ai_generated",
+          "human_generated",
+          "mixed",
+          "suspicious",
+          "unclear"
+        ],
+        "overallAigcScore": "number | null",
+        "textAigcDetection": {
+          "textAigcLabel": [
             "ai_generated",
             "human_generated",
             "mixed",
             "suspicious",
+            "unclear",
+            "not_applicable"
+          ],
+          "textAigcScore": "number | null",
+          "textAigcSignalLabels": [
+            "ai_self_disclosure",
+            "template_like_structure",
+            "generic_over_polished",
+            "repetitive_phrasing",
+            "unnatural_transition",
+            "instruction_following_trace",
+            "mixed_style",
+            "none",
             "unclear"
           ],
-          "overallAigcScore": "number | null",
-          "textAigcDetection": {
-            "textAigcLabel": [
-              "ai_generated",
-              "human_generated",
+          "textAigcConfidence": "number | null",
+          "evidenceIds": []
+        },
+        "imageAigcDetection": {
+          "imageAigcLabel": [
+            "ai_generated",
+            "human_generated",
+            "edited_or_manipulated",
+            "mixed",
+            "suspicious",
+            "unclear",
+            "not_applicable"
+          ],
+          "imageAigcScore": "number | null",
+          "imageAigcSignalLabels": [
+            "visual_artifact",
+            "face_inconsistency",
+            "hand_or_body_anomaly",
+            "text_rendering_anomaly",
+            "lighting_shadow_inconsistency",
+            "background_distortion",
+            "object_boundary_anomaly",
+            "metadata_anomaly",
+            "deepfake_signal",
+            "local_manipulation_signal",
+            "none",
+            "unclear"
+          ],
+          "imageAigcConfidence": "number | null",
+          "evidenceIds": []
+        },
+        "videoAigcDetection": {
+          "videoAigcLabel": [
+            "ai_generated",
+            "human_generated",
+            "deepfake",
+            "edited_or_manipulated",
+            "mixed",
+            "suspicious",
+            "unclear",
+            "not_applicable"
+          ],
+          "videoAigcScore": "number | null",
+          "videoAigcSignalLabels": [
+            "deepfake_signal",
+            "face_swap_signal",
+            "lip_sync_inconsistency",
+            "audio_visual_mismatch",
+            "voice_synthesis_signal",
+            "temporal_inconsistency",
+            "frame_artifact",
+            "motion_anomaly",
+            "lighting_shadow_inconsistency",
+            "background_distortion",
+            "scene_boundary_anomaly",
+            "metadata_anomaly",
+            "local_manipulation_signal",
+            "none",
+            "unclear"
+          ],
+          "videoAigcConfidence": "number | null",
+          "evidenceIds": []
+        },
+        "multimodalAigcDetection": {
+          "multimodalAigcLabel": [
+            "consistent",
+            "inconsistent",
+            "mixed_generated",
+            "suspicious",
+            "unclear",
+            "not_applicable"
+          ],
+          "checkedModalityPairs": [
+            "text_image",
+            "text_video",
+            "image_video",
+            "image_ocr",
+            "video_audio",
+            "video_subtitle",
+            "text_image_video",
+            "other"
+          ],
+          "multimodalSignalLabels": [
+            "text_image_mismatch",
+            "text_video_mismatch",
+            "image_video_mismatch",
+            "image_ocr_mismatch",
+            "audio_visual_mismatch",
+            "subtitle_visual_mismatch",
+            "caption_context_mismatch",
+            "cross_modal_source_mismatch",
+            "mixed_generation_signal",
+            "none",
+            "unclear"
+          ],
+          "multimodalAigcConfidence": "number | null",
+          "evidenceIds": []
+        },
+        "aigcDetectionConfidence": "number | null"
+      },
+      "annotations": {
+        "highValueSubjective": {
+          "ideology": {
+            "ideologyLabel": [
+              "left_leaning",
+              "right_leaning",
+              "liberal",
+              "conservative",
+              "nationalist",
+              "populist",
+              "pro_government",
+              "anti_government",
+              "pro_western",
+              "anti_western",
+              "neutral",
+              "not_obvious",
               "mixed",
-              "suspicious",
               "unclear",
-              "not_applicable"
-            ],
-            "textAigcScore": "number | null",
-            "textAigcSignalLabels": [
-              "ai_self_disclosure",
-              "template_like_structure",
-              "generic_over_polished",
-              "repetitive_phrasing",
-              "unnatural_transition",
-              "instruction_following_trace",
-              "mixed_style",
-              "none",
-              "unclear"
-            ],
-            "textAigcConfidence": "number | null",
-            "evidenceIds": []
-          },
-          "imageAigcDetection": {
-            "imageAigcLabel": [
-              "ai_generated",
-              "human_generated",
-              "edited_or_manipulated",
-              "mixed",
-              "suspicious",
-              "unclear",
-              "not_applicable"
-            ],
-            "imageAigcScore": "number | null",
-            "imageAigcSignalLabels": [
-              "visual_artifact",
-              "face_inconsistency",
-              "hand_or_body_anomaly",
-              "text_rendering_anomaly",
-              "lighting_shadow_inconsistency",
-              "background_distortion",
-              "object_boundary_anomaly",
-              "metadata_anomaly",
-              "deepfake_signal",
-              "local_manipulation_signal",
-              "none",
-              "unclear"
-            ],
-            "imageAigcConfidence": "number | null",
-            "evidenceIds": []
-          },
-          "videoAigcDetection": {
-            "videoAigcLabel": [
-              "ai_generated",
-              "human_generated",
-              "deepfake",
-              "edited_or_manipulated",
-              "mixed",
-              "suspicious",
-              "unclear",
-              "not_applicable"
-            ],
-            "videoAigcScore": "number | null",
-            "videoAigcSignalLabels": [
-              "deepfake_signal",
-              "face_swap_signal",
-              "lip_sync_inconsistency",
-              "audio_visual_mismatch",
-              "voice_synthesis_signal",
-              "temporal_inconsistency",
-              "frame_artifact",
-              "motion_anomaly",
-              "lighting_shadow_inconsistency",
-              "background_distortion",
-              "scene_boundary_anomaly",
-              "metadata_anomaly",
-              "local_manipulation_signal",
-              "none",
-              "unclear"
-            ],
-            "videoAigcConfidence": "number | null",
-            "evidenceIds": []
-          },
-          "multimodalAigcDetection": {
-            "multimodalAigcLabel": [
-              "consistent",
-              "inconsistent",
-              "mixed_generated",
-              "suspicious",
-              "unclear",
-              "not_applicable"
-            ],
-            "checkedModalityPairs": [
-              "text_image",
-              "text_video",
-              "image_video",
-              "image_ocr",
-              "video_audio",
-              "video_subtitle",
-              "text_image_video",
               "other"
             ],
-            "multimodalSignalLabels": [
-              "text_image_mismatch",
-              "text_video_mismatch",
-              "image_video_mismatch",
-              "image_ocr_mismatch",
-              "audio_visual_mismatch",
-              "subtitle_visual_mismatch",
-              "caption_context_mismatch",
-              "cross_modal_source_mismatch",
-              "mixed_generation_signal",
-              "none",
-              "unclear"
-            ],
-            "multimodalAigcConfidence": "number | null",
+            "ideologyConfidence": "number | null",
             "evidenceIds": []
           },
-          "aigcDetectionConfidence": "number | null"
-        },
-        "annotations": {
-          "highValueSubjective": {
-            "ideology": {
-              "ideologyLabel": [
-                "left_leaning",
-                "right_leaning",
-                "liberal",
-                "conservative",
-                "nationalist",
-                "populist",
-                "pro_government",
-                "anti_government",
-                "pro_western",
-                "anti_western",
-                "neutral",
-                "not_obvious",
-                "mixed",
-                "unclear",
-                "other"
-              ],
-              "ideologyConfidence": "number | null",
-              "evidenceIds": []
-            },
-            "coreStance": {
-              "stanceTarget": {
-                "targetType": [
-                  "event",
-                  "issue",
-                  "policy",
-                  "action",
-                  "person",
-                  "organization",
-                  "country_or_region",
-                  "ideology_or_value",
-                  "other",
-                  "unclear"
-                ],
-                "targetText": "string | null"
-              },
-              "stanceLabel": [
-                "support",
-                "oppose",
-                "neutral",
-                "mixed",
-                "unclear"
-              ],
-              "stanceStrength": [
-                "weak",
-                "medium",
-                "strong",
-                "unclear"
-              ],
-              "coreStanceConfidence": "number | null",
-              "evidenceIds": []
-            },
-            "opinionEmotion": {
-              "sentimentPolarity": [
-                "positive",
-                "negative",
-                "neutral",
-                "mixed",
-                "unclear"
-              ],
-              "emotionLabels": [
-                "anger",
-                "fear",
-                "sadness",
-                "anxiety",
-                "disgust",
-                "contempt",
-                "joy",
-                "hope",
-                "sympathy",
-                "surprise",
-                "none",
-                "unclear"
-              ],
-              "emotionIntensity": [
-                "low",
-                "medium",
-                "high",
-                "unclear",
-                "not_applicable"
-              ],
-              "opinionEmotionConfidence": "number | null",
-              "evidenceIds": []
-            },
-            "languageStyle": {
-              "styleLabels": [
-                "neutral",
-                "aggressive",
-                "sarcastic",
-                "mocking",
-                "alarmist",
-                "threatening",
-                "sensationalized",
-                "emotional",
-                "conspiratorial",
-                "accusatory",
-                "slogan_like",
-                "rhetorical_questioning",
-                "rational_analytical",
-                "unclear",
-                "not_applicable"
-              ],
-              "languageStyleConfidence": "number | null",
-              "evidenceIds": []
-            },
-            "manipulationMethod": {
-              "methodLabels": [
-                "engage",
-                "explain",
-                "excite",
-                "enhance",
-                "dismiss",
-                "distort",
-                "dismay",
-                "distract"
-              ],
-              "manipulationMethodConfidence": "number | null",
-              "evidenceIds": []
-            },
-            "riskLevel": {
-              "riskLabel": [
-                "none",
-                "low",
-                "medium",
-                "high",
-                "severe",
-                "unclear"
-              ],
-              "riskTypes": [
-                "misinformation",
-                "rumor",
-                "polarization",
-                "hostility",
-                "panic_amplification",
-                "mobilization_risk",
-                "reputation_attack",
-                "manipulation",
-                "none",
-                "unclear"
-              ],
-              "riskLevelConfidence": "number | null",
-              "evidenceIds": []
-            }
-          },
-          "basicObjective": {
-            "topicTags": {
-              "primaryDomain": [
-                "politics",
-                "military",
-                "economy_finance",
-                "technology_cyber",
-                "public_health",
-                "social_livelihood",
-                "ethnic_religious",
-                "energy_environment",
-                "disaster_accident",
-                "crime_public_safety",
-                "culture_education",
-                "migration_refugee",
+          "coreStance": {
+            "stanceTarget": {
+              "targetType": [
+                "event",
+                "issue",
+                "policy",
+                "action",
+                "person",
+                "organization",
+                "country_or_region",
+                "ideology_or_value",
                 "other",
                 "unclear"
               ],
-              "topicTagsConfidence": "number | null",
-              "evidenceIds": []
+              "targetText": "string | null"
             },
-            "entitiesHint": [
-              {
-                "entityHintId": "string",
-                "text": "string",
-                "typeHint": [
-                  "persons",
-                  "organizations",
-                  "events",
-                  "locations",
-                  "media_contents",
-                  "social_accounts",
-                  "narratives",
-                  "others",
-                  "unknown"
-                ],
-                "entityHintConfidence": "number | null",
-                "evidenceIds": []
-              }
+            "stanceLabel": [
+              "support",
+              "oppose",
+              "neutral",
+              "mixed",
+              "unclear"
             ],
-            "keywords": [
-              {
-                "keywordText": "string",
-                "keywordConfidence": "number | null",
-                "evidenceIds": []
-              }
+            "stanceStrength": [
+              "weak",
+              "medium",
+              "strong",
+              "unclear"
             ],
-            "summary": {
-              "summaryText": "string | null",
-              "summaryConfidence": "number | null"
-            },
-            "eventType": {
-              "eventTypeLabel": [
-                "military_conflict",
-                "diplomatic_dispute",
-                "policy_announcement",
-                "election_campaign",
-                "protest_demonstration",
-                "economic_sanction",
-                "cyber_incident",
-                "public_health_event",
-                "disaster_accident",
-                "crime_public_safety",
-                "social_livelihood_event",
-                "public_opinion_event",
-                "other",
-                "unclear",
-                "not_applicable"
-              ],
-              "eventTypeConfidence": "number | null",
-              "evidenceIds": []
-            }
-          }
-        },
-        "evidenceClues": [
-          {
-            "evidenceId": "string",
-            "evidenceType": [
-              "text_span",
-              "image_region",
-              "video_segment",
-              "video_frame_region",
-              "metadata",
-              "model_signal"
-            ],
-            "source": [
-              "text",
-              "image",
-              "video",
-              "audio",
-              "ocr",
-              "subtitle",
-              "metadata",
-              "aigc_detector"
-            ],
-            "evidenceText": "string | null",
-            "span": "[integer, integer] | null",
-            "mediaId": "string | null",
-            "region": {
-              "x": "number",
-              "y": "number",
-              "width": "number",
-              "height": "number"
-            },
-            "timeRange": {
-              "start": "number",
-              "end": "number"
-            },
-            "metadataSnapshot": {},
-            "modelSignal": {}
-          }
-        ],
-        "qualityControl": {
-          "needHumanReview": "boolean",
-          "reviewReasons": [
-            "low_confidence",
-            "insufficient_context",
-            "conflicting_signals",
-            "multimodal_inconsistency",
-            "aigc_suspicious",
-            "high_risk_content",
-            "missing_metadata",
-            "module_failure",
-            "too_short_input",
-            "manual_policy_required",
-            "other"
-          ],
-          "failedModules": [
-            "aigcDetection",
-            "textAigcDetection",
-            "imageAigcDetection",
-            "videoAigcDetection",
-            "multimodalAigcDetection",
-            "ideology",
-            "coreStance",
-            "opinionEmotion",
-            "languageStyle",
-            "manipulationMethod",
-            "riskLevel",
-            "topicTags",
-            "entitiesHint",
-            "keywords",
-            "summary",
-            "eventType",
-            "other"
-          ]
-        },
-        "overallConfidence": "number | null",
-        "processedAt": "string"
-
-    },
-    "annotate_account": {
-        "schemaVersion": "t1_annotation_v0.6",
-        "accountReference": {
-          "platform": "string",
-          "platformUserId": "string",
-          "accountEntityType": [
-            "user",
-            "channel",
-            "page",
-            "group",
-            "community",
-            "forum_board",
-            "news_source"
-          ],
-          "platformNativeType": "string | null",
-          "handle": "string | null",
-          "displayName": "string | null"
-        },
-        "accountType": {
-          "primaryAccountCategory": {
-            "categoryLabel": [
-              "ordinary_user",
-              "news_media",
-              "state_affiliated_media",
-              "government_agency",
-              "political_actor",
-              "political_party_or_campaign",
-              "military_security_agency",
-              "international_organization",
-              "ngo_or_civil_society",
-              "academic_or_expert",
-              "commercial_brand",
-              "platform_official",
-              "influencer_kol",
-              "community_group",
-              "anonymous_account",
-              "suspected_bot_or_automated",
-              "unknown",
-              "other"
-            ],
+            "coreStanceConfidence": "number | null",
             "evidenceIds": []
           },
-          "accountSubtypeTags": [
-            {
-              "subtypeTag": "string",
-              "evidenceIds": []
-            }
-          ],
-          "automationSuspicion": {
-            "suspicionLevel": [
+          "opinionEmotion": {
+            "sentimentPolarity": [
+              "positive",
+              "negative",
+              "neutral",
+              "mixed",
+              "unclear"
+            ],
+            "emotionLabels": [
+              "anger",
+              "fear",
+              "sadness",
+              "anxiety",
+              "disgust",
+              "contempt",
+              "joy",
+              "hope",
+              "sympathy",
+              "surprise",
+              "none",
+              "unclear"
+            ],
+            "emotionIntensity": [
+              "low",
+              "medium",
+              "high",
+              "unclear",
+              "not_applicable"
+            ],
+            "opinionEmotionConfidence": "number | null",
+            "evidenceIds": []
+          },
+          "languageStyle": {
+            "styleLabels": [
+              "neutral",
+              "aggressive",
+              "sarcastic",
+              "mocking",
+              "alarmist",
+              "threatening",
+              "sensationalized",
+              "emotional",
+              "conspiratorial",
+              "accusatory",
+              "slogan_like",
+              "rhetorical_questioning",
+              "rational_analytical",
+              "unclear",
+              "not_applicable"
+            ],
+            "languageStyleConfidence": "number | null",
+            "evidenceIds": []
+          },
+          "manipulationMethod": {
+            "methodLabels": [
+              "engage",
+              "explain",
+              "excite",
+              "enhance",
+              "dismiss",
+              "distort",
+              "dismay",
+              "distract"
+            ],
+            "manipulationMethodConfidence": "number | null",
+            "evidenceIds": []
+          },
+          "riskLevel": {
+            "riskLabel": [
               "none",
               "low",
               "medium",
               "high",
+              "severe",
               "unclear"
             ],
+            "riskTypes": [
+              "misinformation",
+              "rumor",
+              "polarization",
+              "hostility",
+              "panic_amplification",
+              "mobilization_risk",
+              "reputation_attack",
+              "manipulation",
+              "none",
+              "unclear"
+            ],
+            "riskLevelConfidence": "number | null",
             "evidenceIds": []
           }
         },
-        "evidenceClues": [
-          {
-            "evidenceId": "string",
-            "evidenceType": [
-              "profile_text",
-              "verification_info",
-              "account_metadata",
-              "activity_statistics",
-              "recent_post_sample",
-              "platform_label",
-              "other"
+        "basicObjective": {
+          "topicTags": {
+            "primaryDomain": [
+              "politics",
+              "military",
+              "economy_finance",
+              "technology_cyber",
+              "public_health",
+              "social_livelihood",
+              "ethnic_religious",
+              "energy_environment",
+              "disaster_accident",
+              "crime_public_safety",
+              "culture_education",
+              "migration_refugee",
+              "other",
+              "unclear"
             ],
-            "sourceField": [
-              "display_name",
-              "bio",
-              "self_declared_location",
-              "verified",
-              "verified_type",
-              "account_entity_type",
-              "platform_native_type",
-              "account_created_at",
-              "followers_count",
-              "following_count",
-              "subscriber_count",
-              "member_count",
-              "post_count",
-              "view_count",
-              "recent_post_sample",
-              "other"
+            "topicTagsConfidence": "number | null",
+            "evidenceIds": []
+          },
+          "entitiesHint": [
+            {
+              "entityHintId": "string",
+              "text": "string",
+              "typeHint": [
+                "persons",
+                "organizations",
+                "events",
+                "locations",
+                "media_contents",
+                "social_accounts",
+                "narratives",
+                "others",
+                "unknown"
+              ],
+              "entityHintConfidence": "number | null",
+              "evidenceIds": []
+            }
+          ],
+          "keywords": [
+            {
+              "keywordText": "string",
+              "keywordConfidence": "number | null",
+              "evidenceIds": []
+            }
+          ],
+          "summary": {
+            "summaryText": "string | null",
+            "summaryConfidence": "number | null"
+          },
+          "topicType": {
+            "topicTypeLabel": [
+              "military_conflict",
+              "diplomatic_dispute",
+              "policy_announcement",
+              "election_campaign",
+              "protest_demonstration",
+              "economic_sanction",
+              "cyber_incident",
+              "public_health_event",
+              "disaster_accident",
+              "crime_public_safety",
+              "social_livelihood_event",
+              "public_opinion_event",
+              "other",
+              "unclear",
+              "not_applicable"
             ],
-            "metadataSnapshot": {}
+            "topicTypeConfidence": "number | null",
+            "evidenceIds": []
           }
+        }
+      },
+      "evidenceClues": [
+        {
+          "evidenceId": "string",
+          "evidenceType": [
+            "text_span",
+            "image_region",
+            "video_segment",
+            "video_frame_region",
+            "metadata",
+            "model_signal"
+          ],
+          "source": [
+            "text",
+            "image",
+            "video",
+            "audio",
+            "ocr",
+            "subtitle",
+            "metadata",
+            "aigc_detector"
+          ],
+          "evidenceText": "string | null",
+          "span": "[integer, integer] | null",
+          "mediaId": "string | null",
+          "region": {
+            "x": "number",
+            "y": "number",
+            "width": "number",
+            "height": "number"
+          },
+          "timeRange": {
+            "start": "number",
+            "end": "number"
+          },
+          "metadataSnapshot": {},
+          "modelSignal": {}
+        }
+      ],
+      "qualityControl": {
+        "needHumanReview": "boolean",
+        "reviewReasons": [
+          "low_confidence",
+          "insufficient_context",
+          "conflicting_signals",
+          "multimodal_inconsistency",
+          "aigc_suspicious",
+          "high_risk_content",
+          "missing_metadata",
+          "module_failure",
+          "too_short_input",
+          "manual_policy_required",
+          "other"
         ],
-        "qualityControl": {
-          "needHumanReview": "boolean",
-          "reviewReasons": [
-            "low_confidence",
-            "insufficient_profile_information",
-            "conflicting_identity_signals",
-            "ambiguous_account_category",
-            "verification_conflict",
-            "insufficient_activity_data",
-            "insufficient_post_samples",
-            "automation_judgment_uncertain",
-            "missing_metadata",
-            "module_failure",
-            "manual_policy_required",
+        "failedModules": [
+          "aigcDetection",
+          "textAigcDetection",
+          "imageAigcDetection",
+          "videoAigcDetection",
+          "multimodalAigcDetection",
+          "ideology",
+          "coreStance",
+          "opinionEmotion",
+          "languageStyle",
+          "manipulationMethod",
+          "riskLevel",
+          "topicTags",
+          "entitiesHint",
+          "keywords",
+          "summary",
+          "topicType",
+          "other"
+        ]
+      },
+      "overallConfidence": "number | null",
+      "processedAt": "string"
+
+    },
+    "annotate_account_type": {
+      "schemaVersion": "t1_annotation_v0.6",
+      "accountReference": {
+        "platform": "string",
+        "platformUserId": "string",
+        "accountEntityType": [
+          "user",
+          "channel",
+          "page",
+          "group",
+          "community",
+          "forum_board",
+          "news_source"
+        ],
+        "platformNativeType": "string | null",
+        "handle": "string | null",
+        "displayName": "string | null"
+      },
+      "accountType": {
+        "primaryAccountCategory": {
+          "categoryLabel": [
+            "ordinary_user",
+            "news_media",
+            "state_affiliated_media",
+            "government_agency",
+            "political_actor",
+            "political_party_or_campaign",
+            "military_security_agency",
+            "international_organization",
+            "ngo_or_civil_society",
+            "academic_or_expert",
+            "commercial_brand",
+            "platform_official",
+            "influencer_kol",
+            "community_group",
+            "anonymous_account",
+            "suspected_bot_or_automated",
+            "unknown",
             "other"
           ],
-          "failedModules": [
-            "primaryAccountCategory",
-            "accountSubtypeTags",
-            "automationSuspicion",
-            "evidenceExtraction",
-            "other"
-          ]
+          "evidenceIds": []
         },
-        "overallConfidence": "number | null",
-        "processedAt": "string"
-    },
-    "annotate_event_heat": {
-        "schemaVersion": "t1_annotation_v0.6",
-        "eventHeat": {
-          "heatLevel": [
+        "accountSubtypeTags": [
+          {
+            "subtypeTag": "string",
+            "evidenceIds": []
+          }
+        ],
+        "automationSuspicion": {
+          "suspicionLevel": [
+            "none",
             "low",
             "medium",
             "high",
-            "explosive",
             "unclear"
           ],
-          "heatScore": "number | null",
-          "heatSignalTypes": [
-            "content_volume",
-            "engagement_surge",
-            "rapid_growth",
-            "wide_platform_spread",
-            "sustained_attention",
-            "declining",
-            "insufficient_data",
-            "unclear"
+          "evidenceIds": []
+        }
+      },
+      "evidenceClues": [
+        {
+          "evidenceId": "string",
+          "evidenceType": [
+            "profile_text",
+            "verification_info",
+            "account_metadata",
+            "activity_statistics",
+            "recent_post_sample",
+            "platform_label",
+            "other"
           ],
-          "reasoning": "string | null"
-        },
-        "overallConfidence": "number | null",
-        "processedAt": "string"
+          "sourceField": [
+            "display_name",
+            "bio",
+            "self_declared_location",
+            "verified",
+            "verified_type",
+            "account_entity_type",
+            "platform_native_type",
+            "account_created_at",
+            "followers_count",
+            "following_count",
+            "subscriber_count",
+            "member_count",
+            "post_count",
+            "view_count",
+            "recent_post_sample",
+            "other"
+          ],
+          "metadataSnapshot": {}
+        }
+      ],
+      "qualityControl": {
+        "needHumanReview": "boolean",
+        "reviewReasons": [
+          "low_confidence",
+          "insufficient_profile_information",
+          "conflicting_identity_signals",
+          "ambiguous_account_category",
+          "verification_conflict",
+          "insufficient_activity_data",
+          "insufficient_post_samples",
+          "automation_judgment_uncertain",
+          "missing_metadata",
+          "module_failure",
+          "manual_policy_required",
+          "other"
+        ],
+        "failedModules": [
+          "primaryAccountCategory",
+          "accountSubtypeTags",
+          "automationSuspicion",
+          "evidenceExtraction",
+          "other"
+        ]
+      },
+      "overallConfidence": "number | null",
+      "processedAt": "string"
+    },
+    "annotate_event_heat": {
+      "schemaVersion": "t1_annotation_v0.6",
+      "eventHeat": {
+        "heatLevel": [
+          "low",
+          "medium",
+          "high",
+          "explosive",
+          "unclear"
+        ],
+        "heatScore": "number | null",
+        "heatSignalTypes": [
+          "content_volume",
+          "engagement_surge",
+          "rapid_growth",
+          "wide_platform_spread",
+          "sustained_attention",
+          "declining",
+          "insufficient_data",
+          "unclear"
+        ],
+        "reasoning": "string | null"
+      },
+      "overallConfidence": "number | null",
+      "processedAt": "string"
     }
   }
 }

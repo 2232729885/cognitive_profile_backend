@@ -5,13 +5,13 @@ jwt:
 spring:
   ai:
     openai:
-      base-url: http://172.16.40.232:18012/v1
+      base-url: http://172.16.40.230:18012/v1
       api-key: idata@123456
       timeout: 10m
       max-retries: 0
       chat:
         options:
-          model: Qwen3-VL-32B-Thinking
+          model: Qwen3-VL-32B-Instruct
           temperature: 0.7
           max-tokens: 4096
 
@@ -88,9 +88,9 @@ server:
 
 logging:
   level:
-    com.idata.profile: debug
-#  file:
-#    name: logs/cognitive-profile-backend.log
+    com.idata.profile: info
+  file:
+    name: logs/cognitive-profile-backend.log
 
 llm:
   embedding:
