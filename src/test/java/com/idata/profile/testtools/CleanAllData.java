@@ -90,6 +90,11 @@ public class CleanAllData {
             "kt3.collection_task"
     );
 
+    private static final List<String> MINIO_BUCKETS = List.of(
+            "media-assets",
+            "batch-imports"
+    );
+
     public static void main(String[] args) {
         System.out.println("注意：请先停止主项目（cognitive-profile-backend），再运行此清理工具");
 
@@ -257,24 +262,32 @@ public class CleanAllData {
     }
 
     private static void cleanMinio() throws Exception {
-        System.out.println("[6/6] MinIO 开始清理 test/ 前缀对象...");
-        int deleted = 0;
+        System.out.println("[6/6] MinIO 开始清理...");
         MinioClient minioClient = MinioClient.builder()
                 .endpoint("http://172.16.40.232:9000")
                 .credentials("minioadmin", "minioadmin")
                 .build();
+        try {
+            int totalDeleted = 0;
+            for (String bucket : MINIO_BUCKETS) {
+                totalDeleted += clearBucket(minioClient, bucket);
+            }
+            System.out.println("[6/6] MinIO 清理完成，共删除 " + totalDeleted + " 个对象");
+        } finally {
+            minioClient.close();
+        }
+    }
 
+    private static int clearBucket(MinioClient minioClient, String bucket) throws Exception {
         if (!minioClient.bucketExists(io.minio.BucketExistsArgs.builder()
-                .bucket("media-assets")
+                .bucket(bucket)
                 .build())) {
-            System.out.println("[6/6] MinIO bucket 不存在，跳过: media-assets");
-            System.out.println("[6/6] MinIO 清理完成，删除 0 个对象");
-            return;
+            System.out.println("[6/6] MinIO bucket 不存在，跳过: " + bucket);
+            return 0;
         }
 
         Iterable<Result<Item>> objects = minioClient.listObjects(ListObjectsArgs.builder()
-                .bucket("media-assets")
-                .prefix("test/")
+                .bucket(bucket)
                 .recursive(true)
                 .build());
         List<String> objectNames = new ArrayList<>();
@@ -283,12 +296,12 @@ public class CleanAllData {
         }
         for (String objectName : objectNames) {
             minioClient.removeObject(RemoveObjectArgs.builder()
-                    .bucket("media-assets")
+                    .bucket(bucket)
                     .object(objectName)
                     .build());
-            deleted++;
         }
-        System.out.println("[6/6] MinIO 清理完成，删除 " + deleted + " 个对象");
+        System.out.println("[6/6] MinIO 已清理 bucket: " + bucket + "，删除 " + objectNames.size() + " 个对象");
+        return objectNames.size();
     }
 
     @FunctionalInterface
