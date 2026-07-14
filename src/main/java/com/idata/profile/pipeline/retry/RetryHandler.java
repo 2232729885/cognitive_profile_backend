@@ -5,8 +5,10 @@ import com.idata.profile.entity.raw.RawRecord;
 import com.idata.profile.entity.task.PipelineTask;
 import com.idata.profile.mapper.raw.RawRecordMapper;
 import com.idata.profile.mapper.task.PipelineTaskMapper;
+import com.idata.profile.pipeline.PipelineExecutor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Component;
 
@@ -26,6 +28,7 @@ public class RetryHandler {
     private final PipelineTaskMapper pipelineTaskMapper;
     private final RawRecordMapper rawRecordMapper;
     private final TaskScheduler taskScheduler;  // 见 config.ThreadPoolConfig
+    private final ObjectProvider<PipelineExecutor> pipelineExecutorProvider;
 
     public void markFailedAndRetry(PipelineTask task, String failedStep, Exception error) {
         short newRetryCount = (short) (task.getRetryCount() + 1);
@@ -59,9 +62,9 @@ public class RetryHandler {
     }
 
     private void scheduleRetry(java.util.UUID taskId, Duration delay) {
-        // TODO: 重新提交到 pipeline.PipelineExecutor，从task.errorStep对应的步骤重跑
-        // taskScheduler.schedule(() -> pipelineExecutor.submit(taskId),
-        //         java.time.Instant.now().plus(delay));
+        taskScheduler.schedule(
+                () -> pipelineExecutorProvider.getObject().submit(taskId),
+                java.time.Instant.now().plus(delay));
     }
 
     private void sendToDeadLetterQueue(PipelineTask task) {

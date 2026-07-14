@@ -47,9 +47,15 @@ public class PipelineExecutor {
     private void execute(UUID taskId) {
         PipelineTask task = pipelineTaskMapper.selectById(taskId);
         try {
-            t1Step.run(task);
-            t2Step.run(task);
-            t4Step.run(task);
+            if (!"done".equals(task.getT1Status())) {
+                t1Step.run(task);
+            }
+            if (!"done".equals(task.getT2Status())) {
+                t2Step.run(task);
+            }
+            if (!"done".equals(task.getT4Status())) {
+                t4Step.run(task);
+            }
 
             task.setStatus("DONE");
             pipelineTaskMapper.updateById(task);
