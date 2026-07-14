@@ -98,7 +98,7 @@ public class LlmAgentController {
                   "entitiesHint": [{"entityHintId": "ent_001", "text": "...", "typeHint": "persons|organizations|events|locations|media_contents|social_accounts|narratives|others|unknown", "entityHintConfidence": 0.0, "evidenceIds": []}],
                   "keywords": [{"keywordText": "...", "keywordConfidence": 0.0, "evidenceIds": []}],
                   "summary": {"summaryText": "...", "summaryConfidence": 0.0},
-                  "eventType": {"eventTypeLabel": "military_conflict|diplomatic_dispute|policy_announcement|election_campaign|protest_demonstration|economic_sanction|cyber_incident|public_health_event|disaster_accident|crime_public_safety|social_livelihood_event|public_opinion_event|other|unclear|not_applicable", "eventTypeConfidence": 0.0, "evidenceIds": []}
+                  "topicType": {"topicTypeLabel": "military_conflict|diplomatic_dispute|policy_announcement|election_campaign|protest_demonstration|economic_sanction|cyber_incident|public_health_event|disaster_accident|crime_public_safety|social_livelihood_event|public_opinion_event|other|unclear|not_applicable", "topicTypeConfidence": 0.0, "evidenceIds": []}
                 }
               },
               "evidenceClues": [{"evidenceId": "ev_001", "evidenceType": "text_span", "source": "text", "evidenceText": "...", "span": [0,10]}],
@@ -359,7 +359,7 @@ public class LlmAgentController {
     @Value("${llm.embedding.model}")
     private String embeddingModel;
 
-    @PostMapping("/t1/annotate")
+    @PostMapping("/t1/annotate_content")
     public T1AnnotateResponse annotate(@RequestBody T1AnnotateRequest request) {
         boolean hasText = request.getText() != null && !request.getText().isBlank();
         boolean hasImages = request.getMedias() != null
@@ -367,7 +367,7 @@ public class LlmAgentController {
         boolean hasVideos = request.getMedias() != null
                 && request.getMedias().stream().anyMatch(m -> "video".equals(m.getMediaType()));
 
-        log.info("[LLM-T1] annotate, hasText={}, hasImages={}, hasVideos={}", hasText, hasImages, hasVideos);
+        log.info("[LLM-T1] annotate_content, hasText={}, hasImages={}, hasVideos={}", hasText, hasImages, hasVideos);
 
         String userPrompt = buildT1UserPrompt(request, hasText, hasImages, hasVideos);
 
@@ -380,16 +380,16 @@ public class LlmAgentController {
             return response;
 
         } catch (Exception e) {
-            logLlmFailure("[LLM-T1] annotate failed, returning fallback", e);
+            logLlmFailure("[LLM-T1] annotate_content failed, returning fallback", e);
             T1AnnotateResponse response = buildFallbackT1Response(request, hasText, hasImages, hasVideos);
             response.setLanguage(request.getLanguage());
             return response;
         }
     }
 
-    @PostMapping("/t1/annotate_account")
+    @PostMapping("/t1/annotate_account_type")
     public T1AnnotateAccountResponse annotateAccount(@RequestBody T1AnnotateAccountRequest request) {
-        log.info("[LLM-T1] annotate_account, platform={}, handle={}", request.getPlatform(), request.getHandle());
+        log.info("[LLM-T1] annotate_account_type, platform={}, handle={}", request.getPlatform(), request.getHandle());
 
         String userPrompt = buildT1AccountUserPrompt(request);
 
@@ -402,7 +402,7 @@ public class LlmAgentController {
             response.setProcessedAt(java.time.OffsetDateTime.now().toString());
             return response;
         } catch (Exception e) {
-            logLlmFailure("[LLM-T1] annotate_account failed, returning fallback", e);
+            logLlmFailure("[LLM-T1] annotate_account_type failed, returning fallback", e);
             return buildFallbackT1AccountResponse();
         }
     }
@@ -683,7 +683,7 @@ public class LlmAgentController {
         qc.setFailedModules(List.of(
                 "textAigcDetection", "ideology", "coreStance", "opinionEmotion", "languageStyle",
                 "manipulationMethod", "riskLevel", "topicTags", "entitiesHint", "keywords",
-                "summary", "eventType"));
+                "summary", "topicType"));
         resp.setQualityControl(qc);
 
         resp.setOverallConfidence(0.0);

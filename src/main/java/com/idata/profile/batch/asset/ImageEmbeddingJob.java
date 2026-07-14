@@ -95,7 +95,7 @@ public class ImageEmbeddingJob {
                 request.setContext(context);
 
                 T1AnnotateResponse response = agentProxyClient.call(
-                        "T1", "annotate", request, T1AnnotateResponse.class);
+                        "T1", "annotate_content", request, T1AnnotateResponse.class);
                 if (response == null) {
                     continue;
                 }

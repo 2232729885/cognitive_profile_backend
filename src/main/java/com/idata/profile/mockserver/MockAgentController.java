@@ -39,7 +39,7 @@ public class MockAgentController {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
-    @PostMapping("/mock/t1/annotate")
+    @PostMapping("/mock/t1/annotate_content")
     public T1AnnotateResponse annotate(@RequestBody T1AnnotateRequest request) {
         boolean hasText = request.getText() != null && !request.getText().isBlank();
         List<T1AnnotateRequest.MediaItem> images = filterMedias(request, "image");
@@ -47,7 +47,7 @@ public class MockAgentController {
         boolean hasImages = !images.isEmpty();
         boolean hasVideos = !videos.isEmpty();
 
-        log.info("[MOCK-T1] annotate, hasText={}, images={}, videos={}", hasText, images.size(), videos.size());
+        log.info("[MOCK-T1] annotate_content, hasText={}, images={}, videos={}", hasText, images.size(), videos.size());
 
         T1AnnotateResponse response = hasText
                 ? buildTextAnnotation(request)
@@ -199,11 +199,11 @@ public class MockAgentController {
         summary.setSummaryText("该内容围绕霍尔木兹海峡军事对峙议题，对外部势力行为表达质疑和反对。");
         summary.setSummaryConfidence(0.85);
 
-        T1AnnotateResponse.Annotations.BasicObjective.EventType eventType =
-                new T1AnnotateResponse.Annotations.BasicObjective.EventType();
-        eventType.setEventTypeLabel("military_conflict");
-        eventType.setEventTypeConfidence(0.80);
-        eventType.setEvidenceIds(List.of("ev_001"));
+        T1AnnotateResponse.Annotations.BasicObjective.TopicType topicType =
+                new T1AnnotateResponse.Annotations.BasicObjective.TopicType();
+        topicType.setTopicTypeLabel("military_conflict");
+        topicType.setTopicTypeConfidence(0.80);
+        topicType.setEvidenceIds(List.of("ev_001"));
 
         T1AnnotateResponse.Annotations.BasicObjective basicObjective =
                 new T1AnnotateResponse.Annotations.BasicObjective();
@@ -211,7 +211,7 @@ public class MockAgentController {
         basicObjective.setEntitiesHint(List.of(entityHint1, entityHint2));
         basicObjective.setKeywords(List.of(keyword1, keyword2));
         basicObjective.setSummary(summary);
-        basicObjective.setEventType(eventType);
+        basicObjective.setTopicType(topicType);
 
         T1AnnotateResponse.Annotations annotations = new T1AnnotateResponse.Annotations();
         annotations.setHighValueSubjective(highValueSubjective);
@@ -374,10 +374,10 @@ public class MockAgentController {
         summary.setSummaryText("图像内容为一艘船只的海上画面，画面中可见文字标注 \"HORMUZ 2026\"。");
         summary.setSummaryConfidence(0.70);
 
-        T1AnnotateResponse.Annotations.BasicObjective.EventType eventType =
-                new T1AnnotateResponse.Annotations.BasicObjective.EventType();
-        eventType.setEventTypeLabel("unclear");
-        eventType.setEvidenceIds(List.of());
+        T1AnnotateResponse.Annotations.BasicObjective.TopicType topicType =
+                new T1AnnotateResponse.Annotations.BasicObjective.TopicType();
+        topicType.setTopicTypeLabel("unclear");
+        topicType.setEvidenceIds(List.of());
 
         T1AnnotateResponse.Annotations.BasicObjective basicObjective =
                 new T1AnnotateResponse.Annotations.BasicObjective();
@@ -385,7 +385,7 @@ public class MockAgentController {
         basicObjective.setEntitiesHint(List.of(shipHint));
         basicObjective.setKeywords(List.of(ocrKeyword));
         basicObjective.setSummary(summary);
-        basicObjective.setEventType(eventType);
+        basicObjective.setTopicType(topicType);
 
         T1AnnotateResponse.Annotations annotations = new T1AnnotateResponse.Annotations();
         annotations.setHighValueSubjective(highValueSubjective);
@@ -432,9 +432,9 @@ public class MockAgentController {
         return resp;
     }
 
-    @PostMapping("/mock/t1/annotate_account")
+    @PostMapping("/mock/t1/annotate_account_type")
     public T1AnnotateAccountResponse annotateAccount(@RequestBody T1AnnotateAccountRequest request) {
-        log.info("[MOCK-T1] annotate_account, platform={}, handle={}",
+        log.info("[MOCK-T1] annotate_account_type, platform={}, handle={}",
                 request.getPlatform(), request.getHandle());
 
         T1AnnotateAccountResponse.AccountReference accountReference =

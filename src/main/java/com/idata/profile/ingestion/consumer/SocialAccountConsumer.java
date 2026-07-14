@@ -97,7 +97,7 @@ public class SocialAccountConsumer {
             request.setRecentPostSamples(List.of());
 
             T1AnnotateAccountResponse response = agentProxyClient.call(
-                    "T1", "annotate_account", request, T1AnnotateAccountResponse.class);
+                    "T1", "annotate_account_type", request, T1AnnotateAccountResponse.class);
 
             if (response != null && response.getAccountType() != null
                     && response.getAccountType().getPrimaryAccountCategory() != null) {
@@ -107,7 +107,7 @@ public class SocialAccountConsumer {
                 }
             }
         } catch (Exception e) {
-            log.warn("[SocialAccountConsumer] T1 annotate_account failed, platform={}, platformUserId={}",
+            log.warn("[SocialAccountConsumer] T1 annotate_account_type failed, platform={}, platformUserId={}",
                     account.getPlatform(), account.getPlatformUserId(), e);
         }
     }

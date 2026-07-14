@@ -55,7 +55,7 @@ public class T1AnnotationStep {
 
         if (hasText || !assets.isEmpty()) {
             T1AnnotateRequest request = buildRequest(mc, assets);
-            response = agentProxyClient.call("T1", "annotate", request, T1AnnotateResponse.class);
+            response = agentProxyClient.call("T1", "annotate_content", request, T1AnnotateResponse.class);
             applyAnnotations(mc, response);
             mediaContentMapper.updateById(mc);
             if (response != null) {

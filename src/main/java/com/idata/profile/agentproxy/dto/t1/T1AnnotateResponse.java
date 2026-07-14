@@ -216,7 +216,7 @@ public class T1AnnotateResponse {
             private List<EntityHint> entitiesHint;
             private List<Keyword> keywords;
             private Summary summary;
-            private EventType eventType;
+            private TopicType topicType;
 
             /** 维度7：话题标签（只输出一个主要领域，不再细分子话题） */
             @Data
@@ -255,15 +255,15 @@ public class T1AnnotateResponse {
                 private Double summaryConfidence;
             }
 
-            /** 维度11：事件类型 */
+            /** 维度11：话题类型（比topicTags.primaryDomain更细粒度的话题分类） */
             @Data
-            public static class EventType {
+            public static class TopicType {
                 /** military_conflict/diplomatic_dispute/policy_announcement/election_campaign/
                  *  protest_demonstration/economic_sanction/cyber_incident/public_health_event/
                  *  disaster_accident/crime_public_safety/social_livelihood_event/
                  *  public_opinion_event/other/unclear/not_applicable */
-                private String eventTypeLabel;
-                private Double eventTypeConfidence;
+                private String topicTypeLabel;
+                private Double topicTypeConfidence;
                 private List<String> evidenceIds;
             }
         }
@@ -312,7 +312,7 @@ public class T1AnnotateResponse {
         private List<String> reviewReasons;
         /** aigcDetection/textAigcDetection/imageAigcDetection/videoAigcDetection/multimodalAigcDetection/
          *  ideology/coreStance/opinionEmotion/languageStyle/manipulationMethod/riskLevel/
-         *  topicTags/entitiesHint/keywords/summary/eventType/other */
+         *  topicTags/entitiesHint/keywords/summary/topicType/other */
         private List<String> failedModules;
     }
 }
