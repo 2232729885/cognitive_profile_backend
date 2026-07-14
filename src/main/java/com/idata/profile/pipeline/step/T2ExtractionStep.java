@@ -264,6 +264,7 @@ public class T2ExtractionStep {
 
     private void mergeMediaContentNode(MediaContent content) {
         Map<String, Object> contentProps = new HashMap<>();
+        putIfHasText(contentProps, "title", content.getTitle());
         putIfHasText(contentProps, "platform", content.getPlatform());
         putIfHasText(contentProps, "contentType", content.getContentType());
         putIfHasText(contentProps, "language", content.getLanguage());
@@ -276,7 +277,16 @@ public class T2ExtractionStep {
         putIfNotNull(contentProps, "commentCount", content.getCommentCount());
         putIfNotNull(contentProps, "shareCount", content.getShareCount());
         putIfNotNull(contentProps, "repostCount", content.getRepostCount());
+        putIfNotNull(contentProps, "quoteCount", content.getQuoteCount());
         putIfNotNull(contentProps, "viewCount", content.getViewCount());
+        putIfNotNull(contentProps, "reactionCount", content.getReactionCount());
+        if (content.getMediaAssetIds() != null && content.getMediaAssetIds().length > 0) {
+            String[] mediaAssetIdStrings = new String[content.getMediaAssetIds().length];
+            for (int i = 0; i < content.getMediaAssetIds().length; i++) {
+                mediaAssetIdStrings[i] = content.getMediaAssetIds()[i].toString();
+            }
+            contentProps.put("mediaAssetIds", mediaAssetIdStrings);
+        }
         contentProps.put("source", "backend_structural");
         neo4jGraphService.mergeNode("MediaContent", content.getId().toString(), contentProps);
     }
