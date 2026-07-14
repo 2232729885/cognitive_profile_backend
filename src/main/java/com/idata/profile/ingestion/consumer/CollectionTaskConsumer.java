@@ -2,6 +2,7 @@ package com.idata.profile.ingestion.consumer;
 
 import com.idata.profile.common.constant.PipelineStatus;
 import com.idata.profile.common.constant.RecordType;
+import com.idata.profile.common.util.HashUtil;
 import com.idata.profile.entity.content.CollectionTask;
 import com.idata.profile.entity.raw.RawRecord;
 import com.idata.profile.infra.kafka.KafkaTopicConstants;
@@ -41,6 +42,9 @@ public class CollectionTaskConsumer {
         }
 
         RawRecord rawRecord = buildRawRecord(kafkaMessage);
+        // collection_task raw_payload is often empty, so upstream raw_payload_hash can collide across tasks.
+        // This record type is identified by sourceRecordId/crawl_task_id, so derive a unique payload hash from it.
+        rawRecord.setPayloadHash(HashUtil.sha256(sourceRecordId));
         rawRecord.setPipelineStatus(PipelineStatus.RECEIVED.name());
         rawRecordMapper.insert(rawRecord);
 
