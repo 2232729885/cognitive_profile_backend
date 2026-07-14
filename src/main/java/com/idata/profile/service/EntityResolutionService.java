@@ -19,6 +19,7 @@ import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -39,6 +40,7 @@ public class EntityResolutionService {
 
     private static final double AUTO_MERGE_THRESHOLD = 0.9D;
     private static final double REVIEW_THRESHOLD = 0.6D;
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final AgentProxyClient agentProxyClient;
     private final PersonMapper personMapper;
@@ -50,27 +52,32 @@ public class EntityResolutionService {
     private final EntityCandidateRetrievalService candidateRetrievalService;
     private final EntityFusionRecordMapper entityFusionRecordMapper;
 
-    public Map<String, ResolvedMention> resolveMentions(
+    public ResolutionResult resolveMentions(
             List<T2ExtractResponse.ExtractedMention> rawMentions,
             String contentId, String platform, String language) {
         Map<String, ResolvedMention> resolved = new LinkedHashMap<>();
+        ResolutionResult empty = new ResolutionResult();
+        empty.setResolvedMentions(resolved);
         if (rawMentions == null || rawMentions.isEmpty()) {
-            return resolved;
+            return empty;
         }
 
         List<T2ExtractResponse.ExtractedMention> mentions = rawMentions.stream()
                 .map(this::normalizeMention)
                 .filter(m -> hasText(m.getMentionId()) && hasText(m.getType()) && hasText(entityName(m)))
                 .toList();
-        Map<String, T3ResolveBatchResponse.ResolveResult> results =
-                resolveWithT3(mentions, contentId, platform, language);
+        T3BatchOutcome t3Outcome = resolveWithT3(mentions, contentId, platform, language);
 
         for (T2ExtractResponse.ExtractedMention mention : mentions) {
-            T3ResolveBatchResponse.ResolveResult result = results.get(mention.getMentionId());
+            T3ResolveBatchResponse.ResolveResult result = t3Outcome.results.get(mention.getMentionId());
             ResolvedMention resolvedMention = applyResolution(mention, result);
             resolved.put(mention.getMentionId(), resolvedMention);
         }
-        return resolved;
+
+        ResolutionResult resolutionResult = new ResolutionResult();
+        resolutionResult.setResolvedMentions(resolved);
+        resolutionResult.setT3RawResponse(t3Outcome.rawJson);
+        return resolutionResult;
     }
 
     private T2ExtractResponse.ExtractedMention normalizeMention(T2ExtractResponse.ExtractedMention mention) {
@@ -89,7 +96,7 @@ public class EntityResolutionService {
         return mention;
     }
 
-    private Map<String, T3ResolveBatchResponse.ResolveResult> resolveWithT3(
+    private T3BatchOutcome resolveWithT3(
             List<T2ExtractResponse.ExtractedMention> mentions,
             String contentId, String platform, String language) {
         T3ResolveBatchRequest request = new T3ResolveBatchRequest();
@@ -103,14 +110,15 @@ public class EntityResolutionService {
         request.setStrategy(strategy);
 
         if (request.getItems().isEmpty()) {
-            return Map.of();
+            return new T3BatchOutcome(Map.of(), null);
         }
 
         try {
             T3ResolveBatchResponse response = agentProxyClient.call(
                     "T3", "resolve_batch", request, T3ResolveBatchResponse.class);
+            String rawJson = toJson(response);
             if (response == null || response.getResults() == null) {
-                return Map.of();
+                return new T3BatchOutcome(Map.of(), rawJson);
             }
             Map<String, T3ResolveBatchResponse.ResolveResult> result = new HashMap<>();
             for (T3ResolveBatchResponse.ResolveResult item : response.getResults()) {
@@ -119,10 +127,10 @@ public class EntityResolutionService {
                     result.put(item.getMentionId(), item);
                 }
             }
-            return result;
+            return new T3BatchOutcome(result, rawJson);
         } catch (Exception e) {
             log.warn("[EntityResolutionService] T3 resolve_batch failed, contentId={}", contentId, e);
-            return Map.of();
+            return new T3BatchOutcome(Map.of(), null);
         }
     }
 
@@ -367,6 +375,18 @@ public class EntityResolutionService {
         return value != null && !value.trim().isEmpty();
     }
 
+    private String toJson(T3ResolveBatchResponse response) {
+        if (response == null) {
+            return null;
+        }
+        try {
+            return OBJECT_MAPPER.writeValueAsString(response);
+        } catch (Exception e) {
+            log.warn("Failed to serialize T3 response");
+            return null;
+        }
+    }
+
     @Data
     public static class ResolvedMention {
         private String mentionId;
@@ -375,5 +395,21 @@ public class EntityResolutionService {
         private String entityType;
         private String action;
         private String name;
+    }
+
+    @Data
+    public static class ResolutionResult {
+        private Map<String, ResolvedMention> resolvedMentions;
+        private String t3RawResponse;
+    }
+
+    private static class T3BatchOutcome {
+        private final Map<String, T3ResolveBatchResponse.ResolveResult> results;
+        private final String rawJson;
+
+        T3BatchOutcome(Map<String, T3ResolveBatchResponse.ResolveResult> results, String rawJson) {
+            this.results = results;
+            this.rawJson = rawJson;
+        }
     }
 }

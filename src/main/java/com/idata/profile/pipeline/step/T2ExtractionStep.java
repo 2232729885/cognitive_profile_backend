@@ -51,12 +51,13 @@ public class T2ExtractionStep {
         T2ExtractResponse response = agentProxyClient.call(
                 "T2", "extract_entities", buildRequest(mc), T2ExtractResponse.class);
 
+        EntityResolutionService.ResolutionResult resolutionResult = entityResolutionService.resolveMentions(
+                response != null ? response.getEntities() : null,
+                mc.getId().toString(),
+                mc.getPlatform(),
+                mc.getLanguage());
         Map<String, EntityResolutionService.ResolvedMention> resolvedMentions =
-                entityResolutionService.resolveMentions(
-                        response != null ? response.getEntities() : null,
-                        mc.getId().toString(),
-                        mc.getPlatform(),
-                        mc.getLanguage());
+                resolutionResult.getResolvedMentions();
 
         if (mc.getAuthorAccountId() == null && hasText(response.getResolvedAuthorAccountId())) {
             mc.setAuthorAccountId(UUID.fromString(response.getResolvedAuthorAccountId()));
@@ -67,6 +68,7 @@ public class T2ExtractionStep {
 
         RawRecord rawRecord = rawRecordMapper.selectById(task.getRawRecordId());
         rawRecord.setT2Output(toJson(response));
+        rawRecord.setT3Output(resolutionResult.getT3RawResponse());
         rawRecord.setPipelineStatus(PipelineStatus.T2_DONE.name());
         rawRecordMapper.updateById(rawRecord);
 
