@@ -41,21 +41,17 @@ public class MockAgentController {
 
     @PostMapping("/mock/t1/annotate_content")
     public T1AnnotateResponse annotate(@RequestBody T1AnnotateRequest request) {
-        boolean hasText = request.getText() != null && !request.getText().isBlank();
-        List<T1AnnotateRequest.MediaItem> images = filterMedias(request, "image");
-        List<T1AnnotateRequest.MediaItem> videos = filterMedias(request, "video");
-        boolean hasImages = !images.isEmpty();
-        boolean hasVideos = !videos.isEmpty();
-
-        log.info("[MOCK-T1] annotate_content, hasText={}, images={}, videos={}", hasText, images.size(), videos.size());
-
-        T1AnnotateResponse response = hasText
-                ? buildTextAnnotation(request)
-                : buildMediaAnnotation(request, hasImages, hasVideos);
-        response.setInputReference(buildInputReference(request, hasText, hasImages, hasVideos));
-        applyModalityAigc(response, hasText, images, videos);
-        applyMediaHints(response, hasText, images, videos);
-        response.setOverallConfidence(hasText ? 0.80 : 0.60);
+        log.info("[MOCK-T1] annotate_content (empty mock, 用于隔离验证后端结构性逻辑)");
+        T1AnnotateResponse response = new T1AnnotateResponse();
+        response.setSchemaVersion("t1_annotation_v0.6");
+        response.setInputReference(new T1AnnotateResponse.InputReference());
+        response.setLanguage(request.getLanguage());
+        response.setAigcDetection(new T1AnnotateResponse.AigcDetection());
+        response.setAnnotations(new T1AnnotateResponse.Annotations());
+        response.setEvidenceClues(List.of());
+        response.setQualityControl(new T1AnnotateResponse.QualityControl());
+        response.setOverallConfidence(0.0);
+        response.setProcessedAt(java.time.OffsetDateTime.now().toString());
         return response;
     }
 
@@ -434,116 +430,54 @@ public class MockAgentController {
 
     @PostMapping("/mock/t1/annotate_account_type")
     public T1AnnotateAccountResponse annotateAccount(@RequestBody T1AnnotateAccountRequest request) {
-        log.info("[MOCK-T1] annotate_account_type, platform={}, handle={}",
-                request.getPlatform(), request.getHandle());
+        log.info("[MOCK-T1] annotate_account_type (empty mock)");
+        T1AnnotateAccountResponse response = new T1AnnotateAccountResponse();
+        response.setSchemaVersion("t1_annotation_v0.6");
 
-        T1AnnotateAccountResponse.AccountReference accountReference =
-                new T1AnnotateAccountResponse.AccountReference();
+        T1AnnotateAccountResponse.AccountReference accountReference = new T1AnnotateAccountResponse.AccountReference();
         accountReference.setPlatform(request.getPlatform());
         accountReference.setPlatformUserId(request.getPlatformUserId());
         accountReference.setAccountEntityType(request.getAccountEntityType());
         accountReference.setPlatformNativeType(request.getPlatformNativeType());
         accountReference.setHandle(request.getHandle());
         accountReference.setDisplayName(request.getDisplayName());
+        response.setAccountReference(accountReference);
 
         T1AnnotateAccountResponse.AccountType.PrimaryAccountCategory primaryAccountCategory =
                 new T1AnnotateAccountResponse.AccountType.PrimaryAccountCategory();
-        primaryAccountCategory.setCategoryLabel("news_media");
-        primaryAccountCategory.setEvidenceIds(List.of("ev_account_001"));
-
-        T1AnnotateAccountResponse.AccountType.AccountSubtypeTag subtypeTag =
-                new T1AnnotateAccountResponse.AccountType.AccountSubtypeTag();
-        subtypeTag.setSubtypeTag("independent_media");
-        subtypeTag.setEvidenceIds(List.of("ev_account_001"));
-
+        primaryAccountCategory.setCategoryLabel("unknown");
+        primaryAccountCategory.setEvidenceIds(List.of());
         T1AnnotateAccountResponse.AccountType.AutomationSuspicion automationSuspicion =
                 new T1AnnotateAccountResponse.AccountType.AutomationSuspicion();
-        automationSuspicion.setSuspicionLevel("low");
-        automationSuspicion.setEvidenceIds(List.of("ev_account_002"));
-
+        automationSuspicion.setSuspicionLevel("unclear");
+        automationSuspicion.setEvidenceIds(List.of());
         T1AnnotateAccountResponse.AccountType accountType = new T1AnnotateAccountResponse.AccountType();
         accountType.setPrimaryAccountCategory(primaryAccountCategory);
-        accountType.setAccountSubtypeTags(List.of(subtypeTag));
+        accountType.setAccountSubtypeTags(List.of());
         accountType.setAutomationSuspicion(automationSuspicion);
+        response.setAccountType(accountType);
 
-        T1AnnotateAccountResponse.EvidenceClue ev1 = new T1AnnotateAccountResponse.EvidenceClue();
-        ev1.setEvidenceId("ev_account_001");
-        ev1.setEvidenceType("profile_text");
-        ev1.setSourceField("bio");
-        ev1.setMetadataSnapshot(Map.of("value", request.getBio() != null ? request.getBio() : ""));
-
-        T1AnnotateAccountResponse.EvidenceClue ev2 = new T1AnnotateAccountResponse.EvidenceClue();
-        ev2.setEvidenceId("ev_account_002");
-        ev2.setEvidenceType("verification_info");
-        ev2.setSourceField("verified_type");
-        ev2.setMetadataSnapshot(Map.of(
-                "verified", String.valueOf(request.getVerified()),
-                "verifiedType", String.valueOf(request.getVerifiedType())));
-
-        T1AnnotateAccountResponse resp = new T1AnnotateAccountResponse();
-        resp.setSchemaVersion("t1_annotation_v0.6");
-        resp.setAccountReference(accountReference);
-        resp.setAccountType(accountType);
-        resp.setEvidenceClues(List.of(ev1, ev2));
-
-        T1AnnotateResponse.QualityControl qualityControl = new T1AnnotateResponse.QualityControl();
-        qualityControl.setNeedHumanReview(false);
-        qualityControl.setReviewReasons(List.of());
-        qualityControl.setFailedModules(List.of());
-        resp.setQualityControl(qualityControl);
-
-        resp.setOverallConfidence(0.82);
-        resp.setProcessedAt(java.time.OffsetDateTime.now().toString());
-        return resp;
+        response.setEvidenceClues(List.of());
+        response.setQualityControl(new T1AnnotateResponse.QualityControl());
+        response.setOverallConfidence(0.0);
+        response.setProcessedAt(java.time.OffsetDateTime.now().toString());
+        return response;
     }
 
     @PostMapping("/mock/t1/annotate_event_heat")
     public T1AnnotateEventHeatResponse annotateEventHeat(@RequestBody T1AnnotateEventHeatRequest request) {
-        log.info("[MOCK-T1] annotate_event_heat, hasEvent={}, relatedEntities={}",
-                request.getEvent() != null,
-                request.getRelatedEntities() != null ? request.getRelatedEntities().size() : 0);
-
-        int contentCount = request.getAggregateStats() != null
-                && request.getAggregateStats().getTotalRelatedContentCount() != null
-                ? request.getAggregateStats().getTotalRelatedContentCount() : 0;
-        long totalEngagement = request.getAggregateStats() != null
-                && request.getAggregateStats().getTotalEngagement() != null
-                ? request.getAggregateStats().getTotalEngagement() : 0L;
-
-        T1AnnotateEventHeatResponse.EventHeat heat = new T1AnnotateEventHeatResponse.EventHeat();
-        double overallConfidence;
-        if (contentCount == 0) {
-            heat.setHeatLevel("unclear");
-            heat.setHeatScore(null);
-            heat.setHeatSignalTypes(List.of("insufficient_data"));
-            heat.setReasoning("当前事件尚未关联到有效内容，无法形成可靠的事件热度判断。");
-            overallConfidence = 0.2;
-        } else if (contentCount >= 50 || totalEngagement >= 100000) {
-            heat.setHeatLevel("high");
-            heat.setHeatScore(Math.min(1.0, 0.5 + contentCount / 200.0));
-            heat.setHeatSignalTypes(List.of("content_volume", "engagement_surge"));
-            heat.setReasoning("关联内容数量和互动总量均处于高位。");
-            overallConfidence = 0.85;
-        } else if (contentCount >= 10) {
-            heat.setHeatLevel("medium");
-            heat.setHeatScore(Math.min(1.0, 0.3 + contentCount / 200.0));
-            heat.setHeatSignalTypes(List.of("content_volume"));
-            heat.setReasoning("关联内容数量中等，持续被讨论。");
-            overallConfidence = 0.75;
-        } else {
-            heat.setHeatLevel("low");
-            heat.setHeatScore(Math.min(1.0, 0.1 + contentCount / 200.0));
-            heat.setHeatSignalTypes(List.of("content_volume"));
-            heat.setReasoning("关联内容数量较少。");
-            overallConfidence = 0.65;
-        }
-
-        T1AnnotateEventHeatResponse resp = new T1AnnotateEventHeatResponse();
-        resp.setSchemaVersion("t1_annotation_v0.6");
-        resp.setEventHeat(heat);
-        resp.setOverallConfidence(overallConfidence);
-        resp.setProcessedAt(java.time.OffsetDateTime.now().toString());
-        return resp;
+        log.info("[MOCK-T1] annotate_event_heat (empty mock)");
+        T1AnnotateEventHeatResponse response = new T1AnnotateEventHeatResponse();
+        response.setSchemaVersion("t1_annotation_v0.6");
+        T1AnnotateEventHeatResponse.EventHeat eventHeat = new T1AnnotateEventHeatResponse.EventHeat();
+        eventHeat.setHeatLevel("unclear");
+        eventHeat.setHeatScore(null);
+        eventHeat.setHeatSignalTypes(List.of("insufficient_data"));
+        eventHeat.setReasoning("empty mock");
+        response.setEventHeat(eventHeat);
+        response.setOverallConfidence(0.0);
+        response.setProcessedAt(java.time.OffsetDateTime.now().toString());
+        return response;
     }
 
     private List<T1AnnotateRequest.MediaItem> filterMedias(T1AnnotateRequest request, String type) {
@@ -750,149 +684,23 @@ public class MockAgentController {
 
     @PostMapping("/mock/t2/extract_entities")
     public T2ExtractResponse extractEntities(@RequestBody T2ExtractRequest request) {
-        log.info("[MOCK-T2] extract_entities, textLength={}, hasAnnotation={}",
-                request.getText() != null ? request.getText().length() : 0,
-                request.getAnnotation() != null);
-
-        T2ExtractResponse.ExtractedMention person = new T2ExtractResponse.ExtractedMention();
-        person.setMentionId("m1");
-        person.setName("Leila Farzan");
-        person.setType("person");
-        person.setCanonicalName("Leila Farzan");
-        T2ExtractResponse.ExtractedMention.Span personSpan = new T2ExtractResponse.ExtractedMention.Span();
-        personSpan.setStart(0);
-        personSpan.setEnd(12);
-        person.setSpan(personSpan);
-        person.setImportanceScore(88.0);
-        person.setConfidence(0.92);
-        person.setAliases(List.of("L. Farzan", "莱拉·法尔赞"));
-        person.setAttributes(Map.of());
-
-        T2ExtractResponse.ExtractedMention organization = new T2ExtractResponse.ExtractedMention();
-        organization.setMentionId("m3");
-        organization.setName("U.S. Central Command");
-        organization.setType("organization");
-        organization.setCanonicalName("U.S. Central Command");
-        T2ExtractResponse.ExtractedMention.Span organizationSpan = new T2ExtractResponse.ExtractedMention.Span();
-        organizationSpan.setStart(20);
-        organizationSpan.setEnd(41);
-        organization.setSpan(organizationSpan);
-        organization.setImportanceScore(84.0);
-        organization.setConfidence(0.95);
-        organization.setAliases(List.of("CENTCOM"));
-        organization.setAttributes(Map.of());
-
-        T2ExtractResponse.ExtractedMention location = new T2ExtractResponse.ExtractedMention();
-        location.setMentionId("m4");
-        location.setName("Strait of Hormuz");
-        location.setType("location");
-        location.setCanonicalName("Strait of Hormuz");
-        T2ExtractResponse.ExtractedMention.Span locationSpan = new T2ExtractResponse.ExtractedMention.Span();
-        locationSpan.setStart(60);
-        locationSpan.setEnd(74);
-        location.setSpan(locationSpan);
-        location.setImportanceScore(85.0);
-        location.setConfidence(0.95);
-        location.setAliases(List.of("霍尔木兹海峡"));
-        location.setAttributes(Map.of());
-
-        T2ExtractResponse.ExtractedMention event = new T2ExtractResponse.ExtractedMention();
-        event.setMentionId("e1");
-        event.setName("2026 Persian Gulf Military Standoff");
-        event.setType("event");
-        event.setCanonicalName("2026 Persian Gulf Military Standoff");
-        event.setImportanceScore(90.0);
-        event.setConfidence(0.90);
-        event.setAliases(List.of());
-        event.setAttributes(Map.of(
-                "eventType", "military",
-                "eventTimeStart", "2026-06-01T00:00:00Z"));
-
-        T2ExtractResponse.ExtractedRelationMention rel1 = new T2ExtractResponse.ExtractedRelationMention();
-        rel1.setRelationMentionId("r1");
-        rel1.setSubjectMentionId("m1");
-        rel1.setPredicate("BELONGS_TO");
-        rel1.setObjectMentionId("m3");
-        rel1.setConfidence(0.78);
-        rel1.setEvidence("Leila Farzan is described as an analyst related to U.S. Central Command");
-
-        T2ExtractResponse.ExtractedRelationMention rel2 = new T2ExtractResponse.ExtractedRelationMention();
-        rel2.setRelationMentionId("r2");
-        rel2.setSubjectMentionId("e1");
-        rel2.setPredicate("EVENT_OCCURRED_AT");
-        rel2.setObjectMentionId("m4");
-        rel2.setConfidence(0.90);
-        rel2.setEvidence("The military standoff is located near the Strait of Hormuz");
-
-        T2ExtractResponse.ExtractedRelationMention rel3 = new T2ExtractResponse.ExtractedRelationMention();
-        rel3.setRelationMentionId("r3");
-        rel3.setSubjectMentionId("e1");
-        rel3.setPredicate("EVENT_INVOLVES_ENTITY");
-        rel3.setObjectMentionId("m3");
-        rel3.setConfidence(0.95);
-        rel3.setEvidence("U.S. Central Command is involved in the standoff");
-
-        T2ExtractResponse resp = new T2ExtractResponse();
-        resp.setContentId(request.getContext() != null ? request.getContext().getContentId() : null);
-        resp.setEntities(List.of(person, organization, location, event));
-        resp.setRelations(List.of(rel1, rel2, rel3));
-        resp.setResolvedAuthorAccountId(null);
-        resp.setModelVersion("mock-t2-v2.0");
-        return resp;
+        log.info("[MOCK-T2] extract_entities (empty mock, 用于隔离验证后端结构性逻辑)");
+        T2ExtractResponse response = new T2ExtractResponse();
+        response.setContentId(request.getContext() != null ? request.getContext().getContentId() : null);
+        response.setEntities(List.of());
+        response.setRelations(List.of());
+        response.setResolvedAuthorAccountId(null);
+        response.setModelVersion("mock-empty");
+        return response;
     }
 
     @PostMapping("/mock/t3/resolve_batch")
     public T3ResolveBatchResponse resolveBatch(@RequestBody T3ResolveBatchRequest request) {
-        int itemCount = request.getItems() != null ? request.getItems().size() : 0;
-        log.info("[MOCK-T3] resolve_batch, itemCount={}", itemCount);
-
-        List<T3ResolveBatchResponse.ResolveResult> results =
-                request.getItems() == null ? List.of() : request.getItems().stream()
-                        .map(item -> {
-                            T3ResolveBatchResponse.ResolveResult result =
-                                    new T3ResolveBatchResponse.ResolveResult();
-                            String mentionId = item.getMention() != null ? item.getMention().getMentionId() : null;
-                            result.setMentionId(mentionId);
-
-                            double autoMergeThreshold = request.getStrategy() != null
-                                    && request.getStrategy().getAutoMergeThreshold() != null
-                                    ? request.getStrategy().getAutoMergeThreshold() : 0.9D;
-                            double reviewThreshold = request.getStrategy() != null
-                                    && request.getStrategy().getReviewThreshold() != null
-                                    ? request.getStrategy().getReviewThreshold() : 0.6D;
-
-                            T3ResolveBatchRequest.Candidate top = item.getCandidates() != null
-                                    && !item.getCandidates().isEmpty()
-                                    ? item.getCandidates().get(0) : null;
-                            double topScore = boundedScore(top != null ? top.getScore() : null);
-
-                            if (top != null && topScore >= autoMergeThreshold) {
-                                result.setAction("MERGE");
-                                result.setMatchedEntityId(top.getEntityId());
-                                result.setMatchMethod("mock_candidate_top1");
-                                result.setReason("mock resolver selected the highest ranked candidate");
-                            } else if (top != null && topScore >= reviewThreshold) {
-                                result.setAction("REVIEW");
-                                result.setMatchedEntityId(top.getEntityId());
-                                result.setMatchMethod("mock_candidate_top1");
-                                result.setReason("mock resolver selected the highest ranked candidate");
-                            } else {
-                                result.setAction("CREATE");
-                                result.setMatchMethod(top != null ? "low_score_candidate" : "no_candidate");
-                                result.setReason(top != null
-                                        ? "top candidate score below review threshold"
-                                        : "no candidate returned by backend retrieval");
-                            }
-                            result.setScore(topScore);
-                            result.setConfidence(topScore);
-                            return result;
-                        })
-                        .toList();
-
-        T3ResolveBatchResponse resp = new T3ResolveBatchResponse();
-        resp.setResults(results);
-        resp.setModelVersion("mock-t3-resolve-v2.0");
-        return resp;
+        log.info("[MOCK-T3] resolve_batch (empty mock, 每个mention都会走后端的CREATE兜底逻辑)");
+        T3ResolveBatchResponse response = new T3ResolveBatchResponse();
+        response.setResults(List.of());
+        response.setModelVersion("mock-empty");
+        return response;
     }
 
     private double boundedScore(Double value) {
