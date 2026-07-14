@@ -49,21 +49,39 @@ public class EntityCandidateRetrievalService {
             T4EmbeddingResponse embResp = agentProxyClient.call(
                     "T4", "generate_text_embedding", req, T4EmbeddingResponse.class);
             if (embResp != null && embResp.getEmbedding() != null) {
-                List<String> milvusIds = milvusVectorService.searchEntityEmbeddings(
+                List<MilvusVectorService.ScoredEntityId> milvusHits = milvusVectorService.searchEntityEmbeddings(
                         embResp.getEmbedding(), topK, entityType);
-                for (String entityId : milvusIds) {
+
+                List<String> needsBackfill = milvusHits.stream()
+                        .map(MilvusVectorService.ScoredEntityId::entityId)
+                        .filter(id -> !candidates.containsKey(id))
+                        .toList();
+                Map<String, Map<String, Object>> backfilled = needsBackfill.isEmpty()
+                        ? Map.of()
+                        : entityEsService.getEntitiesByIds(needsBackfill);
+
+                for (MilvusVectorService.ScoredEntityId hit : milvusHits) {
+                    String entityId = hit.entityId();
                     if (candidates.containsKey(entityId)) {
                         addChannel(candidates.get(entityId), "VECTOR_INDEX");
+                        continue;
+                    }
+                    Map<String, Object> doc = backfilled.get(entityId);
+                    T3ResolveBatchRequest.Candidate candidate = new T3ResolveBatchRequest.Candidate();
+                    candidate.setEntityId(entityId);
+                    candidate.setType(entityType);
+                    candidate.setScore((double) hit.score());
+                    candidate.setRetrievalChannels(new String[]{"VECTOR_INDEX"});
+                    if (doc != null) {
+                        candidate.setCanonicalName(firstString(doc, "canonical_name", "canonicalName"));
+                        candidate.setAliases(stringList(doc.get("aliases")));
+                        candidate.setImportanceScore(numberValue(doc.get("importance_score")));
+                        candidate.setAttributes(Map.of());
                     } else {
-                        T3ResolveBatchRequest.Candidate candidate = new T3ResolveBatchRequest.Candidate();
-                        candidate.setEntityId(entityId);
-                        candidate.setType(entityType);
                         candidate.setAliases(List.of());
                         candidate.setAttributes(Map.of());
-                        candidate.setScore(0.7D);
-                        candidate.setRetrievalChannels(new String[]{"VECTOR_INDEX"});
-                        candidates.put(entityId, candidate);
                     }
+                    candidates.put(entityId, candidate);
                 }
             }
         } catch (Exception e) {

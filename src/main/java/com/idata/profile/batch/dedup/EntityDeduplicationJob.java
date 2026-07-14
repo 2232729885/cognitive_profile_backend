@@ -415,15 +415,16 @@ public class EntityDeduplicationJob {
             T4EmbeddingResponse embResp = agentProxyClient.call(
                     "T4", "generate_text_embedding", req, T4EmbeddingResponse.class);
             if (embResp != null && embResp.getEmbedding() != null) {
-                List<String> milvusIds = milvusVectorService.searchEntityEmbeddings(
+                List<MilvusVectorService.ScoredEntityId> milvusHits = milvusVectorService.searchEntityEmbeddings(
                         embResp.getEmbedding(), topK, entityType);
-                for (String entityId : milvusIds) {
+                for (MilvusVectorService.ScoredEntityId hit : milvusHits) {
+                    String entityId = hit.entityId();
                     if (candidates.containsKey(entityId)) {
                         addRetrievalChannel(candidates.get(entityId), "VECTOR_INDEX");
                     } else {
                         Map<String, Object> candidate = new LinkedHashMap<>();
                         candidate.put("entityId", entityId);
-                        candidate.put("score", 0.7D);
+                        candidate.put("score", (double) hit.score());
                         candidate.put("retrievalChannels", new ArrayList<>(List.of("VECTOR_INDEX")));
                         candidates.put(entityId, candidate);
                     }
@@ -670,14 +671,39 @@ public class EntityDeduplicationJob {
     private boolean mergeNeo4jNodes(UUID[] mergedIds, UUID survivorId, String label,
                                     Map<String, Object> survivorProperties,
                                     String canonicalName, String entityType) {
+        boolean neo4jOk;
         try {
             String stableId = stableUuid(entityType + ":" + canonicalName);
             survivorProperties.put("pgSurvivorId", survivorId.toString());
             neo4jGraphService.mergeNode(label, stableId, survivorProperties);
-            return true;
+            neo4jOk = true;
         } catch (Exception e) {
             log.warn("Neo4j node property update failed, label={}, canonicalName={}", label, canonicalName, e);
-            return false;
+            neo4jOk = false;
+        }
+
+        cleanupMergedEntitiesFromSearchStores(mergedIds);
+        return neo4jOk;
+    }
+
+    /**
+     * 合并实体后清理被合并掉的旧实体在 ES/Milvus 里的记录，避免候选召回持续返回旧实体。
+     * 清理失败不影响本次去重主流程，只记录警告。
+     */
+    private void cleanupMergedEntitiesFromSearchStores(UUID[] mergedIds) {
+        if (mergedIds == null || mergedIds.length == 0) {
+            return;
+        }
+        List<String> ids = Arrays.stream(mergedIds).map(UUID::toString).toList();
+        try {
+            entityEsService.deleteEntities(ids);
+        } catch (Exception e) {
+            log.warn("[EntityDeduplicationJob] failed to clean up ES for merged entities, ids={}", ids, e);
+        }
+        try {
+            milvusVectorService.deleteEntityEmbeddings(ids);
+        } catch (Exception e) {
+            log.warn("[EntityDeduplicationJob] failed to clean up Milvus for merged entities, ids={}", ids, e);
         }
     }
 

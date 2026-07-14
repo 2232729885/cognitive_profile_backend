@@ -35,6 +35,9 @@ public class MilvusVectorService {
 
     private final MilvusClientV2 milvusClient;
 
+    public record ScoredEntityId(String entityId, float score) {
+    }
+
     public String insertTextEmbedding(String sourceId, String sourceType,
                                       String platform, String language,
                                       long publishedAt, float importance,
@@ -78,8 +81,34 @@ public class MilvusVectorService {
     }
 
     /**
-     * 文本向量检索，返回最相似的 topK 个 source_id（对应 media_contents.id）
-     * 支持按 platform 和 language 过滤（传 null 表示不过滤）
+     * 批量删除实体向量，EntityDeduplicationJob 合并实体后清理被合并掉的旧实体向量。
+     */
+    public void deleteEntityEmbeddings(List<String> entityIds) {
+        if (milvusClient == null || entityIds == null || entityIds.isEmpty()) {
+            return;
+        }
+        try {
+            Boolean exists = milvusClient.hasCollection(HasCollectionReq.builder()
+                    .collectionName(ENTITY_COLLECTION)
+                    .build());
+            if (!Boolean.TRUE.equals(exists)) {
+                return;
+            }
+            String idList = entityIds.stream()
+                    .map(id -> "\"" + escapeFilterValue(id) + "\"")
+                    .collect(java.util.stream.Collectors.joining(", "));
+            milvusClient.delete(io.milvus.v2.service.vector.request.DeleteReq.builder()
+                    .collectionName(ENTITY_COLLECTION)
+                    .filter("source_id in [" + idList + "]")
+                    .build());
+        } catch (RuntimeException e) {
+            log.warn("Failed to delete entity embeddings from Milvus, entityIds={}", entityIds, e);
+        }
+    }
+
+    /**
+     * 文本向量检索，返回最相似的 topK 个 source_id（对应 media_contents.id）。
+     * 支持按 platform 和 language 过滤，传 null 表示不过滤。
      */
     public List<String> searchTextEmbeddings(float[] queryEmbedding, int topK,
                                              String platform, String language) {
@@ -97,15 +126,19 @@ public class MilvusVectorService {
     /**
      * 实体向量检索，返回最相似的 topK 个 entity_id。
      */
-    public List<String> searchEntityEmbeddings(float[] queryEmbedding, int topK,
-                                               String entityType) {
+    public List<ScoredEntityId> searchEntityEmbeddings(float[] queryEmbedding, int topK,
+                                                       String entityType) {
         String filter = hasText(entityType)
                 ? "entity_type == \"" + escapeFilterValue(entityType) + "\""
                 : null;
-        List<String> rawIds = searchEmbeddings(
+        List<ScoredEntityId> raw = searchEmbeddingsWithScore(
                 ENTITY_COLLECTION, queryEmbedding, topK, filter, "source_id");
-        return rawIds.stream()
-                .map(id -> id.startsWith("entity_") ? id.substring("entity_".length()) : id)
+        return raw.stream()
+                .map(item -> new ScoredEntityId(
+                        item.entityId().startsWith("entity_")
+                                ? item.entityId().substring("entity_".length())
+                                : item.entityId(),
+                        item.score()))
                 .toList();
     }
 
@@ -188,6 +221,40 @@ public class MilvusVectorService {
         }
     }
 
+    private List<ScoredEntityId> searchEmbeddingsWithScore(String collectionName, float[] queryEmbedding, int topK,
+                                                           String filter, String outputField) {
+        if (milvusClient == null || topK <= 0) {
+            return List.of();
+        }
+        validateEmbedding(queryEmbedding);
+
+        try {
+            Boolean exists = milvusClient.hasCollection(HasCollectionReq.builder()
+                    .collectionName(collectionName)
+                    .build());
+            if (!Boolean.TRUE.equals(exists)) {
+                return List.of();
+            }
+
+            SearchReq.SearchReqBuilder builder = SearchReq.builder()
+                    .collectionName(collectionName)
+                    .annsField(VECTOR_FIELD)
+                    .metricType(IndexParam.MetricType.COSINE)
+                    .topK(topK)
+                    .data(List.of(new FloatVec(queryEmbedding)))
+                    .outputFields(List.of(outputField));
+            if (hasText(filter)) {
+                builder.filter(filter);
+            }
+
+            SearchResp response = milvusClient.search(builder.build());
+            return extractSearchFieldWithScore(response, outputField);
+        } catch (RuntimeException e) {
+            log.warn("Milvus vector search failed, collection={}, topK={}", collectionName, topK, e);
+            return List.of();
+        }
+    }
+
     private List<String> extractSearchField(SearchResp response, String fieldName) {
         if (response == null || response.getSearchResults() == null || response.getSearchResults().isEmpty()) {
             return List.of();
@@ -209,6 +276,29 @@ public class MilvusVectorService {
             }
         }
         return ids;
+    }
+
+    private List<ScoredEntityId> extractSearchFieldWithScore(SearchResp response, String fieldName) {
+        if (response == null || response.getSearchResults() == null || response.getSearchResults().isEmpty()) {
+            return List.of();
+        }
+
+        List<ScoredEntityId> results = new ArrayList<>();
+        for (List<SearchResp.SearchResult> group : response.getSearchResults()) {
+            if (group == null) {
+                continue;
+            }
+            for (SearchResp.SearchResult result : group) {
+                if (result == null || result.getEntity() == null) {
+                    continue;
+                }
+                Object value = result.getEntity().get(fieldName);
+                if (value != null) {
+                    results.add(new ScoredEntityId(value.toString(), result.getScore()));
+                }
+            }
+        }
+        return results;
     }
 
     private String buildFilter(String platform, String language) {

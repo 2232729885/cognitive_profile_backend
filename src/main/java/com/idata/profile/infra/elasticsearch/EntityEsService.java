@@ -112,4 +112,43 @@ public class EntityEsService {
             return List.of();
         }
     }
+
+    /**
+     * 按ID批量查询实体，给 Milvus 命中但 ES 名称匹配没命中的候选回填名字信息。
+     */
+    public Map<String, Map<String, Object>> getEntitiesByIds(List<String> entityIds) {
+        if (entityIds == null || entityIds.isEmpty()) {
+            return Map.of();
+        }
+        try {
+            var response = esClient.mget(m -> m.index(ENTITY_INDEX).ids(entityIds), Map.class);
+            Map<String, Map<String, Object>> result = new LinkedHashMap<>();
+            for (var item : response.docs()) {
+                if (item.result() != null && Boolean.TRUE.equals(item.result().found())
+                        && item.result().source() != null) {
+                    result.put(item.result().id(), item.result().source());
+                }
+            }
+            return result;
+        } catch (IOException e) {
+            log.warn("Failed to mget entities from ES, ids={}", entityIds, e);
+            return Map.of();
+        }
+    }
+
+    /**
+     * 批量删除实体，EntityDeduplicationJob 合并实体后清理被合并掉的旧实体 ES 记录。
+     */
+    public void deleteEntities(List<String> entityIds) {
+        if (entityIds == null || entityIds.isEmpty()) {
+            return;
+        }
+        for (String entityId : entityIds) {
+            try {
+                esClient.delete(d -> d.index(ENTITY_INDEX).id(entityId));
+            } catch (IOException e) {
+                log.warn("Failed to delete entity from ES, entityId={}", entityId, e);
+            }
+        }
+    }
 }
