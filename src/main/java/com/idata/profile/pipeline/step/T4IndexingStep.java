@@ -26,6 +26,18 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class T4IndexingStep {
 
+    /**
+     * 中文/CJK文本很多分词器编码效率不如英文，几千个字符就可能超过embedding模型的token上限
+     * （real case: 4063个字符被编码成8193个token，超过当时8192的上限）。这里按字符数保守截断，
+     * 不追求精确算token数，留足够余量，截断只影响这次送去向量化的文本，不影响正文本身的存储/展示。
+     *
+     * vLLM部署的 --max-model-len 已经从8192调到16384（模型本身原生支持到32768，
+     * 8192只是之前部署时设的偏保守的值），这里的截断阈值跟着放宽到6000字符——
+     * 按最坏情况每字符2个token估算，6000字符约12000个token，离16384还留了近30%余量，
+     * 绝大多数内容根本不会被截断，只有极端长的文章才会碰到这条线。
+     */
+    private static final int MAX_EMBEDDING_TEXT_LENGTH = 6000;
+
     private final AgentProxyClient agentProxyClient;
     private final MilvusVectorService milvusVectorService;
     private final MediaContentEsService mediaContentEsService;
@@ -47,22 +59,26 @@ public class T4IndexingStep {
             log.info("[T4] 跳过文本向量化：bodyText为空, contentId={}", mc.getId());
         } else {
             T4EmbeddingRequest request = new T4EmbeddingRequest();
-            request.setText(mc.getBodyText());
+            request.setText(truncateForEmbedding(mc.getBodyText()));
             T4EmbeddingResponse embeddingResponse = agentProxyClient.call(
                     "T4", "generate_text_embedding", request, T4EmbeddingResponse.class);
             float[] embedding = embeddingResponse == null ? null : embeddingResponse.getEmbedding();
             if (embedding == null) {
-                throw new IllegalStateException("T4 text embedding is null, contentId=" + mc.getId());
+                // 调用失败（比如超过模型token上限、网络问题等）不应该让整条流水线任务失败，
+                // 按"跳过文本向量化"处理，其余步骤（ES索引、pipeline状态推进）照常进行，
+                // t4_output.textEmbeddingSkipped=true 会如实记录这次没有向量，方便后续排查/重跑
+                log.warn("[T4] 文本向量化调用失败，跳过本次向量化，contentId={}", mc.getId());
+                textEmbeddingSkipped = true;
+            } else {
+                textVectorId = milvusVectorService.insertTextEmbedding(
+                        mc.getId().toString(),
+                        "media_content",
+                        mc.getPlatform(),
+                        mc.getLanguage(),
+                        mc.getPublishedAt() != null ? mc.getPublishedAt().toEpochSecond() : 0L,
+                        0f,
+                        embedding);
             }
-
-            textVectorId = milvusVectorService.insertTextEmbedding(
-                    mc.getId().toString(),
-                    "media_content",
-                    mc.getPlatform(),
-                    mc.getLanguage(),
-                    mc.getPublishedAt() != null ? mc.getPublishedAt().toEpochSecond() : 0L,
-                    0f,
-                    embedding);
         }
 
         mediaContentEsService.index(mc.getId().toString(), buildEsDocument(mc));
@@ -121,5 +137,12 @@ public class T4IndexingStep {
 
     private boolean hasText(String value) {
         return value != null && !value.trim().isEmpty();
+    }
+
+    private String truncateForEmbedding(String text) {
+        if (text == null || text.length() <= MAX_EMBEDDING_TEXT_LENGTH) {
+            return text;
+        }
+        return text.substring(0, MAX_EMBEDDING_TEXT_LENGTH);
     }
 }
