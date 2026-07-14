@@ -12,7 +12,6 @@ public class T2ExtractResponse {
     private List<ExtractedRelationMention> relations;
     private String resolvedAuthorAccountId;
     private String modelVersion;
-    private String raw;
 
     /**
      * @deprecated Use {@link #relations}. Kept only for older internal agent prompt code.

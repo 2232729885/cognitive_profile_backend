@@ -838,7 +838,6 @@ public class MockAgentController {
         resp.setRelations(List.of(rel1, rel2, rel3));
         resp.setResolvedAuthorAccountId(null);
         resp.setModelVersion("mock-t2-v2.0");
-        resp.setRaw(toJson(resp));
         return resp;
     }
 

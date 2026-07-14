@@ -441,7 +441,6 @@ public class LlmAgentController {
 
             T2ExtractResponse response = parseT2Response(raw);
             filterUnsupportedRelationships(response);
-            response.setRaw(raw);
             return response;
 
         } catch (Exception e) {

@@ -66,7 +66,7 @@ public class T2ExtractionStep {
         writeToNeo4j(task, response, mc, resolvedMentions);
 
         RawRecord rawRecord = rawRecordMapper.selectById(task.getRawRecordId());
-        rawRecord.setT2Output(response.getRaw());
+        rawRecord.setT2Output(toJson(response));
         rawRecord.setPipelineStatus(PipelineStatus.T2_DONE.name());
         rawRecordMapper.updateById(rawRecord);
 
@@ -310,5 +310,17 @@ public class T2ExtractionStep {
 
     private boolean hasText(String value) {
         return value != null && !value.trim().isEmpty();
+    }
+
+    private String toJson(T2ExtractResponse response) {
+        if (response == null) {
+            return null;
+        }
+        try {
+            return OBJECT_MAPPER.writeValueAsString(response);
+        } catch (Exception e) {
+            log.warn("Failed to serialize T2 response");
+            return null;
+        }
     }
 }
