@@ -541,7 +541,7 @@ public class SearchService {
         }
 
         Map<UUID, MediaAsset> assetsById = new LinkedHashMap<>();
-        for (MediaAsset asset : mediaAssetMapper.selectBatchIds(assetIds)) {
+        for (MediaAsset asset : mediaAssetMapper.selectByIds(assetIds)) {
             assetsById.put(asset.getId(), asset);
         }
 
