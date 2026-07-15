@@ -112,7 +112,8 @@ public class MediaContentEsService {
                             .query(q -> q.bool(b -> {
                                 b.must(m -> m.multiMatch(mm -> mm
                                         .query(keyword)
-                                        .fields("body_text", "title")));
+                                        .fields("body_text", "title")
+                                        .minimumShouldMatch("75%")));
                                 if (hasText(platform)) {
                                     b.filter(f -> f.term(t -> t.field("platform").value(platform)));
                                 }
@@ -148,7 +149,8 @@ public class MediaContentEsService {
                             .query(q -> q.bool(b -> {
                                 b.must(m -> m.multiMatch(mm -> mm
                                         .query(keyword)
-                                        .fields("body_text", "title")));
+                                        .fields("body_text", "title")
+                                        .minimumShouldMatch("75%")));
                                 if (hasText(platform)) {
                                     b.filter(f -> f.term(t -> t.field("platform").value(platform)));
                                 }

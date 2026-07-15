@@ -113,7 +113,8 @@ public class SocialAccountEsService {
                             .query(q -> q.bool(b -> {
                                 b.must(m -> m.multiMatch(mm -> mm
                                         .query(keyword)
-                                        .fields("handle^2", "display_name^2", "bio")));
+                                        .fields("handle^2", "display_name^2", "bio")
+                                        .minimumShouldMatch("75%")));
                                 if (hasText(platform)) {
                                     b.filter(f -> f.term(t -> t.field("platform").value(platform)));
                                 }
