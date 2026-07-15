@@ -248,8 +248,12 @@ public class EntityResolutionService {
 
     private void syncEntityVectorToMilvus(String stableId, T2ExtractResponse.ExtractedMention entity) {
         try {
+            String embeddingText = buildEntityEmbeddingText(entity);
+            if (!hasText(embeddingText)) {
+                return;
+            }
             T4EmbeddingRequest req = new T4EmbeddingRequest();
-            req.setText(entityName(entity));
+            req.setText(embeddingText);
             T4EmbeddingResponse resp = agentProxyClient.call(
                     "T4", "generate_text_embedding", req, T4EmbeddingResponse.class);
             if (resp == null || resp.getEmbedding() == null) {
@@ -263,6 +267,31 @@ public class EntityResolutionService {
             log.warn("[EntityResolutionService] entity vector indexing failed, entityId={}, name={}",
                     stableId, entityName(entity), e);
         }
+    }
+
+    private String buildEntityEmbeddingText(T2ExtractResponse.ExtractedMention entity) {
+        if (entity == null) {
+            return null;
+        }
+        StringBuilder text = new StringBuilder();
+        appendEmbeddingField(text, "canonical_name", entityName(entity));
+        appendEmbeddingField(text, "name", entity.getName());
+        appendEmbeddingField(text, "entity_type", entity.getType());
+        if (entity.getAliases() != null && !entity.getAliases().isEmpty()) {
+            appendEmbeddingField(text, "aliases", String.join(" / ", entity.getAliases()));
+        }
+        if (entity.getAttributes() != null && !entity.getAttributes().isEmpty()) {
+            entity.getAttributes().forEach((key, value) ->
+                    appendEmbeddingField(text, "attribute_" + key, stringValue(value)));
+        }
+        return text.toString();
+    }
+
+    private void appendEmbeddingField(StringBuilder text, String field, String value) {
+        if (!hasText(value)) {
+            return;
+        }
+        text.append(field).append(": ").append(value.trim()).append('\n');
     }
 
     private void insertFusionRecord(T2ExtractResponse.ExtractedMention mention,

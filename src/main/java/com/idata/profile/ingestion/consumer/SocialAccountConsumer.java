@@ -85,12 +85,13 @@ public class SocialAccountConsumer {
      * bio为空时没有语义可提取，直接跳过；调用失败也不影响主流程，只记警告。
      */
     private void indexAccountEmbedding(SocialAccount account) {
-        if (account == null || account.getId() == null || !IngestionMessageSupport.hasText(account.getBio())) {
+        String embeddingText = buildAccountEmbeddingText(account);
+        if (account == null || account.getId() == null || !IngestionMessageSupport.hasText(embeddingText)) {
             return;
         }
         try {
             T4EmbeddingRequest request = new T4EmbeddingRequest();
-            request.setText(account.getBio());
+            request.setText(embeddingText);
             T4EmbeddingResponse response = agentProxyClient.call(
                     "T4", "generate_text_embedding", request, T4EmbeddingResponse.class);
             if (response != null && response.getEmbedding() != null) {
@@ -98,8 +99,30 @@ public class SocialAccountConsumer {
                         account.getId().toString(), account.getPlatform(), response.getEmbedding());
             }
         } catch (Exception e) {
-            log.warn("[SocialAccountConsumer] account bio embedding failed, accountId={}", account.getId(), e);
+            log.warn("[SocialAccountConsumer] account embedding failed, accountId={}", account.getId(), e);
         }
+    }
+
+    private String buildAccountEmbeddingText(SocialAccount account) {
+        if (account == null) {
+            return null;
+        }
+        StringBuilder text = new StringBuilder();
+        appendEmbeddingField(text, "display_name", account.getDisplayName());
+        appendEmbeddingField(text, "handle", account.getHandle());
+        appendEmbeddingField(text, "bio", account.getBio());
+        appendEmbeddingField(text, "location", account.getSelfDeclaredLocation());
+        appendEmbeddingField(text, "account_type", account.getAccountType());
+        appendEmbeddingField(text, "account_entity_type", account.getAccountEntityType());
+        appendEmbeddingField(text, "platform", account.getPlatform());
+        return text.toString();
+    }
+
+    private void appendEmbeddingField(StringBuilder text, String field, String value) {
+        if (!IngestionMessageSupport.hasText(value)) {
+            return;
+        }
+        text.append(field).append(": ").append(value.trim()).append('\n');
     }
 
     private void annotateAccountType(SocialAccount account) {
