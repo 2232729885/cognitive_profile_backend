@@ -115,6 +115,15 @@ public class SearchService {
         String platform = request == null ? null : request.getPlatform();
         String language = request == null ? null : request.getLanguage();
         boolean hasImage = request != null && hasText(request.getImageUrl()) && request.isEnableMilvus();
+        String targetModality = normalizeTargetModality(request != null ? request.getTargetModalities() : null);
+        if (!hasImage && "image".equals(targetModality)) {
+            if (isEnabled(request, "milvus") && hasText(queryText)) {
+                return searchHybridImagesByText(queryText, topK, startedAt);
+            }
+            SearchResult result = buildResult(List.of(), 0, "hybrid-image", startedAt);
+            result.setImageItems(List.of());
+            return result;
+        }
 
         CompletableFuture<List<MediaContentEsService.EsSearchResult>> esFuture = isEnabled(request, "es")
                 ? safeRoute("es", () -> esService.searchByKeywordWithHighlight(queryText, platform, language, topK))
@@ -172,6 +181,16 @@ public class SearchService {
         result.setScores(scores);
         result.setSimilarityScores(similarityScores);
         result.setFusionScores(fusedScores);
+        return result;
+    }
+
+    private SearchResult searchHybridImagesByText(String queryText, int topK, long startedAt) {
+        float[] embedding = textEmbedding(queryText);
+        List<SearchResult.ImageItem> imageItems = embedding == null
+                ? List.of()
+                : searchImageSemanticAssets(embedding, topK);
+        SearchResult result = buildResult(List.of(), imageItems.size(), "hybrid-image", startedAt);
+        result.setImageItems(imageItems);
         return result;
     }
 
@@ -559,6 +578,76 @@ public class SearchService {
         return contentScores.entrySet().stream()
                 .map(entry -> new MilvusVectorService.ScoredEntityId(entry.getKey(), entry.getValue()))
                 .toList();
+    }
+
+    private List<SearchResult.ImageItem> searchImageSemanticAssets(float[] embedding, int topK) {
+        List<MilvusVectorService.ScoredEntityId> assetScores =
+                milvusService.searchImageEmbeddingsWithScore(embedding, topK);
+        List<UUID> assetIds = assetScores.stream()
+                .map(item -> normalizeImageAssetId(item.entityId()))
+                .map(this::parseUuid)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (assetIds.isEmpty()) {
+            return List.of();
+        }
+
+        Map<UUID, MediaAsset> assetsById = new LinkedHashMap<>();
+        for (MediaAsset asset : mediaAssetMapper.selectByIds(assetIds)) {
+            if (asset != null && "image".equalsIgnoreCase(asset.getAssetType())
+                    && asset.getContentId() != null) {
+                assetsById.put(asset.getId(), asset);
+            }
+        }
+        if (assetsById.isEmpty()) {
+            return List.of();
+        }
+
+        List<UUID> contentIds = assetsById.values().stream()
+                .map(MediaAsset::getContentId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        Map<String, MediaContent> contentsById = contentIds.isEmpty()
+                ? Map.of()
+                : mediaContentMapper.selectBatchIds(contentIds).stream()
+                .collect(Collectors.toMap(c -> c.getId().toString(), c -> c, (left, right) -> left));
+
+        List<SearchResult.ImageItem> items = new ArrayList<>();
+        for (MilvusVectorService.ScoredEntityId scoredAsset : assetScores) {
+            UUID assetId = parseUuid(normalizeImageAssetId(scoredAsset.entityId()));
+            MediaAsset asset = assetId == null ? null : assetsById.get(assetId);
+            MediaContent content = asset != null && asset.getContentId() != null
+                    ? contentsById.get(asset.getContentId().toString())
+                    : null;
+            if (asset == null || content == null) {
+                continue;
+            }
+            SearchResult.ImageItem item = new SearchResult.ImageItem();
+            item.setAssetId(asset.getId().toString());
+            item.setContentId(content.getId().toString());
+            item.setSourceUrl(asset.getSourceUrl());
+            item.setStorageUri(asset.getStorageUri());
+            item.setMinioBucket(asset.getMinioBucket());
+            item.setMinioKey(asset.getMinioKey());
+            item.setMimeType(asset.getMimeType());
+            item.setWidth(asset.getWidth());
+            item.setHeight(asset.getHeight());
+            item.setSimilarityScore((double) scoredAsset.score());
+            item.setPlatform(content.getPlatform());
+            item.setLanguage(content.getLanguage());
+            item.setContentType(content.getContentType());
+            item.setContentTitle(content.getTitle());
+            item.setContentBodyText(content.getBodyText());
+            item.setPublishedAt(content.getPublishedAt() != null ? content.getPublishedAt().toString() : null);
+            items.add(item);
+        }
+        return items;
+    }
+
+    private String normalizeImageAssetId(String id) {
+        return id != null && id.startsWith("image_") ? id.substring("image_".length()) : id;
     }
 
     private Map<String, Object> socialAccountResult(SocialAccount account) {
@@ -1037,6 +1126,17 @@ public class SearchService {
             case "es" -> request.isEnableEs();
             case "milvus" -> request.isEnableMilvus();
             default -> false;
+        };
+    }
+
+    private String normalizeTargetModality(String targetModalities) {
+        if (!hasText(targetModalities)) {
+            return "all";
+        }
+        String value = targetModalities.trim().toLowerCase();
+        return switch (value) {
+            case "text", "image" -> value;
+            default -> "all";
         };
     }
 

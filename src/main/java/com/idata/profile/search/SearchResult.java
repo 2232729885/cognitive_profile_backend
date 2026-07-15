@@ -31,4 +31,30 @@ public class SearchResult {
      * 单纯是多路排名融合出来的相对大小，本身没有绝对意义，只用来说明"融合排序是按这个数排的"
      */
     private Map<String, Double> fusionScores;
+
+    /**
+     * 图片检索结果。智能融合选择 targetModalities=image 时，召回单位是 media_assets 图片资产，
+     * 点击图片再进入所属 MediaContent。
+     */
+    private List<ImageItem> imageItems;
+
+    @Data
+    public static class ImageItem {
+        private String assetId;
+        private String contentId;
+        private String sourceUrl;
+        private String storageUri;
+        private String minioBucket;
+        private String minioKey;
+        private String mimeType;
+        private Integer width;
+        private Integer height;
+        private Double similarityScore;
+        private String platform;
+        private String language;
+        private String contentType;
+        private String contentTitle;
+        private String contentBodyText;
+        private String publishedAt;
+    }
 }
