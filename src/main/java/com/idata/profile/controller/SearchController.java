@@ -119,7 +119,8 @@ public class SearchController {
     public Result<Map<String, Object>> getNodeGraph(@PathVariable String label,
                                                     @PathVariable String nodeId,
                                                     @RequestParam(defaultValue = "1") int hops) {
-        return Result.ok(neo4jGraphService.findHopGraph(nodeId, label, Math.min(hops, 2)));
+        int safeHops = Math.max(0, Math.min(hops, 2));
+        return Result.ok(neo4jGraphService.findHopGraph(nodeId, label, safeHops));
     }
 
     @GetMapping("/path")

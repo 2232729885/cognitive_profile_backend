@@ -191,6 +191,27 @@ public class Neo4jGraphService {
      * 每个 relation：{"fromId": "...", "toId": "...", "type": "...", "properties": {...}}
      */
     public Map<String, Object> findHopGraph(String nodeId, String nodeLabel, int hops) {
+        if (hops <= 0) {
+            String cypher = """
+                    MATCH (n {id: $nodeId})
+                    WHERE labels(n)[0] = $nodeLabel
+                    RETURN n LIMIT 1
+                    """;
+            List<Map<String, Object>> rows = neo4jClient.query(cypher)
+                    .bind(nodeId).to("nodeId")
+                    .bind(nodeLabel).to("nodeLabel")
+                    .fetch()
+                    .all()
+                    .stream()
+                    .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+
+            Map<String, Map<String, Object>> nodes = new LinkedHashMap<>();
+            for (Map<String, Object> row : rows) {
+                addNode(nodes, asNode(row.get("n")));
+            }
+            return graphResult(nodes, List.of());
+        }
+
         if (hops == 2) {
             String cypher = """
                     MATCH (n {id: $nodeId})-[r1]-(m)-[r2]-(k)
