@@ -7,6 +7,7 @@ import com.idata.profile.agentproxy.dto.t4.T4EmbeddingResponse;
 import com.idata.profile.entity.account.SocialAccount;
 import com.idata.profile.entity.content.MediaAsset;
 import com.idata.profile.entity.content.MediaContent;
+import com.idata.profile.infra.elasticsearch.EntityEsService;
 import com.idata.profile.infra.elasticsearch.MediaContentEsService;
 import com.idata.profile.infra.elasticsearch.SocialAccountEsService;
 import com.idata.profile.infra.milvus.MilvusVectorService;
@@ -43,6 +44,7 @@ public class SearchService {
     private final AgentProxyClient agentProxyClient;
     private final MilvusVectorService milvusService;
     private final MediaContentEsService esService;
+    private final EntityEsService entityEsService;
     private final SocialAccountEsService socialAccountEsService;
     private final Neo4jGraphService neo4jGraphService;
     private final MediaContentMapper mediaContentMapper;
@@ -208,6 +210,56 @@ public class SearchService {
                 .toList();
     }
 
+    public List<Map<String, Object>> searchEntitiesFused(String keyword, String entityType, int topK) {
+        int safeTopK = normalizeSize(topK);
+
+        CompletableFuture<List<Map<String, Object>>> esFuture = safeRoute("entity-es",
+                () -> entityEsService.searchEntities(keyword, entityType, safeTopK));
+        CompletableFuture<List<String>> milvusFuture = safeRoute("entity-milvus",
+                () -> searchEntitySemanticIds(keyword, entityType, safeTopK));
+
+        CompletableFuture.allOf(esFuture, milvusFuture).join();
+
+        List<Map<String, Object>> esResults = esFuture.join();
+        List<String> esIds = esResults.stream()
+                .map(r -> (String) r.get("entityId"))
+                .toList();
+        List<String> milvusIds = milvusFuture.join();
+
+        Map<String, Double> fusedScores = fuseByRrf(List.of(esIds, milvusIds));
+        List<String> topIds = new ArrayList<>(fusedScores.keySet());
+        if (topIds.size() > safeTopK) {
+            topIds = topIds.subList(0, safeTopK);
+        }
+        if (topIds.isEmpty()) {
+            return List.of();
+        }
+
+        Map<String, Map<String, Object>> details = entityEsService.getEntitiesByIds(topIds);
+        Map<String, Map<String, Object>> esById = esResults.stream()
+                .collect(Collectors.toMap(
+                        r -> (String) r.get("entityId"),
+                        r -> r,
+                        (a, b) -> a));
+
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (String id : topIds) {
+            Map<String, Object> detail = details.get(id);
+            if (detail == null) {
+                continue;
+            }
+            Map<String, Object> item = new LinkedHashMap<>(detail);
+            item.put("id", id);
+            item.put("fusionScore", fusedScores.get(id));
+            Map<String, Object> esResult = esById.get(id);
+            if (esResult != null) {
+                item.put("esScore", esResult.get("score"));
+            }
+            result.add(item);
+        }
+        return result;
+    }
+
     public SearchResult searchByImage(String imageUrl, String targetModalities, int topK) {
         long startedAt = System.currentTimeMillis();
         int safeTopK = normalizeSize(topK);
@@ -263,6 +315,23 @@ public class SearchService {
             return List.of();
         }
         return milvusService.searchAccountEmbeddings(embedding, topK).stream()
+                .map(MilvusVectorService.ScoredEntityId::entityId)
+                .toList();
+    }
+
+    private List<String> searchEntitySemanticIds(String keyword, String entityType, int topK) {
+        if (!hasText(keyword)) {
+            return List.of();
+        }
+        T4EmbeddingRequest request = new T4EmbeddingRequest();
+        request.setText(keyword);
+        T4EmbeddingResponse response = agentProxyClient.call(
+                "T4", "generate_text_embedding", request, T4EmbeddingResponse.class);
+        float[] embedding = response == null ? null : response.getEmbedding();
+        if (embedding == null) {
+            return List.of();
+        }
+        return milvusService.searchEntityEmbeddings(embedding, topK, entityType).stream()
                 .map(MilvusVectorService.ScoredEntityId::entityId)
                 .toList();
     }

@@ -138,7 +138,17 @@ public class SearchController {
     public Result<List<Map<String, Object>>> searchEntities(@RequestParam String keyword,
                                                             @RequestParam(required = false) String label,
                                                             @RequestParam(defaultValue = "10") int limit) {
-        return Result.ok(neo4jGraphService.searchNodesByName(keyword, label, limit));
+        String effectiveLabel = (label == null || label.isBlank())
+                ? "Person,Organization,Event,Location"
+                : label;
+        return Result.ok(neo4jGraphService.searchNodesByName(keyword, effectiveLabel, limit));
+    }
+
+    @PostMapping("/entities/semantic")
+    public Result<List<Map<String, Object>>> searchEntitiesSemantic(
+            @RequestBody EntitySemanticSearchRequest request) {
+        return Result.ok(searchService.searchEntitiesFused(
+                request.getKeyword(), request.getEntityType(), request.getTopK()));
     }
 
     @Data
@@ -164,6 +174,13 @@ public class SearchController {
         private String platform;
         private String accountType;
         private int topK = 20;
+    }
+
+    @Data
+    public static class EntitySemanticSearchRequest {
+        private String keyword;
+        private String entityType;
+        private int topK = 10;
     }
 
     @Data

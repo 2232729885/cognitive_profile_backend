@@ -9,6 +9,7 @@ import org.springframework.data.neo4j.core.Neo4jClient;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -482,11 +483,13 @@ public class Neo4jGraphService {
         String cypher = String.format("""
                 MATCH (n:%s)
                 WITH n, %s AS name, coalesce(n['aliases'], []) AS aliases
-                WHERE toLower(coalesce(toString(name), '')) CONTAINS toLower($keyword)
-                   OR any(alias IN aliases
-                          WHERE toLower(toString(alias)) CONTAINS toLower($keyword))
+                WITH n, name, aliases,
+                     toLower(coalesce(toString(name), '')) CONTAINS toLower($keyword) AS nameMatched,
+                     [alias IN aliases WHERE toLower(toString(alias)) CONTAINS toLower($keyword)] AS matchedAliases
+                WHERE nameMatched OR size(matchedAliases) > 0
                 RETURN n.id AS id, '%s' AS label, name,
-                       coalesce(n.importanceScore, 0) AS importanceScore
+                       coalesce(n.importanceScore, 0) AS importanceScore,
+                       nameMatched, matchedAliases
                 ORDER BY importanceScore DESC LIMIT $limit
                 """, label, nameExpression, label);
         return neo4jClient.query(cypher)
@@ -501,6 +504,16 @@ public class Neo4jGraphService {
                     item.put("label", stringValue(row.get("label")));
                     item.put("canonicalName", row.get("name"));
                     item.put("importanceScore", row.get("importanceScore"));
+                    boolean nameMatched = Boolean.TRUE.equals(row.get("nameMatched"));
+                    Object matchedAliasesRaw = row.get("matchedAliases");
+                    List<?> matchedAliases = matchedAliasesRaw instanceof List<?> list ? list : List.of();
+                    if (nameMatched) {
+                        item.put("matchedField", "canonicalName");
+                        item.put("matchedText", row.get("name"));
+                    } else if (!matchedAliases.isEmpty()) {
+                        item.put("matchedField", "alias");
+                        item.put("matchedText", matchedAliases.get(0));
+                    }
                     return item;
                 })
                 .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
@@ -513,7 +526,13 @@ public class Neo4jGraphService {
         if (!hasText(label)) {
             return allowed;
         }
-        return allowed.contains(label) ? List.of(label) : List.of();
+        List<String> requested = Arrays.stream(label.split(","))
+                .map(String::trim)
+                .filter(this::hasText)
+                .toList();
+        return requested.stream()
+                .filter(allowed::contains)
+                .toList();
     }
 
     private String nameExpression(String label) {
