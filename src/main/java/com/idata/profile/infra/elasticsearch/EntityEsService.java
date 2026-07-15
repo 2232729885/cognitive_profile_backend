@@ -56,13 +56,13 @@ public class EntityEsService {
     /**
      * 写入/更新实体到 ES。
      */
-    public void indexEntity(String entityId, String canonicalName, String normalizedName,
+    public void indexEntity(String entityId, String canonicalName,
                             List<String> aliases, String entityType, double importanceScore) {
         try {
             Map<String, Object> doc = new LinkedHashMap<>();
             doc.put("entity_id", entityId);
             doc.put("canonical_name", canonicalName);
-            doc.put("normalized_name", normalizedName != null ? normalizedName : canonicalName);
+            doc.put("normalized_name", normalize(canonicalName));
             doc.put("aliases", aliases != null ? aliases : List.of());
             doc.put("entity_type", entityType);
             doc.put("importance_score", importanceScore);
@@ -150,5 +150,21 @@ public class EntityEsService {
                 log.warn("Failed to delete entity from ES, entityId={}", entityId, e);
             }
         }
+    }
+
+    /**
+     * 之前 normalized_name 一直是 canonical_name 的重复值，没有真正的归一化处理。
+     * 这里做真正有意义的归一化：去重音符号、转小写、标点替换成空格、合并多余空白，
+     * 让候选检索能对上"U.S. Central Command" vs "US Central Command"这类只有大小写/
+     * 标点/重音符号差异的写法。
+     */
+    private String normalize(String name) {
+        if (name == null) {
+            return null;
+        }
+        String decomposed = java.text.Normalizer.normalize(name, java.text.Normalizer.Form.NFD);
+        String noDiacritics = decomposed.replaceAll("\\p{M}", "");
+        String noPunct = noDiacritics.toLowerCase(java.util.Locale.ROOT).replaceAll("[\\p{Punct}]", " ");
+        return noPunct.trim().replaceAll("\\s+", " ");
     }
 }

@@ -119,12 +119,18 @@ public class T4IndexingStep {
         document.put("view_count", mc.getViewCount());
         document.put("reaction_count", mc.getReactionCount());
         document.put("topic_category", t1View.topicCategory());
-        document.put("topic_subcategory", t1View.topicSubcategory());
+        document.put("topic_type", t1View.topicTypeLabel());
         document.put("sentiment_label", t1View.sentimentLabel());
         document.put("stance_label", t1View.stanceLabel());
         document.put("aigc_score", t1View.aigcScore());
         document.put("aigc_type", t1View.aigcType());
-        document.put("narrative_hint", t1View.entitiesHintJson());
+        document.put("summary", t1View.summaryText());
+        document.put("ideology_label", t1View.ideologyLabel());
+        document.put("language_style_labels", t1View.languageStyleLabels());
+        document.put("manipulation_methods", t1View.manipulationMethodLabels());
+        document.put("risk_label", t1View.riskLabel());
+        document.put("risk_types", t1View.riskTypes());
+        document.put("entities_hint", t1View.entitiesHintJson());
         document.put("updated_at", mc.getUpdatedAt() != null ? mc.getUpdatedAt().toString() : null);
         return document;
     }

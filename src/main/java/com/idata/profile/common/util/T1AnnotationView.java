@@ -33,11 +33,6 @@ public final class T1AnnotationView {
         return textAt("annotations", "basicObjective", "topicTags", "primaryDomain");
     }
 
-    public String topicSubcategory() {
-        JsonNode arr = path("annotations", "basicObjective", "topicTags", "subtopicTags");
-        return arr != null && arr.isArray() && !arr.isEmpty() ? arr.get(0).asText(null) : null;
-    }
-
     public String sentimentLabel() {
         return textAt("annotations", "highValueSubjective", "opinionEmotion", "sentimentPolarity");
     }
@@ -59,6 +54,48 @@ public final class T1AnnotationView {
     public String entitiesHintJson() {
         JsonNode node = path("annotations", "basicObjective", "entitiesHint");
         return node != null && !node.isNull() && !(node.isArray() && node.isEmpty()) ? node.toString() : null;
+    }
+
+    public String summaryText() {
+        return textAt("annotations", "basicObjective", "summary", "summaryText");
+    }
+
+    public String topicTypeLabel() {
+        return textAt("annotations", "basicObjective", "topicType", "topicTypeLabel");
+    }
+
+    public String ideologyLabel() {
+        return textAt("annotations", "highValueSubjective", "ideology", "ideologyLabel");
+    }
+
+    public java.util.List<String> languageStyleLabels() {
+        return textArrayAt("annotations", "highValueSubjective", "languageStyle", "styleLabels");
+    }
+
+    public java.util.List<String> manipulationMethodLabels() {
+        return textArrayAt("annotations", "highValueSubjective", "manipulationMethod", "methodLabels");
+    }
+
+    public String riskLabel() {
+        return textAt("annotations", "highValueSubjective", "riskLevel", "riskLabel");
+    }
+
+    public java.util.List<String> riskTypes() {
+        return textArrayAt("annotations", "highValueSubjective", "riskLevel", "riskTypes");
+    }
+
+    private java.util.List<String> textArrayAt(String... segments) {
+        JsonNode arr = path(segments);
+        if (arr == null || !arr.isArray() || arr.isEmpty()) {
+            return java.util.List.of();
+        }
+        java.util.List<String> result = new java.util.ArrayList<>();
+        arr.forEach(n -> {
+            if (n != null && !n.isNull()) {
+                result.add(n.asText(null));
+            }
+        });
+        return result;
     }
 
     private String textAt(String... segments) {

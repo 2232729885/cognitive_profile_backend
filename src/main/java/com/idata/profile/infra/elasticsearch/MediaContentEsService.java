@@ -57,9 +57,23 @@ public class MediaContentEsService {
                                     .text(t -> t
                                             .analyzer("ik_max_word")
                                             .searchAnalyzer("ik_smart")))
+                            .properties("summary", p -> p
+                                    .text(t -> t
+                                            .analyzer("ik_max_word")
+                                            .searchAnalyzer("ik_smart")))
                             .properties("platform", p -> p.keyword(k -> k))
                             .properties("language", p -> p.keyword(k -> k))
                             .properties("hashtags", p -> p.keyword(k -> k))
+                            .properties("topic_category", p -> p.keyword(k -> k))
+                            .properties("topic_type", p -> p.keyword(k -> k))
+                            .properties("sentiment_label", p -> p.keyword(k -> k))
+                            .properties("stance_label", p -> p.keyword(k -> k))
+                            .properties("aigc_type", p -> p.keyword(k -> k))
+                            .properties("ideology_label", p -> p.keyword(k -> k))
+                            .properties("language_style_labels", p -> p.keyword(k -> k))
+                            .properties("manipulation_methods", p -> p.keyword(k -> k))
+                            .properties("risk_label", p -> p.keyword(k -> k))
+                            .properties("risk_types", p -> p.keyword(k -> k))
                             .properties("published_at", p -> p
                                     .date(d -> d.format("strict_date_optional_time||epoch_millis")))));
             log.info("ES index created with IK analyzer: {}", MEDIA_CONTENTS_INDEX);

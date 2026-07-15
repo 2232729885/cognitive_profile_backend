@@ -241,7 +241,6 @@ public class EntityResolutionService {
         entityEsService.indexEntity(
                 nodeId,
                 entityName(entity),
-                entity.getCanonicalName(),
                 entity.getAliases(),
                 entity.getType(),
                 entity.getImportanceScore() != null ? entity.getImportanceScore() : 0D);
