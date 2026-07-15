@@ -2,7 +2,6 @@ package com.idata.profile.infra.elasticsearch;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch._types.ElasticsearchException;
-import co.elastic.clients.elasticsearch._types.query_dsl.Operator;
 import co.elastic.clients.elasticsearch.core.IndexResponse;
 import co.elastic.clients.elasticsearch.core.SearchResponse;
 import co.elastic.clients.elasticsearch.core.search.Hit;
@@ -113,8 +112,7 @@ public class MediaContentEsService {
                             .query(q -> q.bool(b -> {
                                 b.must(m -> m.multiMatch(mm -> mm
                                         .query(keyword)
-                                        .fields("body_text", "title")
-                                        .operator(Operator.And)));
+                                        .fields("body_text", "title")));
                                 if (hasText(platform)) {
                                     b.filter(f -> f.term(t -> t.field("platform").value(platform)));
                                 }
