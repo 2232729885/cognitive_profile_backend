@@ -4,11 +4,14 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.idata.profile.agentproxy.AgentProxyClient;
 import com.idata.profile.agentproxy.dto.t4.T4EmbeddingRequest;
 import com.idata.profile.agentproxy.dto.t4.T4EmbeddingResponse;
+import com.idata.profile.entity.account.SocialAccount;
 import com.idata.profile.entity.content.MediaAsset;
 import com.idata.profile.entity.content.MediaContent;
 import com.idata.profile.infra.elasticsearch.MediaContentEsService;
+import com.idata.profile.infra.elasticsearch.SocialAccountEsService;
 import com.idata.profile.infra.milvus.MilvusVectorService;
 import com.idata.profile.infra.neo4j.Neo4jGraphService;
+import com.idata.profile.mapper.account.SocialAccountMapper;
 import com.idata.profile.mapper.content.MediaAssetMapper;
 import com.idata.profile.mapper.content.MediaContentMapper;
 import lombok.RequiredArgsConstructor;
@@ -22,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -39,9 +43,11 @@ public class SearchService {
     private final AgentProxyClient agentProxyClient;
     private final MilvusVectorService milvusService;
     private final MediaContentEsService esService;
+    private final SocialAccountEsService socialAccountEsService;
     private final Neo4jGraphService neo4jGraphService;
     private final MediaContentMapper mediaContentMapper;
     private final MediaAssetMapper mediaAssetMapper;
+    private final SocialAccountMapper socialAccountMapper;
 
     public SearchResult searchByText(String keyword, String platform,
                                      String language, int page, int size) {
@@ -110,6 +116,41 @@ public class SearchService {
         return buildResult(items, fusedIds.size(), "hybrid", startedAt);
     }
 
+    public List<SocialAccount> searchAccounts(String queryText, String platform, String accountType, int topK) {
+        int safeTopK = normalizeSize(topK);
+
+        CompletableFuture<List<String>> esFuture = safeRoute("account-es",
+                () -> socialAccountEsService.searchByKeyword(queryText, platform, accountType, safeTopK));
+        CompletableFuture<List<String>> milvusFuture = safeRoute("account-milvus",
+                () -> searchAccountSemanticIds(queryText, safeTopK));
+
+        CompletableFuture.allOf(esFuture, milvusFuture).join();
+
+        List<String> fusedIds = fuseByRrf(List.of(esFuture.join(), milvusFuture.join()));
+        List<String> topIds = fusedIds.size() > safeTopK ? fusedIds.subList(0, safeTopK) : fusedIds;
+        if (topIds.isEmpty()) {
+            return List.of();
+        }
+
+        List<UUID> uuids = topIds.stream()
+                .map(this::parseUuid)
+                .filter(Objects::nonNull)
+                .toList();
+        if (uuids.isEmpty()) {
+            return List.of();
+        }
+
+        List<SocialAccount> accounts = socialAccountMapper.selectBatchIds(uuids);
+        Map<String, SocialAccount> byId = accounts.stream()
+                .collect(Collectors.toMap(a -> a.getId().toString(), a -> a, (a, b) -> a));
+        return topIds.stream()
+                .map(byId::get)
+                .filter(Objects::nonNull)
+                .filter(account -> !hasText(platform) || platform.equals(account.getPlatform()))
+                .filter(account -> !hasText(accountType) || accountType.equals(account.getAccountType()))
+                .toList();
+    }
+
     public SearchResult searchByImage(String imageUrl, String targetModalities, int topK) {
         long startedAt = System.currentTimeMillis();
         int safeTopK = normalizeSize(topK);
@@ -149,6 +190,23 @@ public class SearchService {
             return List.of();
         }
         return milvusService.searchTextEmbeddings(embedding, topK, platform, language);
+    }
+
+    private List<String> searchAccountSemanticIds(String queryText, int topK) {
+        if (!hasText(queryText)) {
+            return List.of();
+        }
+        T4EmbeddingRequest request = new T4EmbeddingRequest();
+        request.setText(queryText);
+        T4EmbeddingResponse response = agentProxyClient.call(
+                "T4", "generate_text_embedding", request, T4EmbeddingResponse.class);
+        float[] embedding = response == null ? null : response.getEmbedding();
+        if (embedding == null) {
+            return List.of();
+        }
+        return milvusService.searchAccountEmbeddings(embedding, topK).stream()
+                .map(MilvusVectorService.ScoredEntityId::entityId)
+                .toList();
     }
 
     /**

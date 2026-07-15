@@ -30,6 +30,7 @@ public class MilvusVectorService {
     private static final String TEXT_COLLECTION = "text_embeddings";
     private static final String IMAGE_COLLECTION = "image_embeddings";
     private static final String ENTITY_COLLECTION = "entity_embeddings";
+    private static final String ACCOUNT_COLLECTION = "account_embeddings";
     private static final String VECTOR_FIELD = "embedding";
     private static final Gson GSON = new Gson();
 
@@ -77,6 +78,18 @@ public class MilvusVectorService {
         row.addProperty("normalized_name", normalizedName);
         row.addProperty("entity_type", entityType);
         insert(ENTITY_COLLECTION, row);
+        return vectorId;
+    }
+
+    /**
+     * @param accountId 账号UUID（PG social_accounts.id）
+     * @param platform  平台
+     * @param embedding 账号bio文本的向量
+     */
+    public String insertAccountEmbedding(String accountId, String platform, float[] embedding) {
+        String vectorId = "account_" + accountId;
+        JsonObject row = baseRow(vectorId, accountId, "social_account", platform, embedding);
+        insert(ACCOUNT_COLLECTION, row);
         return vectorId;
     }
 
@@ -137,6 +150,18 @@ public class MilvusVectorService {
                 .map(item -> new ScoredEntityId(
                         item.entityId().startsWith("entity_")
                                 ? item.entityId().substring("entity_".length())
+                                : item.entityId(),
+                        item.score()))
+                .toList();
+    }
+
+    public List<ScoredEntityId> searchAccountEmbeddings(float[] queryEmbedding, int topK) {
+        List<ScoredEntityId> raw = searchEmbeddingsWithScore(
+                ACCOUNT_COLLECTION, queryEmbedding, topK, null, "source_id");
+        return raw.stream()
+                .map(item -> new ScoredEntityId(
+                        item.entityId().startsWith("account_")
+                                ? item.entityId().substring("account_".length())
                                 : item.entityId(),
                         item.score()))
                 .toList();

@@ -3,12 +3,15 @@ package com.idata.profile.ingestion.consumer;
 import com.idata.profile.agentproxy.AgentProxyClient;
 import com.idata.profile.agentproxy.dto.t1.T1AnnotateAccountRequest;
 import com.idata.profile.agentproxy.dto.t1.T1AnnotateAccountResponse;
+import com.idata.profile.agentproxy.dto.t4.T4EmbeddingRequest;
+import com.idata.profile.agentproxy.dto.t4.T4EmbeddingResponse;
 import com.idata.profile.common.constant.PipelineStatus;
 import com.idata.profile.common.constant.RecordType;
 import com.idata.profile.entity.account.SocialAccount;
 import com.idata.profile.entity.raw.RawRecord;
 import com.idata.profile.infra.elasticsearch.SocialAccountEsService;
 import com.idata.profile.infra.kafka.KafkaTopicConstants;
+import com.idata.profile.infra.milvus.MilvusVectorService;
 import com.idata.profile.ingestion.normalizer.SocialAccountNormalizer;
 import com.idata.profile.mapper.account.SocialAccountMapper;
 import com.idata.profile.mapper.account.SocialAccountSnapshotMapper;
@@ -35,6 +38,7 @@ public class SocialAccountConsumer {
     private final SocialAccountSnapshotMapper snapshotMapper;
     private final AgentProxyClient agentProxyClient;
     private final SocialAccountEsService socialAccountEsService;
+    private final MilvusVectorService milvusVectorService;
 
     @KafkaListener(topics = KafkaTopicConstants.SOCIAL_ACCOUNT, groupId = "cognitive-profile-ingestion")
     @Transactional
@@ -70,10 +74,32 @@ public class SocialAccountConsumer {
         UUID accountId = socialAccountMapper.upsertByPlatformAndUserId(normalized.getAccount());
         normalized.getAccount().setId(accountId);
         socialAccountEsService.indexAccount(normalized.getAccount());
+        indexAccountEmbedding(normalized.getAccount());
         normalized.getSnapshot().setAccountId(accountId);
         snapshotMapper.insert(normalized.getSnapshot());
         rawRecord.setPipelineStatus(PipelineStatus.NORMALIZED.name());
         rawRecordMapper.updateById(rawRecord);
+    }
+
+    /**
+     * bio为空时没有语义可提取，直接跳过；调用失败也不影响主流程，只记警告。
+     */
+    private void indexAccountEmbedding(SocialAccount account) {
+        if (account == null || account.getId() == null || !IngestionMessageSupport.hasText(account.getBio())) {
+            return;
+        }
+        try {
+            T4EmbeddingRequest request = new T4EmbeddingRequest();
+            request.setText(account.getBio());
+            T4EmbeddingResponse response = agentProxyClient.call(
+                    "T4", "generate_text_embedding", request, T4EmbeddingResponse.class);
+            if (response != null && response.getEmbedding() != null) {
+                milvusVectorService.insertAccountEmbedding(
+                        account.getId().toString(), account.getPlatform(), response.getEmbedding());
+            }
+        } catch (Exception e) {
+            log.warn("[SocialAccountConsumer] account bio embedding failed, accountId={}", account.getId(), e);
+        }
     }
 
     private void annotateAccountType(SocialAccount account) {

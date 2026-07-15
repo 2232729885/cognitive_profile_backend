@@ -60,6 +60,13 @@ public class SearchController {
         return Result.ok(searchService.searchHybrid(request));
     }
 
+    @PostMapping("/accounts")
+    public Result<List<com.idata.profile.entity.account.SocialAccount>> searchAccounts(
+            @RequestBody AccountSearchRequest request) {
+        return Result.ok(searchService.searchAccounts(
+                request.getQueryText(), request.getPlatform(), request.getAccountType(), request.getTopK()));
+    }
+
     @PostMapping("/image")
     public Result<SearchResult> searchByImage(@RequestBody ImageSearchRequest request) {
         if (request == null || !hasText(request.getImageUrl())) {
@@ -147,6 +154,14 @@ public class SearchController {
         private String queryText;
         private String platform;
         private String language;
+        private int topK = 20;
+    }
+
+    @Data
+    public static class AccountSearchRequest {
+        private String queryText;
+        private String platform;
+        private String accountType;
         private int topK = 20;
     }
 
