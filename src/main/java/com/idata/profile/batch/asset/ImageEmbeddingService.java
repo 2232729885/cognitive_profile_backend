@@ -1,9 +1,7 @@
 package com.idata.profile.batch.asset;
 
-import com.idata.profile.agentproxy.AgentProxyClient;
-import com.idata.profile.agentproxy.dto.t4.T4EmbeddingRequest;
-import com.idata.profile.agentproxy.dto.t4.T4EmbeddingResponse;
 import com.idata.profile.entity.content.MediaAsset;
+import com.idata.profile.infra.embedding.EmbeddingService;
 import com.idata.profile.infra.milvus.MilvusVectorService;
 import com.idata.profile.mapper.content.MediaAssetMapper;
 import lombok.RequiredArgsConstructor;
@@ -22,7 +20,7 @@ import java.util.concurrent.ExecutorService;
 public class ImageEmbeddingService {
 
     private final MediaAssetMapper mediaAssetMapper;
-    private final AgentProxyClient agentProxyClient;
+    private final EmbeddingService embeddingService;
     private final MilvusVectorService milvusVectorService;
     private final ExecutorService pipelineThreadPool;
 
@@ -65,18 +63,17 @@ public class ImageEmbeddingService {
 
     private boolean process(MediaAsset asset) {
         try {
-            T4EmbeddingRequest request = new T4EmbeddingRequest();
-            request.setImageUrl(resolveImageUrl(asset));
-
-            T4EmbeddingResponse response = agentProxyClient.call(
-                    "T4", "generate_image_embedding", request, T4EmbeddingResponse.class);
+            float[] embedding = embeddingService.generateImageEmbedding(resolveImageUrl(asset));
+            if (embedding == null) {
+                return false;
+            }
 
             String vectorId = milvusVectorService.insertImageEmbedding(
                     asset.getId().toString(),
                     asset.getContentId() != null ? asset.getContentId().toString() : null,
                     null,
                     0f,
-                    response.getEmbedding());
+                    embedding);
 
             asset.setEmbeddingId(vectorId);
             mediaAssetMapper.updateById(asset);

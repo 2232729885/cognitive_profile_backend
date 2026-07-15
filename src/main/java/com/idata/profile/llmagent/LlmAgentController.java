@@ -10,8 +10,6 @@ import com.idata.profile.agentproxy.dto.t2.T2ExtractRequest;
 import com.idata.profile.agentproxy.dto.t2.T2ExtractResponse;
 import com.idata.profile.agentproxy.dto.t3.T3ResolveBatchRequest;
 import com.idata.profile.agentproxy.dto.t3.T3ResolveBatchResponse;
-import com.idata.profile.agentproxy.dto.t4.T4EmbeddingRequest;
-import com.idata.profile.agentproxy.dto.t4.T4EmbeddingResponse;
 import com.idata.profile.agentproxy.dto.t5.T5GenerateProfileRequest;
 import com.idata.profile.agentproxy.dto.t5.T5GenerateProfileResponse;
 import com.idata.profile.agentproxy.dto.t6.T6IdentifyRequest;
@@ -28,14 +26,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.client.RestClient;
 import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
@@ -348,16 +342,6 @@ public class LlmAgentController {
     private final PersonMapper personMapper;
     private final MediaContentMapper mediaContentMapper;
     private final Neo4jGraphService neo4jGraphService;
-    private final RestClient embeddingRestClient = RestClient.create();
-
-    @Value("${llm.embedding.base-url}")
-    private String embeddingBaseUrl;
-
-    @Value("${llm.embedding.api-key}")
-    private String embeddingApiKey;
-
-    @Value("${llm.embedding.model}")
-    private String embeddingModel;
 
     @PostMapping("/t1/annotate_content")
     public T1AnnotateResponse annotate(@RequestBody T1AnnotateRequest request) {
@@ -462,19 +446,6 @@ public class LlmAgentController {
             logLlmFailure("[LLM-T3] resolve_batch失败，返回fallback", e);
             return buildFallbackT3BatchResponse(request);
         }
-    }
-
-    @PostMapping("/t4/generate_text_embedding")
-    public T4EmbeddingResponse generateTextEmbedding(@RequestBody T4EmbeddingRequest request) {
-        log.info("[LLM-T4] generate_text_embedding, textLength={}",
-                request.getText() != null ? request.getText().length() : 0);
-        return callEmbeddingApi(request.getText(), null);
-    }
-
-    @PostMapping("/t4/generate_image_embedding")
-    public T4EmbeddingResponse generateImageEmbedding(@RequestBody T4EmbeddingRequest request) {
-        log.info("[LLM-T4] generate_image_embedding, imageUrl={}", request.getImageUrl());
-        return callEmbeddingApi(null, request.getImageUrl());
     }
 
     @PostMapping("/t5/complete_profile")
@@ -904,48 +875,6 @@ public class LlmAgentController {
                 .toList());
         resp.setModelVersion(MODEL_VERSION);
         return resp;
-    }
-
-    private T4EmbeddingResponse callEmbeddingApi(String text, String imageUrl) {
-        String input = hasText(text) ? text : imageUrl;
-        if (!hasText(input)) {
-            return null;
-        }
-        try {
-            EmbeddingApiResponse apiResponse = embeddingRestClient.post()
-                    .uri(normalizeBaseUrl(embeddingBaseUrl) + "/embeddings")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + embeddingApiKey)
-                    .body(Map.of("model", embeddingModel, "input", input))
-                    .retrieve()
-                    .body(EmbeddingApiResponse.class);
-
-            if (apiResponse == null || apiResponse.getData() == null || apiResponse.getData().isEmpty()
-                    || apiResponse.getData().get(0).getEmbedding() == null) {
-                return null;
-            }
-
-            List<Double> doubles = apiResponse.getData().get(0).getEmbedding();
-            float[] embedding = new float[doubles.size()];
-            for (int i = 0; i < doubles.size(); i++) {
-                embedding[i] = doubles.get(i).floatValue();
-            }
-
-            T4EmbeddingResponse response = new T4EmbeddingResponse();
-            response.setEmbedding(embedding);
-            response.setModelVersion(embeddingModel);
-            return response;
-        } catch (Exception e) {
-            logLlmFailure("[LLM-T4] embedding接口调用失败，返回null", e);
-            return null;
-        }
-    }
-
-    private String normalizeBaseUrl(String baseUrl) {
-        if (baseUrl == null) {
-            return "";
-        }
-        return baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
     }
 
     private String buildPersonContext(String targetId) {
@@ -1424,13 +1353,4 @@ public class LlmAgentController {
         return null;
     }
 
-    @Data
-    private static class EmbeddingApiResponse {
-        private List<EmbeddingData> data;
-
-        @Data
-        private static class EmbeddingData {
-            private List<Double> embedding;
-        }
-    }
 }

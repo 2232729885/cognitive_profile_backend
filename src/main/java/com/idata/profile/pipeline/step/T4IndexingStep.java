@@ -1,14 +1,12 @@
 package com.idata.profile.pipeline.step;
 
-import com.idata.profile.agentproxy.AgentProxyClient;
-import com.idata.profile.agentproxy.dto.t4.T4EmbeddingRequest;
-import com.idata.profile.agentproxy.dto.t4.T4EmbeddingResponse;
 import com.idata.profile.common.constant.PipelineStatus;
 import com.idata.profile.common.util.T1AnnotationView;
 import com.idata.profile.entity.content.MediaContent;
 import com.idata.profile.entity.raw.RawRecord;
 import com.idata.profile.entity.task.PipelineTask;
 import com.idata.profile.infra.elasticsearch.MediaContentEsService;
+import com.idata.profile.infra.embedding.EmbeddingService;
 import com.idata.profile.infra.milvus.MilvusVectorService;
 import com.idata.profile.mapper.content.MediaContentMapper;
 import com.idata.profile.mapper.raw.RawRecordMapper;
@@ -40,7 +38,7 @@ public class T4IndexingStep {
      */
     private static final int MAX_EMBEDDING_TEXT_LENGTH = 6000;
 
-    private final AgentProxyClient agentProxyClient;
+    private final EmbeddingService embeddingService;
     private final MilvusVectorService milvusVectorService;
     private final MediaContentEsService mediaContentEsService;
     private final MediaContentMapper mediaContentMapper;
@@ -62,11 +60,7 @@ public class T4IndexingStep {
         if (textEmbeddingSkipped) {
             log.info("[T4] 跳过文本向量化：embedding text为空, contentId={}", mc.getId());
         } else {
-            T4EmbeddingRequest request = new T4EmbeddingRequest();
-            request.setText(truncateForEmbedding(embeddingText));
-            T4EmbeddingResponse embeddingResponse = agentProxyClient.call(
-                    "T4", "generate_text_embedding", request, T4EmbeddingResponse.class);
-            float[] embedding = embeddingResponse == null ? null : embeddingResponse.getEmbedding();
+            float[] embedding = embeddingService.generateTextEmbedding(truncateForEmbedding(embeddingText));
             if (embedding == null) {
                 // 调用失败（比如超过模型token上限、网络问题等）不应该让整条流水线任务失败，
                 // 按"跳过文本向量化"处理，其余步骤（ES索引、pipeline状态推进）照常进行，

@@ -6,8 +6,6 @@ import com.idata.profile.agentproxy.dto.t3.T3ResolveBatchRequest;
 import com.idata.profile.agentproxy.dto.t3.T3ResolveBatchResponse;
 import com.idata.profile.agentproxy.dto.t3.T3ResolveRequest;
 import com.idata.profile.agentproxy.dto.t3.T3ResolveResponse;
-import com.idata.profile.agentproxy.dto.t4.T4EmbeddingRequest;
-import com.idata.profile.agentproxy.dto.t4.T4EmbeddingResponse;
 import com.idata.profile.common.util.StableUuidUtil;
 import com.idata.profile.entity.account.SocialAccount;
 import com.idata.profile.entity.dedup.EntityFusionRecord;
@@ -16,6 +14,7 @@ import com.idata.profile.entity.graph.Narrative;
 import com.idata.profile.entity.graph.Organization;
 import com.idata.profile.entity.graph.Person;
 import com.idata.profile.infra.elasticsearch.EntityEsService;
+import com.idata.profile.infra.embedding.EmbeddingService;
 import com.idata.profile.infra.milvus.MilvusVectorService;
 import com.idata.profile.infra.neo4j.Neo4jGraphService;
 import com.idata.profile.mapper.account.SocialAccountMapper;
@@ -60,6 +59,7 @@ public class EntityDeduplicationJob {
     private final AgentProxyClient agentProxyClient;
     private final EntityCandidateRetrievalService candidateRetrievalService;
     private final EntityEsService entityEsService;
+    private final EmbeddingService embeddingService;
     private final MilvusVectorService milvusVectorService;
     private final ApplicationContext applicationContext;
     private final AtomicBoolean running = new AtomicBoolean(false);
@@ -410,13 +410,10 @@ public class EntityDeduplicationJob {
         }
 
         try {
-            T4EmbeddingRequest req = new T4EmbeddingRequest();
-            req.setText(canonicalName);
-            T4EmbeddingResponse embResp = agentProxyClient.call(
-                    "T4", "generate_text_embedding", req, T4EmbeddingResponse.class);
-            if (embResp != null && embResp.getEmbedding() != null) {
+            float[] embedding = embeddingService.generateTextEmbedding(canonicalName);
+            if (embedding != null) {
                 List<MilvusVectorService.ScoredEntityId> milvusHits = milvusVectorService.searchEntityEmbeddings(
-                        embResp.getEmbedding(), topK, entityType);
+                        embedding, topK, entityType);
                 for (MilvusVectorService.ScoredEntityId hit : milvusHits) {
                     String entityId = hit.entityId();
                     if (candidates.containsKey(entityId)) {

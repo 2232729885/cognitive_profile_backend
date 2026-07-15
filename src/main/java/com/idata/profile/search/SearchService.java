@@ -1,15 +1,13 @@
 package com.idata.profile.search;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.idata.profile.agentproxy.AgentProxyClient;
-import com.idata.profile.agentproxy.dto.t4.T4EmbeddingRequest;
-import com.idata.profile.agentproxy.dto.t4.T4EmbeddingResponse;
 import com.idata.profile.entity.account.SocialAccount;
 import com.idata.profile.entity.content.MediaAsset;
 import com.idata.profile.entity.content.MediaContent;
 import com.idata.profile.infra.elasticsearch.EntityEsService;
 import com.idata.profile.infra.elasticsearch.MediaContentEsService;
 import com.idata.profile.infra.elasticsearch.SocialAccountEsService;
+import com.idata.profile.infra.embedding.EmbeddingService;
 import com.idata.profile.infra.milvus.MilvusVectorService;
 import com.idata.profile.infra.neo4j.Neo4jGraphService;
 import com.idata.profile.mapper.account.SocialAccountMapper;
@@ -41,7 +39,7 @@ public class SearchService {
     private static final int RRF_K = 60;
     private static final long HYBRID_ROUTE_TIMEOUT_SECONDS = 8L;
 
-    private final AgentProxyClient agentProxyClient;
+    private final EmbeddingService embeddingService;
     private final MilvusVectorService milvusService;
     private final MediaContentEsService esService;
     private final EntityEsService entityEsService;
@@ -485,11 +483,7 @@ public class SearchService {
         if (!hasText(text)) {
             return null;
         }
-        T4EmbeddingRequest request = new T4EmbeddingRequest();
-        request.setText(text);
-        T4EmbeddingResponse response = agentProxyClient.call(
-                "T4", "generate_text_embedding", request, T4EmbeddingResponse.class);
-        return response == null ? null : response.getEmbedding();
+        return embeddingService.generateTextEmbedding(text);
     }
 
     private String canonicalStandardEntityType(String entityType) {
@@ -896,11 +890,7 @@ public class SearchService {
             return List.of();
         }
 
-        T4EmbeddingRequest request = new T4EmbeddingRequest();
-        request.setText(queryText);
-        T4EmbeddingResponse response = agentProxyClient.call(
-                "T4", "generate_text_embedding", request, T4EmbeddingResponse.class);
-        float[] embedding = response == null ? null : response.getEmbedding();
+        float[] embedding = embeddingService.generateTextEmbedding(queryText);
         if (embedding == null) {
             return List.of();
         }
@@ -911,11 +901,7 @@ public class SearchService {
         if (!hasText(queryText)) {
             return List.of();
         }
-        T4EmbeddingRequest request = new T4EmbeddingRequest();
-        request.setText(queryText);
-        T4EmbeddingResponse response = agentProxyClient.call(
-                "T4", "generate_text_embedding", request, T4EmbeddingResponse.class);
-        float[] embedding = response == null ? null : response.getEmbedding();
+        float[] embedding = embeddingService.generateTextEmbedding(queryText);
         if (embedding == null) {
             return List.of();
         }
@@ -935,11 +921,7 @@ public class SearchService {
 
         float[] embedding;
         try {
-            T4EmbeddingRequest request = new T4EmbeddingRequest();
-            request.setImageUrl(imageUrl);
-            T4EmbeddingResponse response = agentProxyClient.call(
-                    "T4", "generate_image_embedding", request, T4EmbeddingResponse.class);
-            embedding = response == null ? null : response.getEmbedding();
+            embedding = embeddingService.generateImageEmbedding(imageUrl);
         } catch (Exception e) {
             log.warn("Image vectorization failed, imageUrl={}", imageUrl, e);
             return List.of();

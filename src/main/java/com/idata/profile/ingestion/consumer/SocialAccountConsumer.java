@@ -3,13 +3,12 @@ package com.idata.profile.ingestion.consumer;
 import com.idata.profile.agentproxy.AgentProxyClient;
 import com.idata.profile.agentproxy.dto.t1.T1AnnotateAccountRequest;
 import com.idata.profile.agentproxy.dto.t1.T1AnnotateAccountResponse;
-import com.idata.profile.agentproxy.dto.t4.T4EmbeddingRequest;
-import com.idata.profile.agentproxy.dto.t4.T4EmbeddingResponse;
 import com.idata.profile.common.constant.PipelineStatus;
 import com.idata.profile.common.constant.RecordType;
 import com.idata.profile.entity.account.SocialAccount;
 import com.idata.profile.entity.raw.RawRecord;
 import com.idata.profile.infra.elasticsearch.SocialAccountEsService;
+import com.idata.profile.infra.embedding.EmbeddingService;
 import com.idata.profile.infra.kafka.KafkaTopicConstants;
 import com.idata.profile.infra.milvus.MilvusVectorService;
 import com.idata.profile.ingestion.normalizer.SocialAccountNormalizer;
@@ -39,6 +38,7 @@ public class SocialAccountConsumer {
     private final AgentProxyClient agentProxyClient;
     private final SocialAccountEsService socialAccountEsService;
     private final MilvusVectorService milvusVectorService;
+    private final EmbeddingService embeddingService;
 
     @KafkaListener(topics = KafkaTopicConstants.SOCIAL_ACCOUNT, groupId = "cognitive-profile-ingestion")
     @Transactional
@@ -90,13 +90,10 @@ public class SocialAccountConsumer {
             return;
         }
         try {
-            T4EmbeddingRequest request = new T4EmbeddingRequest();
-            request.setText(embeddingText);
-            T4EmbeddingResponse response = agentProxyClient.call(
-                    "T4", "generate_text_embedding", request, T4EmbeddingResponse.class);
-            if (response != null && response.getEmbedding() != null) {
+            float[] embedding = embeddingService.generateTextEmbedding(embeddingText);
+            if (embedding != null) {
                 milvusVectorService.insertAccountEmbedding(
-                        account.getId().toString(), account.getPlatform(), response.getEmbedding());
+                        account.getId().toString(), account.getPlatform(), embedding);
             }
         } catch (Exception e) {
             log.warn("[SocialAccountConsumer] account embedding failed, accountId={}", account.getId(), e);

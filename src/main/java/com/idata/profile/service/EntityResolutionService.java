@@ -4,11 +4,10 @@ import com.idata.profile.agentproxy.AgentProxyClient;
 import com.idata.profile.agentproxy.dto.t2.T2ExtractResponse;
 import com.idata.profile.agentproxy.dto.t3.T3ResolveBatchRequest;
 import com.idata.profile.agentproxy.dto.t3.T3ResolveBatchResponse;
-import com.idata.profile.agentproxy.dto.t4.T4EmbeddingRequest;
-import com.idata.profile.agentproxy.dto.t4.T4EmbeddingResponse;
 import com.idata.profile.common.util.StableUuidUtil;
 import com.idata.profile.entity.dedup.EntityFusionRecord;
 import com.idata.profile.infra.elasticsearch.EntityEsService;
+import com.idata.profile.infra.embedding.EmbeddingService;
 import com.idata.profile.infra.milvus.MilvusVectorService;
 import com.idata.profile.infra.neo4j.Neo4jGraphService;
 import com.idata.profile.mapper.dedup.EntityFusionRecordMapper;
@@ -43,6 +42,7 @@ public class EntityResolutionService {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final AgentProxyClient agentProxyClient;
+    private final EmbeddingService embeddingService;
     private final PersonMapper personMapper;
     private final OrganizationMapper organizationMapper;
     private final EventMapper eventMapper;
@@ -252,15 +252,12 @@ public class EntityResolutionService {
             if (!hasText(embeddingText)) {
                 return;
             }
-            T4EmbeddingRequest req = new T4EmbeddingRequest();
-            req.setText(embeddingText);
-            T4EmbeddingResponse resp = agentProxyClient.call(
-                    "T4", "generate_text_embedding", req, T4EmbeddingResponse.class);
-            if (resp == null || resp.getEmbedding() == null) {
+            float[] embedding = embeddingService.generateTextEmbedding(embeddingText);
+            if (embedding == null) {
                 return;
             }
             milvusVectorService.insertEntityEmbedding(
-                    stableId, entity.getType(), entityName(entity), resp.getEmbedding());
+                    stableId, entity.getType(), entityName(entity), embedding);
             log.debug("[EntityResolutionService] entity vector indexed, entityId={}, name={}",
                     stableId, entityName(entity));
         } catch (Exception e) {
