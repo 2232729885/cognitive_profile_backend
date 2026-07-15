@@ -373,7 +373,7 @@ public class Neo4jGraphService {
     }
 
     /**
-     * 按实体名称模糊搜索 Neo4j 节点，支持 Person/Organization/Event/Narrative 四种标签
+     * 按实体名称模糊搜索 Neo4j 节点，支持 Person/Organization/Event/Location/SocialAccount/MediaContent
      * 返回匹配的节点列表，每个元素含 id、label、canonicalName、importanceScore
      */
     public List<Map<String, Object>> searchNodesByName(String keyword, String label, int limit) {
@@ -488,7 +488,7 @@ public class Neo4jGraphService {
     private List<String> resolveSearchLabels(String label) {
         List<String> allowed = List.of(
                 "Person", "Organization", "Event", "Location",
-                "Narrative", "SocialAccount", "MediaContent");
+                "SocialAccount", "MediaContent");
         if (!hasText(label)) {
             return allowed;
         }
@@ -497,7 +497,6 @@ public class Neo4jGraphService {
 
     private String nameExpression(String label) {
         return switch (label) {
-            case "Narrative" -> "n.canonicalLabel";
             case "SocialAccount" -> "coalesce(n.displayName, n.handle)";
             case "MediaContent" -> "n.platformContentId";
             default -> "n.canonicalName";
