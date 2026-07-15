@@ -7,6 +7,7 @@ import com.idata.profile.common.constant.PipelineStatus;
 import com.idata.profile.common.constant.RecordType;
 import com.idata.profile.entity.account.SocialAccount;
 import com.idata.profile.entity.raw.RawRecord;
+import com.idata.profile.infra.elasticsearch.SocialAccountEsService;
 import com.idata.profile.infra.kafka.KafkaTopicConstants;
 import com.idata.profile.ingestion.normalizer.SocialAccountNormalizer;
 import com.idata.profile.mapper.account.SocialAccountMapper;
@@ -33,6 +34,7 @@ public class SocialAccountConsumer {
     private final SocialAccountMapper socialAccountMapper;
     private final SocialAccountSnapshotMapper snapshotMapper;
     private final AgentProxyClient agentProxyClient;
+    private final SocialAccountEsService socialAccountEsService;
 
     @KafkaListener(topics = KafkaTopicConstants.SOCIAL_ACCOUNT, groupId = "cognitive-profile-ingestion")
     @Transactional
@@ -66,6 +68,8 @@ public class SocialAccountConsumer {
         SocialAccountNormalizer.NormalizedAccount normalized = normalizer.normalize(kafkaMessage, rawRecord);
         annotateAccountType(normalized.getAccount());
         UUID accountId = socialAccountMapper.upsertByPlatformAndUserId(normalized.getAccount());
+        normalized.getAccount().setId(accountId);
+        socialAccountEsService.indexAccount(normalized.getAccount());
         normalized.getSnapshot().setAccountId(accountId);
         snapshotMapper.insert(normalized.getSnapshot());
         rawRecord.setPipelineStatus(PipelineStatus.NORMALIZED.name());
