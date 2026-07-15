@@ -187,6 +187,26 @@ public class MilvusVectorService {
                 collectionName, response.getUpsertCnt());
     }
 
+    /**
+     * 应用启动时预建所有已知的 collection，不用等第一条真实数据写入才触发。
+     * milvusClient 为 null（未配置Milvus）时直接跳过；每个collection独立try-catch，
+     * 某一个建失败不影响其他几个继续尝试。
+     */
+    public void ensureAllCollections() {
+        if (milvusClient == null) {
+            log.info("Milvus client not configured, skip collection initialization");
+            return;
+        }
+        for (String collectionName : List.of(TEXT_COLLECTION, IMAGE_COLLECTION, ENTITY_COLLECTION, ACCOUNT_COLLECTION)) {
+            try {
+                ensureCollection(collectionName);
+                log.info("Milvus collection ensured: {}", collectionName);
+            } catch (Exception e) {
+                log.error("Failed to ensure Milvus collection: {}", collectionName, e);
+            }
+        }
+    }
+
     private void ensureCollection(String collectionName) {
         Boolean exists = milvusClient.hasCollection(HasCollectionReq.builder()
                 .collectionName(collectionName)
