@@ -8,10 +8,9 @@ import io.milvus.v2.common.IndexParam;
 import io.milvus.v2.service.collection.request.CreateCollectionReq;
 import io.milvus.v2.service.collection.request.HasCollectionReq;
 import io.milvus.v2.service.collection.request.LoadCollectionReq;
-import io.milvus.v2.service.vector.request.InsertReq;
 import io.milvus.v2.service.vector.request.SearchReq;
+import io.milvus.v2.service.vector.request.UpsertReq;
 import io.milvus.v2.service.vector.request.data.FloatVec;
-import io.milvus.v2.service.vector.response.InsertResp;
 import io.milvus.v2.service.vector.response.SearchResp;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -180,12 +179,12 @@ public class MilvusVectorService {
 
     private void insert(String collectionName, JsonObject row) {
         ensureCollection(collectionName);
-        InsertResp response = milvusClient.insert(InsertReq.builder()
+        io.milvus.v2.service.vector.response.UpsertResp response = milvusClient.upsert(UpsertReq.builder()
                 .collectionName(collectionName)
                 .data(List.of(row))
                 .build());
-        log.debug("Inserted Milvus vector, collection={}, count={}, primaryKeys={}",
-                collectionName, response.getInsertCnt(), response.getPrimaryKeys());
+        log.debug("Upserted Milvus vector, collection={}, count={}",
+                collectionName, response.getUpsertCnt());
     }
 
     private void ensureCollection(String collectionName) {
