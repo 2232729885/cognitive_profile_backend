@@ -3,6 +3,8 @@ package com.idata.profile.controller;
 import com.idata.profile.common.response.Result;
 import com.idata.profile.infra.minio.MinioStorageService;
 import com.idata.profile.infra.neo4j.Neo4jGraphService;
+import com.idata.profile.search.EntityCandidateSearchRequest;
+import com.idata.profile.search.EntityCandidateSearchResponse;
 import com.idata.profile.search.HybridSearchRequest;
 import com.idata.profile.search.SearchResult;
 import com.idata.profile.search.SearchService;
@@ -149,6 +151,12 @@ public class SearchController {
             @RequestBody EntitySemanticSearchRequest request) {
         return Result.ok(searchService.searchEntitiesFused(
                 request.getKeyword(), request.getEntityType(), request.getTopK()));
+    }
+
+    @PostMapping("/entities/candidates")
+    public EntityCandidateSearchResponse searchEntityCandidates(
+            @RequestBody EntityCandidateSearchRequest request) {
+        return searchService.searchEntityCandidates(request);
     }
 
     @Data

@@ -211,51 +211,228 @@ public class SearchService {
     }
 
     public List<Map<String, Object>> searchEntitiesFused(String keyword, String entityType, int topK) {
-        int safeTopK = normalizeSize(topK);
+        return searchEntitiesFused(keyword, hasText(entityType) ? List.of(entityType) : List.of(), topK);
+    }
 
-        CompletableFuture<List<Map<String, Object>>> esFuture = safeRoute("entity-es",
-                () -> entityEsService.searchEntities(keyword, entityType, safeTopK));
-        CompletableFuture<List<String>> milvusFuture = safeRoute("entity-milvus",
-                () -> searchEntitySemanticIds(keyword, entityType, safeTopK));
-
-        CompletableFuture.allOf(esFuture, milvusFuture).join();
-
-        List<Map<String, Object>> esResults = esFuture.join();
-        List<String> esIds = esResults.stream()
-                .map(r -> (String) r.get("entityId"))
-                .toList();
-        List<String> milvusIds = milvusFuture.join();
-
-        Map<String, Double> fusedScores = fuseByRrf(List.of(esIds, milvusIds));
-        List<String> topIds = new ArrayList<>(fusedScores.keySet());
-        if (topIds.size() > safeTopK) {
-            topIds = topIds.subList(0, safeTopK);
+    public EntityCandidateSearchResponse searchEntityCandidates(EntityCandidateSearchRequest request) {
+        if (request == null || !hasText(request.getQuery())) {
+            return EntityCandidateSearchResponse.fail("400", "query不能为空");
         }
-        if (topIds.isEmpty()) {
+
+        int safeTopK = request.getTopK() > 0 ? request.getTopK() : 10;
+        List<String> requestedTypes = normalizeEntityTypes(request.getEntityTypes());
+        String retrievalMode = normalizeRetrievalMode(request.getRetrievalMode());
+        if (retrievalMode == null) {
+            return EntityCandidateSearchResponse.fail("400", "retrieval_mode只支持keyword、semantic、both");
+        }
+
+        CompletableFuture<List<EntityCandidateSearchResponse.Candidate>> keywordFuture =
+                CompletableFuture.completedFuture(List.of());
+        if (useKeywordCandidates(retrievalMode)) {
+            keywordFuture = safeRoute("entity-candidate-keyword",
+                    () -> searchEntityCandidatesFromEs(request.getQuery(), requestedTypes, safeTopK));
+        }
+        CompletableFuture<List<EntityCandidateSearchResponse.Candidate>> semanticFuture =
+                CompletableFuture.completedFuture(List.of());
+        if (useSemanticCandidates(retrievalMode)) {
+            semanticFuture = safeRoute("entity-candidate-semantic",
+                    () -> searchEntityCandidatesFromMilvus(request.getQuery(), requestedTypes, safeTopK));
+        }
+        CompletableFuture.allOf(keywordFuture, semanticFuture).join();
+        return EntityCandidateSearchResponse.ok(request.getTraceId(), keywordFuture.join(), semanticFuture.join());
+    }
+
+    public List<Map<String, Object>> searchEntitiesFused(String keyword, Collection<String> entityTypes, int topK) {
+        if (!hasText(keyword)) {
+            return List.of();
+        }
+        int safeTopK = normalizeSize(topK);
+        List<String> requestedTypes = normalizeEntityTypes(entityTypes);
+        boolean allDomains = requestedTypes.isEmpty();
+        List<String> standardEntityTypes = requestedTypes.stream()
+                .map(this::canonicalStandardEntityType)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        boolean includeEntities = allDomains || !standardEntityTypes.isEmpty();
+        boolean includeAccounts = allDomains || requestedTypes.stream().anyMatch("SocialAccount"::equalsIgnoreCase);
+        boolean includeContents = allDomains || requestedTypes.stream().anyMatch("MediaContent"::equalsIgnoreCase);
+        if (!includeEntities && !includeAccounts && !includeContents) {
             return List.of();
         }
 
-        Map<String, Map<String, Object>> details = entityEsService.getEntitiesByIds(topIds);
-        Map<String, Map<String, Object>> esById = esResults.stream()
-                .collect(Collectors.toMap(
-                        r -> (String) r.get("entityId"),
-                        r -> r,
-                        (a, b) -> a));
+        float[] embedding = textEmbedding(keyword);
+
+        List<String> entityTypeFilters = new ArrayList<>();
+        if (includeEntities) {
+            if (allDomains) {
+                entityTypeFilters.add(null);
+            } else {
+                entityTypeFilters.addAll(standardEntityTypes);
+            }
+        }
+        List<CompletableFuture<List<Map<String, Object>>>> entityEsFutures = entityTypeFilters.stream()
+                .map(type -> safeRoute("entity-es", () -> entityEsService.searchEntities(keyword, type, safeTopK)))
+                .toList();
+        List<CompletableFuture<List<MilvusVectorService.ScoredEntityId>>> entityMilvusFutures =
+                embedding == null ? List.of() : entityTypeFilters.stream()
+                        .map(type -> safeRoute("entity-milvus",
+                                () -> milvusService.searchEntityEmbeddings(embedding, safeTopK, type)))
+                        .toList();
+        CompletableFuture<List<SocialAccountEsService.EsAccountSearchResult>> accountEsFuture = includeAccounts
+                ? safeRoute("account-es", () -> socialAccountEsService.searchByKeywordWithScore(
+                keyword, null, null, safeTopK))
+                : CompletableFuture.completedFuture(List.of());
+        CompletableFuture<List<MilvusVectorService.ScoredEntityId>> accountMilvusFuture =
+                includeAccounts && embedding != null
+                        ? safeRoute("account-milvus", () -> milvusService.searchAccountEmbeddings(embedding, safeTopK))
+                        : CompletableFuture.completedFuture(List.of());
+        CompletableFuture<List<MediaContentEsService.EsSearchResult>> contentEsFuture = includeContents
+                ? safeRoute("content-es", () -> esService.searchByKeywordWithHighlight(
+                keyword, null, null, safeTopK))
+                : CompletableFuture.completedFuture(List.of());
+        CompletableFuture<List<MilvusVectorService.ScoredEntityId>> textMilvusFuture =
+                includeContents && embedding != null
+                        ? safeRoute("content-text-milvus",
+                        () -> milvusService.searchTextEmbeddingsWithScore(embedding, safeTopK, null, null))
+                        : CompletableFuture.completedFuture(List.of());
+        CompletableFuture<List<MilvusVectorService.ScoredEntityId>> imageMilvusFuture =
+                includeContents && embedding != null
+                        ? safeRoute("content-image-milvus",
+                        () -> searchImageSemanticContentIds(embedding, safeTopK))
+                        : CompletableFuture.completedFuture(List.of());
+
+        List<CompletableFuture<?>> futures = new ArrayList<>();
+        futures.addAll(entityEsFutures);
+        futures.addAll(entityMilvusFutures);
+        futures.add(accountEsFuture);
+        futures.add(accountMilvusFuture);
+        futures.add(contentEsFuture);
+        futures.add(textMilvusFuture);
+        futures.add(imageMilvusFuture);
+        CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new)).join();
+
+        List<Map<String, Object>> entityEsResults = entityEsFutures.stream()
+                .flatMap(future -> future.join().stream())
+                .toList();
+        List<MilvusVectorService.ScoredEntityId> entityMilvusResults = entityMilvusFutures.stream()
+                .flatMap(future -> future.join().stream())
+                .toList();
+        List<SocialAccountEsService.EsAccountSearchResult> accountEsResults = accountEsFuture.join();
+        List<MilvusVectorService.ScoredEntityId> accountMilvusResults = accountMilvusFuture.join();
+        List<MediaContentEsService.EsSearchResult> contentEsResults = contentEsFuture.join();
+        List<MilvusVectorService.ScoredEntityId> textMilvusResults = textMilvusFuture.join();
+        List<MilvusVectorService.ScoredEntityId> imageMilvusResults = imageMilvusFuture.join();
+
+        List<String> entityEsIds = entityEsResults.stream()
+                .map(r -> scopedId("entity", (String) r.get("entityId")))
+                .toList();
+        List<String> entityMilvusIds = entityMilvusResults.stream()
+                .map(r -> scopedId("entity", r.entityId()))
+                .toList();
+        List<String> accountEsIds = accountEsResults.stream()
+                .map(r -> scopedId("account", r.accountId()))
+                .toList();
+        List<String> accountMilvusIds = accountMilvusResults.stream()
+                .map(r -> scopedId("account", r.entityId()))
+                .toList();
+        List<String> contentEsIds = contentEsResults.stream()
+                .map(r -> scopedId("content", r.getContentId()))
+                .toList();
+        List<String> textMilvusIds = textMilvusResults.stream()
+                .map(r -> scopedId("content", r.entityId()))
+                .toList();
+        List<String> imageMilvusIds = imageMilvusResults.stream()
+                .map(r -> scopedId("content", r.entityId()))
+                .toList();
+
+        Map<String, Double> esScores = new LinkedHashMap<>();
+        entityEsResults.forEach(r -> putScore(esScores, scopedId("entity", (String) r.get("entityId")),
+                r.get("score")));
+        accountEsResults.forEach(r -> putScore(esScores, scopedId("account", r.accountId()), r.score()));
+        contentEsResults.forEach(r -> putScore(esScores, scopedId("content", r.getContentId()), r.getScore()));
+
+        Map<String, Double> similarityScores = new LinkedHashMap<>();
+        entityMilvusResults.forEach(r -> putScore(similarityScores, scopedId("entity", r.entityId()), r.score()));
+        accountMilvusResults.forEach(r -> putScore(similarityScores, scopedId("account", r.entityId()), r.score()));
+        textMilvusResults.forEach(r -> putScore(similarityScores, scopedId("content", r.entityId()), r.score()));
+        imageMilvusResults.forEach(r -> {
+            String id = scopedId("content", r.entityId());
+            if (hasText(id)) {
+                similarityScores.merge(id, (double) r.score(), Math::max);
+            }
+        });
+
+        Map<String, Double> fusedScores = fuseByRrf(List.of(
+                entityEsIds, entityMilvusIds,
+                accountEsIds, accountMilvusIds,
+                contentEsIds, textMilvusIds, imageMilvusIds));
+        List<String> topScopedIds = new ArrayList<>(fusedScores.keySet());
+        if (topScopedIds.size() > safeTopK) {
+            topScopedIds = topScopedIds.subList(0, safeTopK);
+        }
+        if (topScopedIds.isEmpty()) {
+            return List.of();
+        }
+
+        List<String> entityIds = topScopedIds.stream()
+                .filter(id -> id.startsWith("entity:"))
+                .map(id -> id.substring("entity:".length()))
+                .toList();
+        List<UUID> accountIds = topScopedIds.stream()
+                .filter(id -> id.startsWith("account:"))
+                .map(id -> parseUuid(id.substring("account:".length())))
+                .filter(Objects::nonNull)
+                .toList();
+        List<UUID> contentIds = topScopedIds.stream()
+                .filter(id -> id.startsWith("content:"))
+                .map(id -> parseUuid(id.substring("content:".length())))
+                .filter(Objects::nonNull)
+                .toList();
+
+        Map<String, Map<String, Object>> entityDetails = entityEsService.getEntitiesByIds(entityIds);
+        Map<String, SocialAccount> accountsById = accountIds.isEmpty()
+                ? Map.of()
+                : socialAccountMapper.selectBatchIds(accountIds).stream()
+                .collect(Collectors.toMap(a -> a.getId().toString(), a -> a, (a, b) -> a));
+        Map<String, MediaContent> contentsById = contentIds.isEmpty()
+                ? Map.of()
+                : mediaContentMapper.selectBatchIds(contentIds).stream()
+                .collect(Collectors.toMap(c -> c.getId().toString(), c -> c, (a, b) -> a));
 
         List<Map<String, Object>> result = new ArrayList<>();
-        for (String id : topIds) {
-            Map<String, Object> detail = details.get(id);
-            if (detail == null) {
-                continue;
+        for (String scopedId : topScopedIds) {
+            Map<String, Object> item = null;
+            String id = scopedId.substring(scopedId.indexOf(':') + 1);
+            if (scopedId.startsWith("entity:")) {
+                Map<String, Object> detail = entityDetails.get(id);
+                if (detail != null) {
+                    item = new LinkedHashMap<>(detail);
+                    item.put("id", id);
+                    item.put("resultType", "Entity");
+                    item.put("entityType", detail.get("entity_type"));
+                }
+            } else if (scopedId.startsWith("account:")) {
+                SocialAccount account = accountsById.get(id);
+                if (account != null) {
+                    item = socialAccountResult(account);
+                }
+            } else if (scopedId.startsWith("content:")) {
+                MediaContent content = contentsById.get(id);
+                if (content != null) {
+                    item = mediaContentResult(content);
+                }
             }
-            Map<String, Object> item = new LinkedHashMap<>(detail);
-            item.put("id", id);
-            item.put("fusionScore", fusedScores.get(id));
-            Map<String, Object> esResult = esById.get(id);
-            if (esResult != null) {
-                item.put("esScore", esResult.get("score"));
+            if (item != null) {
+                item.put("fusionScore", fusedScores.get(scopedId));
+                if (esScores.containsKey(scopedId)) {
+                    item.put("esScore", esScores.get(scopedId));
+                }
+                if (similarityScores.containsKey(scopedId)) {
+                    item.put("similarityScore", similarityScores.get(scopedId));
+                }
+                result.add(item);
             }
-            result.add(item);
         }
         return result;
     }
@@ -283,6 +460,345 @@ public class SearchService {
                     log.warn("Hybrid search route completed exceptionally, route={}", routeName, e);
                     return List.of();
                 });
+    }
+
+    private float[] textEmbedding(String text) {
+        if (!hasText(text)) {
+            return null;
+        }
+        T4EmbeddingRequest request = new T4EmbeddingRequest();
+        request.setText(text);
+        T4EmbeddingResponse response = agentProxyClient.call(
+                "T4", "generate_text_embedding", request, T4EmbeddingResponse.class);
+        return response == null ? null : response.getEmbedding();
+    }
+
+    private String canonicalStandardEntityType(String entityType) {
+        if (!hasText(entityType)) {
+            return null;
+        }
+        return switch (entityType.trim().toLowerCase()) {
+            case "person" -> "Person";
+            case "organization" -> "Organization";
+            case "event" -> "Event";
+            case "location" -> "Location";
+            default -> null;
+        };
+    }
+
+    private List<String> normalizeEntityTypes(Collection<String> entityTypes) {
+        if (entityTypes == null || entityTypes.isEmpty()) {
+            return List.of();
+        }
+        return entityTypes.stream()
+                .filter(this::hasText)
+                .map(String::trim)
+                .distinct()
+                .toList();
+    }
+
+    private String normalizeRetrievalMode(String retrievalMode) {
+        String mode = hasText(retrievalMode) ? retrievalMode.trim().toLowerCase() : "both";
+        return switch (mode) {
+            case "keyword", "semantic", "both" -> mode;
+            default -> null;
+        };
+    }
+
+    private boolean useKeywordCandidates(String retrievalMode) {
+        return "keyword".equals(retrievalMode) || "both".equals(retrievalMode);
+    }
+
+    private boolean useSemanticCandidates(String retrievalMode) {
+        return "semantic".equals(retrievalMode) || "both".equals(retrievalMode);
+    }
+
+    private String scopedId(String domain, String id) {
+        if (!hasText(id)) {
+            return null;
+        }
+        return domain + ":" + id;
+    }
+
+    private void putScore(Map<String, Double> scores, String id, Object score) {
+        if (hasText(id) && score instanceof Number number) {
+            scores.put(id, number.doubleValue());
+        }
+    }
+
+    private List<MilvusVectorService.ScoredEntityId> searchImageSemanticContentIds(float[] embedding, int topK) {
+        List<MilvusVectorService.ScoredEntityId> assetScores =
+                milvusService.searchImageEmbeddingsWithScore(embedding, topK);
+        List<UUID> assetIds = assetScores.stream()
+                .map(item -> item.entityId() != null && item.entityId().startsWith("image_")
+                        ? item.entityId().substring("image_".length())
+                        : item.entityId())
+                .map(this::parseUuid)
+                .filter(Objects::nonNull)
+                .toList();
+        if (assetIds.isEmpty()) {
+            return List.of();
+        }
+
+        Map<UUID, MediaAsset> assetsById = new LinkedHashMap<>();
+        for (MediaAsset asset : mediaAssetMapper.selectBatchIds(assetIds)) {
+            assetsById.put(asset.getId(), asset);
+        }
+
+        Map<String, Float> contentScores = new LinkedHashMap<>();
+        for (MilvusVectorService.ScoredEntityId scoredAsset : assetScores) {
+            String rawAssetId = scoredAsset.entityId() != null && scoredAsset.entityId().startsWith("image_")
+                    ? scoredAsset.entityId().substring("image_".length())
+                    : scoredAsset.entityId();
+            UUID assetId = parseUuid(rawAssetId);
+            MediaAsset asset = assetId == null ? null : assetsById.get(assetId);
+            if (asset != null && asset.getContentId() != null) {
+                contentScores.merge(asset.getContentId().toString(), scoredAsset.score(), Math::max);
+            }
+        }
+        return contentScores.entrySet().stream()
+                .map(entry -> new MilvusVectorService.ScoredEntityId(entry.getKey(), entry.getValue()))
+                .toList();
+    }
+
+    private Map<String, Object> socialAccountResult(SocialAccount account) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("id", account.getId().toString());
+        item.put("resultType", "SocialAccount");
+        item.put("entityType", "SocialAccount");
+        item.put("platform", account.getPlatform());
+        item.put("handle", account.getHandle());
+        item.put("displayName", account.getDisplayName());
+        item.put("canonicalName", hasText(account.getDisplayName()) ? account.getDisplayName() : account.getHandle());
+        item.put("bio", account.getBio());
+        item.put("accountType", account.getAccountType());
+        item.put("followersCount", account.getFollowersCount());
+        item.put("verified", account.getVerified());
+        return item;
+    }
+
+    private Map<String, Object> mediaContentResult(MediaContent content) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("id", content.getId().toString());
+        item.put("resultType", "MediaContent");
+        item.put("entityType", "MediaContent");
+        item.put("platform", content.getPlatform());
+        item.put("contentType", content.getContentType());
+        item.put("title", content.getTitle());
+        item.put("canonicalName", hasText(content.getTitle()) ? content.getTitle() : content.getPlatformContentId());
+        item.put("bodyText", content.getBodyText());
+        item.put("language", content.getLanguage());
+        item.put("publishedAt", content.getPublishedAt());
+        item.put("url", content.getUrl());
+        return item;
+    }
+
+    private List<EntityCandidateSearchResponse.Candidate> searchEntityCandidatesFromEs(
+            String keyword, List<String> requestedTypes, int topK) {
+        if (!hasText(keyword) || topK <= 0) {
+            return List.of();
+        }
+        boolean allDomains = requestedTypes == null || requestedTypes.isEmpty();
+        List<String> standardTypes = standardEntityTypes(requestedTypes);
+        boolean includeEntities = allDomains || !standardTypes.isEmpty();
+        boolean includeAccounts = allDomains || containsType(requestedTypes, "SocialAccount");
+        boolean includeContents = allDomains || containsType(requestedTypes, "MediaContent");
+
+        List<ScoredScopedId> scored = new ArrayList<>();
+        if (includeEntities) {
+            List<String> filters = allDomains ? java.util.Collections.singletonList(null) : standardTypes;
+            for (String type : filters) {
+                entityEsService.searchEntities(keyword, type, topK).forEach(result ->
+                        addScored(scored, "entity", stringValue(result.get("entityId")), result.get("score")));
+            }
+        }
+        if (includeAccounts) {
+            socialAccountEsService.searchByKeywordWithScore(keyword, null, null, topK).forEach(result ->
+                    addScored(scored, "account", result.accountId(), result.score()));
+        }
+        if (includeContents) {
+            esService.searchByKeywordWithHighlight(keyword, null, null, topK).forEach(result ->
+                    addScored(scored, "content", result.getContentId(), result.getScore()));
+        }
+        return hydrateEntityCandidates(scored, topK);
+    }
+
+    private List<EntityCandidateSearchResponse.Candidate> searchEntityCandidatesFromMilvus(
+            String keyword, List<String> requestedTypes, int topK) {
+        if (!hasText(keyword) || topK <= 0) {
+            return List.of();
+        }
+        float[] embedding = textEmbedding(keyword);
+        if (embedding == null) {
+            return List.of();
+        }
+
+        boolean allDomains = requestedTypes == null || requestedTypes.isEmpty();
+        List<String> standardTypes = standardEntityTypes(requestedTypes);
+        boolean includeEntities = allDomains || !standardTypes.isEmpty();
+        boolean includeAccounts = allDomains || containsType(requestedTypes, "SocialAccount");
+        boolean includeContents = allDomains || containsType(requestedTypes, "MediaContent");
+
+        List<ScoredScopedId> scored = new ArrayList<>();
+        if (includeEntities) {
+            List<String> filters = allDomains ? java.util.Collections.singletonList(null) : standardTypes;
+            for (String type : filters) {
+                milvusService.searchEntityEmbeddings(embedding, topK, type).forEach(result ->
+                        addScored(scored, "entity", result.entityId(), result.score()));
+            }
+        }
+        if (includeAccounts) {
+            milvusService.searchAccountEmbeddings(embedding, topK).forEach(result ->
+                    addScored(scored, "account", result.entityId(), result.score()));
+        }
+        if (includeContents) {
+            milvusService.searchTextEmbeddingsWithScore(embedding, topK, null, null).forEach(result ->
+                    addScored(scored, "content", result.entityId(), result.score()));
+            searchImageSemanticContentIds(embedding, topK).forEach(result ->
+                    addScored(scored, "content", result.entityId(), result.score()));
+        }
+        return hydrateEntityCandidates(scored, topK);
+    }
+
+    private List<EntityCandidateSearchResponse.Candidate> hydrateEntityCandidates(
+            List<ScoredScopedId> scored, int topK) {
+        if (scored == null || scored.isEmpty()) {
+            return List.of();
+        }
+        List<ScoredScopedId> ranked = dedupeAndRank(scored, topK);
+
+        List<String> entityIds = ranked.stream()
+                .map(ScoredScopedId::scopedId)
+                .filter(id -> id.startsWith("entity:"))
+                .map(id -> id.substring("entity:".length()))
+                .toList();
+        List<UUID> accountIds = ranked.stream()
+                .map(ScoredScopedId::scopedId)
+                .filter(id -> id.startsWith("account:"))
+                .map(id -> parseUuid(id.substring("account:".length())))
+                .filter(Objects::nonNull)
+                .toList();
+        List<UUID> contentIds = ranked.stream()
+                .map(ScoredScopedId::scopedId)
+                .filter(id -> id.startsWith("content:"))
+                .map(id -> parseUuid(id.substring("content:".length())))
+                .filter(Objects::nonNull)
+                .toList();
+
+        Map<String, Map<String, Object>> entityDetails = entityEsService.getEntitiesByIds(entityIds);
+        Map<String, SocialAccount> accountsById = accountIds.isEmpty()
+                ? Map.of()
+                : socialAccountMapper.selectBatchIds(accountIds).stream()
+                .collect(Collectors.toMap(a -> a.getId().toString(), a -> a, (a, b) -> a));
+        Map<String, MediaContent> contentsById = contentIds.isEmpty()
+                ? Map.of()
+                : mediaContentMapper.selectBatchIds(contentIds).stream()
+                .collect(Collectors.toMap(c -> c.getId().toString(), c -> c, (a, b) -> a));
+
+        List<EntityCandidateSearchResponse.Candidate> candidates = new ArrayList<>();
+        for (ScoredScopedId scoredId : ranked) {
+            String scopedId = scoredId.scopedId();
+            String id = scopedId.substring(scopedId.indexOf(':') + 1);
+            Map<String, Object> item = null;
+            if (scopedId.startsWith("entity:")) {
+                Map<String, Object> detail = entityDetails.get(id);
+                if (detail != null) {
+                    item = new LinkedHashMap<>(detail);
+                    item.put("id", id);
+                    item.put("entityType", detail.get("entity_type"));
+                }
+            } else if (scopedId.startsWith("account:")) {
+                SocialAccount account = accountsById.get(id);
+                if (account != null) {
+                    item = socialAccountResult(account);
+                }
+            } else if (scopedId.startsWith("content:")) {
+                MediaContent content = contentsById.get(id);
+                if (content != null) {
+                    item = mediaContentResult(content);
+                }
+            }
+            EntityCandidateSearchResponse.Candidate candidate = toEntityCandidate(item, scoredId.score());
+            if (candidate != null) {
+                candidates.add(candidate);
+            }
+        }
+        return candidates;
+    }
+
+    private EntityCandidateSearchResponse.Candidate toEntityCandidate(Map<String, Object> item, double score) {
+        if (item == null) {
+            return null;
+        }
+        String nodeId = stringValue(item.get("id"));
+        String entityType = stringValue(item.get("entityType"));
+        String name = firstText(
+                item.get("canonicalName"),
+                item.get("canonical_name"),
+                item.get("displayName"),
+                item.get("handle"),
+                item.get("title"),
+                item.get("platformContentId"),
+                item.get("platform_content_id"),
+                item.get("name"),
+                nodeId);
+        if (!hasText(nodeId) || !hasText(entityType) || !hasText(name)) {
+            return null;
+        }
+        return new EntityCandidateSearchResponse.Candidate(nodeId, name, entityType, score);
+    }
+
+    private List<ScoredScopedId> dedupeAndRank(List<ScoredScopedId> scored, int topK) {
+        Map<String, Double> bestScores = new LinkedHashMap<>();
+        for (ScoredScopedId item : scored) {
+            if (item != null && hasText(item.scopedId())) {
+                bestScores.merge(item.scopedId(), item.score(), Math::max);
+            }
+        }
+        return bestScores.entrySet().stream()
+                .sorted(Map.Entry.<String, Double>comparingByValue(Comparator.reverseOrder()))
+                .limit(topK)
+                .map(entry -> new ScoredScopedId(entry.getKey(), entry.getValue()))
+                .toList();
+    }
+
+    private void addScored(List<ScoredScopedId> scored, String domain, String id, Object score) {
+        String scopedId = scopedId(domain, id);
+        if (hasText(scopedId)) {
+            scored.add(new ScoredScopedId(scopedId, scoreValue(score)));
+        }
+    }
+
+    private double scoreValue(Object score) {
+        return score instanceof Number number ? number.doubleValue() : 0D;
+    }
+
+    private boolean containsType(List<String> types, String type) {
+        return types != null && types.stream().anyMatch(type::equalsIgnoreCase);
+    }
+
+    private List<String> standardEntityTypes(List<String> requestedTypes) {
+        if (requestedTypes == null || requestedTypes.isEmpty()) {
+            return List.of();
+        }
+        return requestedTypes.stream()
+                .map(this::canonicalStandardEntityType)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+    }
+
+    private String firstText(Object... values) {
+        for (Object value : values) {
+            String text = stringValue(value);
+            if (hasText(text)) {
+                return text;
+            }
+        }
+        return null;
+    }
+
+    private record ScoredScopedId(String scopedId, double score) {
     }
 
     private List<MilvusVectorService.ScoredEntityId> searchSemanticIds(
@@ -315,23 +831,6 @@ public class SearchService {
             return List.of();
         }
         return milvusService.searchAccountEmbeddings(embedding, topK).stream()
-                .map(MilvusVectorService.ScoredEntityId::entityId)
-                .toList();
-    }
-
-    private List<String> searchEntitySemanticIds(String keyword, String entityType, int topK) {
-        if (!hasText(keyword)) {
-            return List.of();
-        }
-        T4EmbeddingRequest request = new T4EmbeddingRequest();
-        request.setText(keyword);
-        T4EmbeddingResponse response = agentProxyClient.call(
-                "T4", "generate_text_embedding", request, T4EmbeddingResponse.class);
-        float[] embedding = response == null ? null : response.getEmbedding();
-        if (embedding == null) {
-            return List.of();
-        }
-        return milvusService.searchEntityEmbeddings(embedding, topK, entityType).stream()
                 .map(MilvusVectorService.ScoredEntityId::entityId)
                 .toList();
     }

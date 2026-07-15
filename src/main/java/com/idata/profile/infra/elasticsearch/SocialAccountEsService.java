@@ -138,11 +138,51 @@ public class SocialAccountEsService {
         }
     }
 
+    public List<EsAccountSearchResult> searchByKeywordWithScore(String keyword, String platform,
+                                                                 String accountType, int size) {
+        if (esClient == null || !hasText(keyword) || size <= 0) {
+            return List.of();
+        }
+
+        try {
+            SearchResponse<Map> response = esClient.search(s -> s
+                            .index(ACCOUNT_INDEX)
+                            .size(size)
+                            .query(q -> q.bool(b -> {
+                                b.must(m -> m.multiMatch(mm -> mm
+                                        .query(keyword)
+                                        .fields("handle^2", "display_name^2", "bio")
+                                        .operator(Operator.And)));
+                                if (hasText(platform)) {
+                                    b.filter(f -> f.term(t -> t.field("platform").value(platform)));
+                                }
+                                if (hasText(accountType)) {
+                                    b.filter(f -> f.term(t -> t.field("account_type").value(accountType)));
+                                }
+                                return b;
+                            })),
+                    Map.class);
+            return response.hits().hits().stream()
+                    .map(hit -> new EsAccountSearchResult(hit.id(), hit.score()))
+                    .toList();
+        } catch (ElasticsearchException e) {
+            if (isIndexNotFound(e)) {
+                return List.of();
+            }
+            throw e;
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to search social accounts by keyword: " + keyword, e);
+        }
+    }
+
     private boolean isIndexNotFound(ElasticsearchException e) {
         return e != null && e.error() != null && "index_not_found_exception".equals(e.error().type());
     }
 
     private boolean hasText(String value) {
         return value != null && !value.trim().isEmpty();
+    }
+
+    public record EsAccountSearchResult(String accountId, Double score) {
     }
 }

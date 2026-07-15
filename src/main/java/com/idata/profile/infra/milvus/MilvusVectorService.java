@@ -144,6 +144,10 @@ public class MilvusVectorService {
         return searchEmbeddings(IMAGE_COLLECTION, queryEmbedding, topK, null, "source_id");
     }
 
+    public List<ScoredEntityId> searchImageEmbeddingsWithScore(float[] queryEmbedding, int topK) {
+        return searchEmbeddingsWithScore(IMAGE_COLLECTION, queryEmbedding, topK, null, "source_id");
+    }
+
     /**
      * 实体向量检索，返回最相似的 topK 个 entity_id。
      */
