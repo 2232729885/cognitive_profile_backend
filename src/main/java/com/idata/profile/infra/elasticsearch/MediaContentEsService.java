@@ -1,7 +1,8 @@
 package com.idata.profile.infra.elasticsearch;
 
-import co.elastic.clients.elasticsearch._types.ElasticsearchException;
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.elasticsearch._types.ElasticsearchException;
+import co.elastic.clients.elasticsearch._types.query_dsl.Operator;
 import co.elastic.clients.elasticsearch.core.IndexResponse;
 import co.elastic.clients.elasticsearch.core.SearchResponse;
 import co.elastic.clients.elasticsearch.core.search.Hit;
@@ -96,46 +97,9 @@ public class MediaContentEsService {
     }
 
     /**
-     * 关键词全文检索 body_text 和 title，返回匹配的 content_id 列表（按相关性排序）
+     * 关键词全文检索 body_text 和 title，返回匹配的 content_id、高亮片段和 ES 相关性得分（按相关性排序）
      * platform 和 language 为 null 时不作为过滤条件
      */
-    public List<String> searchByKeyword(String keyword, String platform,
-                                        String language, int size) {
-        if (esClient == null || !hasText(keyword) || size <= 0) {
-            return List.of();
-        }
-
-        try {
-            SearchResponse<Map> response = esClient.search(s -> s
-                            .index(MEDIA_CONTENTS_INDEX)
-                            .size(size)
-                            .query(q -> q.bool(b -> {
-                                b.must(m -> m.multiMatch(mm -> mm
-                                        .query(keyword)
-                                        .fields("body_text", "title")
-                                        .minimumShouldMatch("75%")));
-                                if (hasText(platform)) {
-                                    b.filter(f -> f.term(t -> t.field("platform").value(platform)));
-                                }
-                                if (hasText(language)) {
-                                    b.filter(f -> f.term(t -> t.field("language").value(language)));
-                                }
-                                return b;
-                            })),
-                    Map.class);
-            return response.hits().hits().stream()
-                    .map(Hit::id)
-                    .toList();
-        } catch (ElasticsearchException e) {
-            if (isIndexNotFound(e)) {
-                return List.of();
-            }
-            throw e;
-        } catch (IOException e) {
-            throw new IllegalStateException("Failed to search media content by keyword: " + keyword, e);
-        }
-    }
-
     public List<EsSearchResult> searchByKeywordWithHighlight(String keyword, String platform,
                                                              String language, int size) {
         if (esClient == null || !hasText(keyword) || size <= 0) {
@@ -150,7 +114,7 @@ public class MediaContentEsService {
                                 b.must(m -> m.multiMatch(mm -> mm
                                         .query(keyword)
                                         .fields("body_text", "title")
-                                        .minimumShouldMatch("75%")));
+                                        .operator(Operator.And)));
                                 if (hasText(platform)) {
                                     b.filter(f -> f.term(t -> t.field("platform").value(platform)));
                                 }
@@ -172,7 +136,7 @@ public class MediaContentEsService {
                     Map.class);
 
             return response.hits().hits().stream()
-                    .map(hit -> new EsSearchResult(hit.id(), hit.highlight()))
+                    .map(hit -> new EsSearchResult(hit.id(), hit.highlight(), hit.score()))
                     .toList();
         } catch (ElasticsearchException e) {
             if (isIndexNotFound(e)) {
@@ -229,5 +193,10 @@ public class MediaContentEsService {
          * key: 字段名（body_text/title），value: 高亮 HTML 片段列表
          */
         private Map<String, List<String>> highlights;
+        /**
+         * ES 原始相关性得分（BM25），用于前端展示排序依据，跟不同来源（Milvus/Neo4j）的得分不是同一个量纲，
+         * 不要跨渠道直接比较数值大小
+         */
+        private Double score;
     }
 }

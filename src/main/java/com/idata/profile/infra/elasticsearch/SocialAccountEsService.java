@@ -2,6 +2,7 @@ package com.idata.profile.infra.elasticsearch;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch._types.ElasticsearchException;
+import co.elastic.clients.elasticsearch._types.query_dsl.Operator;
 import co.elastic.clients.elasticsearch.core.SearchResponse;
 import co.elastic.clients.elasticsearch.core.search.Hit;
 import com.idata.profile.entity.account.SocialAccount;
@@ -114,7 +115,7 @@ public class SocialAccountEsService {
                                 b.must(m -> m.multiMatch(mm -> mm
                                         .query(keyword)
                                         .fields("handle^2", "display_name^2", "bio")
-                                        .minimumShouldMatch("75%")));
+                                        .operator(Operator.And)));
                                 if (hasText(platform)) {
                                     b.filter(f -> f.term(t -> t.field("platform").value(platform)));
                                 }

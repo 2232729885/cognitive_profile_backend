@@ -67,12 +67,20 @@ public class SearchService {
                         MediaContentEsService.EsSearchResult::getHighlights,
                         (left, right) -> left,
                         LinkedHashMap::new));
+        Map<String, Double> scores = esResults.stream()
+                .filter(r -> r.getScore() != null)
+                .collect(Collectors.toMap(
+                        MediaContentEsService.EsSearchResult::getContentId,
+                        MediaContentEsService.EsSearchResult::getScore,
+                        (left, right) -> left,
+                        LinkedHashMap::new));
         int fromIndex = Math.min(safePage * safeSize, rankedIds.size());
         int toIndex = Math.min(fromIndex + safeSize, rankedIds.size());
         List<MediaContent> items = fetchContentsInOrder(rankedIds.subList(fromIndex, toIndex));
 
         SearchResult result = buildResult(items, rankedIds.size(), "text", startedAt);
         result.setHighlights(highlights);
+        result.setScores(scores);
         return result;
     }
 
@@ -93,8 +101,8 @@ public class SearchService {
         String language = request == null ? null : request.getLanguage();
         boolean hasImage = request != null && hasText(request.getImageUrl()) && request.isEnableMilvus();
 
-        CompletableFuture<List<String>> esFuture = isEnabled(request, "es")
-                ? safeRoute("es", () -> esService.searchByKeyword(queryText, platform, language, topK))
+        CompletableFuture<List<MediaContentEsService.EsSearchResult>> esFuture = isEnabled(request, "es")
+                ? safeRoute("es", () -> esService.searchByKeywordWithHighlight(queryText, platform, language, topK))
                 : CompletableFuture.completedFuture(List.of());
         CompletableFuture<List<String>> milvusFuture = isEnabled(request, "milvus")
                 ? safeRoute("milvus", () -> searchSemanticIds(queryText, platform, language, topK))
@@ -109,11 +117,34 @@ public class SearchService {
 
         CompletableFuture.allOf(esFuture, milvusFuture, neo4jFuture, imageFuture).join();
 
+        List<MediaContentEsService.EsSearchResult> esResults = esFuture.join();
+        List<String> esIds = esResults.stream()
+                .map(MediaContentEsService.EsSearchResult::getContentId)
+                .toList();
+
         List<String> fusedIds = fuseByRrf(List.of(
-                esFuture.join(), milvusFuture.join(), neo4jFuture.join(), imageFuture.join()));
+                esIds, milvusFuture.join(), neo4jFuture.join(), imageFuture.join()));
         List<String> topIds = fusedIds.size() > topK ? fusedIds.subList(0, topK) : fusedIds;
         List<MediaContent> items = fetchContentsInOrder(topIds);
-        return buildResult(items, fusedIds.size(), "hybrid", startedAt);
+
+        Map<String, Map<String, List<String>>> highlights = esResults.stream()
+                .collect(Collectors.toMap(
+                        MediaContentEsService.EsSearchResult::getContentId,
+                        MediaContentEsService.EsSearchResult::getHighlights,
+                        (left, right) -> left,
+                        LinkedHashMap::new));
+        Map<String, Double> scores = esResults.stream()
+                .filter(r -> r.getScore() != null)
+                .collect(Collectors.toMap(
+                        MediaContentEsService.EsSearchResult::getContentId,
+                        MediaContentEsService.EsSearchResult::getScore,
+                        (left, right) -> left,
+                        LinkedHashMap::new));
+
+        SearchResult result = buildResult(items, fusedIds.size(), "hybrid", startedAt);
+        result.setHighlights(highlights);
+        result.setScores(scores);
+        return result;
     }
 
     public List<SocialAccount> searchAccounts(String queryText, String platform, String accountType, int topK) {
@@ -160,13 +191,13 @@ public class SearchService {
         return buildResult(items, ids.size(), "image", startedAt);
     }
 
-    private CompletableFuture<List<String>> safeRoute(String routeName, SearchRoute route) {
+    private <T> CompletableFuture<List<T>> safeRoute(String routeName, SearchRoute<T> route) {
         return CompletableFuture.supplyAsync(() -> {
                     try {
                         return route.search();
                     } catch (Exception e) {
                         log.warn("Hybrid search route failed, route={}", routeName, e);
-                        return List.<String>of();
+                        return List.<T>of();
                     }
                 })
                 .orTimeout(HYBRID_ROUTE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
@@ -434,7 +465,7 @@ public class SearchService {
     }
 
     @FunctionalInterface
-    private interface SearchRoute {
-        List<String> search();
+    private interface SearchRoute<T> {
+        List<T> search();
     }
 }
