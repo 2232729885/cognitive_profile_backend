@@ -88,9 +88,22 @@ public class SearchService {
                                          String language, int topK) {
         long startedAt = System.currentTimeMillis();
         int safeTopK = normalizeSize(topK);
-        List<String> ids = searchSemanticIds(queryText, platform, language, safeTopK);
+        List<MilvusVectorService.ScoredEntityId> scored =
+                searchSemanticIds(queryText, platform, language, safeTopK);
+        List<String> ids = scored.stream()
+                .map(MilvusVectorService.ScoredEntityId::entityId)
+                .toList();
         List<MediaContent> items = fetchContentsInOrder(ids);
-        return buildResult(items, ids.size(), "semantic", startedAt);
+        Map<String, Double> similarityScores = scored.stream()
+                .collect(Collectors.toMap(
+                        MilvusVectorService.ScoredEntityId::entityId,
+                        s -> (double) s.score(),
+                        (left, right) -> left,
+                        LinkedHashMap::new));
+
+        SearchResult result = buildResult(items, ids.size(), "semantic", startedAt);
+        result.setSimilarityScores(similarityScores);
+        return result;
     }
 
     public SearchResult searchHybrid(HybridSearchRequest request) {
@@ -104,7 +117,7 @@ public class SearchService {
         CompletableFuture<List<MediaContentEsService.EsSearchResult>> esFuture = isEnabled(request, "es")
                 ? safeRoute("es", () -> esService.searchByKeywordWithHighlight(queryText, platform, language, topK))
                 : CompletableFuture.completedFuture(List.of());
-        CompletableFuture<List<String>> milvusFuture = isEnabled(request, "milvus")
+        CompletableFuture<List<MilvusVectorService.ScoredEntityId>> milvusFuture = isEnabled(request, "milvus")
                 ? safeRoute("milvus", () -> searchSemanticIds(queryText, platform, language, topK))
                 : CompletableFuture.completedFuture(List.of());
         CompletableFuture<List<String>> neo4jFuture = request != null && request.isEnableNeo4j()
@@ -121,9 +134,14 @@ public class SearchService {
         List<String> esIds = esResults.stream()
                 .map(MediaContentEsService.EsSearchResult::getContentId)
                 .toList();
+        List<MilvusVectorService.ScoredEntityId> milvusResults = milvusFuture.join();
+        List<String> milvusIds = milvusResults.stream()
+                .map(MilvusVectorService.ScoredEntityId::entityId)
+                .toList();
 
-        List<String> fusedIds = fuseByRrf(List.of(
-                esIds, milvusFuture.join(), neo4jFuture.join(), imageFuture.join()));
+        Map<String, Double> fusedScores = fuseByRrf(List.of(
+                esIds, milvusIds, neo4jFuture.join(), imageFuture.join()));
+        List<String> fusedIds = new ArrayList<>(fusedScores.keySet());
         List<String> topIds = fusedIds.size() > topK ? fusedIds.subList(0, topK) : fusedIds;
         List<MediaContent> items = fetchContentsInOrder(topIds);
 
@@ -140,10 +158,18 @@ public class SearchService {
                         MediaContentEsService.EsSearchResult::getScore,
                         (left, right) -> left,
                         LinkedHashMap::new));
+        Map<String, Double> similarityScores = milvusResults.stream()
+                .collect(Collectors.toMap(
+                        MilvusVectorService.ScoredEntityId::entityId,
+                        s -> (double) s.score(),
+                        (left, right) -> left,
+                        LinkedHashMap::new));
 
         SearchResult result = buildResult(items, fusedIds.size(), "hybrid", startedAt);
         result.setHighlights(highlights);
         result.setScores(scores);
+        result.setSimilarityScores(similarityScores);
+        result.setFusionScores(fusedScores);
         return result;
     }
 
@@ -157,7 +183,7 @@ public class SearchService {
 
         CompletableFuture.allOf(esFuture, milvusFuture).join();
 
-        List<String> fusedIds = fuseByRrf(List.of(esFuture.join(), milvusFuture.join()));
+        List<String> fusedIds = new ArrayList<>(fuseByRrf(List.of(esFuture.join(), milvusFuture.join())).keySet());
         List<String> topIds = fusedIds.size() > safeTopK ? fusedIds.subList(0, safeTopK) : fusedIds;
         if (topIds.isEmpty()) {
             return List.of();
@@ -207,7 +233,8 @@ public class SearchService {
                 });
     }
 
-    private List<String> searchSemanticIds(String queryText, String platform, String language, int topK) {
+    private List<MilvusVectorService.ScoredEntityId> searchSemanticIds(
+            String queryText, String platform, String language, int topK) {
         if (!hasText(queryText) || topK <= 0) {
             return List.of();
         }
@@ -220,7 +247,7 @@ public class SearchService {
         if (embedding == null) {
             return List.of();
         }
-        return milvusService.searchTextEmbeddings(embedding, topK, platform, language);
+        return milvusService.searchTextEmbeddingsWithScore(embedding, topK, platform, language);
     }
 
     private List<String> searchAccountSemanticIds(String queryText, int topK) {
@@ -278,7 +305,8 @@ public class SearchService {
             CompletableFuture<List<String>> imageFuture = safeRoute("image-image",
                     () -> imageAssetIdsToContentIds(milvusService.searchImageEmbeddings(embedding, topK)));
             CompletableFuture.allOf(textFuture, imageFuture).join();
-            List<String> fused = fuseByRrf(List.of(textFuture.join(), imageFuture.join()));
+            List<String> fused = new ArrayList<>(
+                    fuseByRrf(List.of(textFuture.join(), imageFuture.join())).keySet());
             return fused.size() > topK ? fused.subList(0, topK) : fused;
         } catch (Exception e) {
             log.warn("Image vector search failed, imageUrl={}, targetModalities={}", imageUrl, targetModalities, e);
@@ -379,7 +407,7 @@ public class SearchService {
         }
     }
 
-    private List<String> fuseByRrf(List<List<String>> rankedLists) {
+    private Map<String, Double> fuseByRrf(List<List<String>> rankedLists) {
         Map<String, Double> scores = new LinkedHashMap<>();
         for (List<String> rankedIds : rankedLists) {
             LinkedHashSet<String> deduped = new LinkedHashSet<>(rankedIds);
@@ -393,8 +421,11 @@ public class SearchService {
         }
         return scores.entrySet().stream()
                 .sorted(Map.Entry.<String, Double>comparingByValue(Comparator.reverseOrder()))
-                .map(Map.Entry::getKey)
-                .toList();
+                .collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        Map.Entry::getValue,
+                        (left, right) -> left,
+                        LinkedHashMap::new));
     }
 
     private List<MediaContent> fetchContentsInOrder(List<String> ids) {

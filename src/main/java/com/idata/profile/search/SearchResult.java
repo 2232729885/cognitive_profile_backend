@@ -21,4 +21,14 @@ public class SearchResult {
      * 纯语义/Neo4j/图片检索命中的内容这里没有对应的key，不代表分数是0
      */
     private Map<String, Double> scores;
+    /**
+     * key: contentId，value: Milvus 向量相似度（余弦相似度）。只有走过语义检索这条通道的内容才有值
+     */
+    private Map<String, Double> similarityScores;
+    /**
+     * key: contentId，value: RRF融合后的综合分数，决定了"智能融合"模式最终的排序。
+     * 只有hybrid检索类型才会有这个字段，跟 scores/similarityScores 不是同一个量纲，
+     * 单纯是多路排名融合出来的相对大小，本身没有绝对意义，只用来说明"融合排序是按这个数排的"
+     */
+    private Map<String, Double> fusionScores;
 }

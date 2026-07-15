@@ -129,6 +129,15 @@ public class MilvusVectorService {
     }
 
     /**
+     * 文本向量检索,带相似度分数版本,给"智能融合"模式展示Milvus这一路的相似度用。
+     */
+    public List<ScoredEntityId> searchTextEmbeddingsWithScore(float[] queryEmbedding, int topK,
+                                                              String platform, String language) {
+        return searchEmbeddingsWithScore(TEXT_COLLECTION, queryEmbedding, topK,
+                buildFilter(platform, language), "source_id");
+    }
+
+    /**
      * 图像向量检索，返回最相似的 topK 个 asset_id（对应 media_assets.id）
      */
     public List<String> searchImageEmbeddings(float[] queryEmbedding, int topK) {
