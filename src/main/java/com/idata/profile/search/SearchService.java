@@ -114,8 +114,16 @@ public class SearchService {
         String language = request == null ? null : request.getLanguage();
         boolean hasImage = request != null && hasText(request.getImageUrl()) && request.isEnableMilvus();
         String targetModality = normalizeTargetModality(request != null ? request.getTargetModalities() : null);
-        if (!hasImage && "image".equals(targetModality)) {
-            if (isEnabled(request, "milvus") && hasText(queryText)) {
+        if ("image".equals(targetModality)) {
+            if (!isEnabled(request, "milvus")) {
+                SearchResult result = buildResult(List.of(), 0, "hybrid-image", startedAt);
+                result.setImageItems(List.of());
+                return result;
+            }
+            if (hasImage) {
+                return searchHybridImagesByImage(request.getImageUrl(), topK, startedAt);
+            }
+            if (hasText(queryText)) {
                 return searchHybridImagesByText(queryText, topK, startedAt);
             }
             SearchResult result = buildResult(List.of(), 0, "hybrid-image", startedAt);
@@ -184,6 +192,16 @@ public class SearchService {
 
     private SearchResult searchHybridImagesByText(String queryText, int topK, long startedAt) {
         float[] embedding = textEmbedding(queryText);
+        List<SearchResult.ImageItem> imageItems = embedding == null
+                ? List.of()
+                : searchImageSemanticAssets(embedding, topK);
+        SearchResult result = buildResult(List.of(), imageItems.size(), "hybrid-image", startedAt);
+        result.setImageItems(imageItems);
+        return result;
+    }
+
+    private SearchResult searchHybridImagesByImage(String imageUrl, int topK, long startedAt) {
+        float[] embedding = imageEmbedding(imageUrl);
         List<SearchResult.ImageItem> imageItems = embedding == null
                 ? List.of()
                 : searchImageSemanticAssets(embedding, topK);
@@ -457,8 +475,12 @@ public class SearchService {
     public SearchResult searchByImage(String imageUrl, String targetModalities, int topK) {
         long startedAt = System.currentTimeMillis();
         int safeTopK = normalizeSize(topK);
+        String targetModality = normalizeTargetModality(targetModalities);
+        if ("image".equals(targetModality)) {
+            return searchHybridImagesByImage(imageUrl, safeTopK, startedAt);
+        }
         List<String> ids = vectorizeAndSearchByImage(
-                imageUrl, targetModalities != null ? targetModalities : "all", safeTopK);
+                imageUrl, targetModality, safeTopK);
         List<MediaContent> items = fetchContentsInOrder(ids);
         return buildResult(items, ids.size(), "image", startedAt);
     }
@@ -484,6 +506,18 @@ public class SearchService {
             return null;
         }
         return embeddingService.generateTextEmbedding(text);
+    }
+
+    private float[] imageEmbedding(String imageUrl) {
+        if (!hasText(imageUrl)) {
+            return null;
+        }
+        try {
+            return embeddingService.generateImageEmbedding(imageUrl);
+        } catch (Exception e) {
+            log.warn("Image vectorization failed, imageUrl={}", imageUrl, e);
+            return null;
+        }
     }
 
     private String canonicalStandardEntityType(String entityType) {
