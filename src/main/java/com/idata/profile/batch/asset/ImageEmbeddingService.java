@@ -1,12 +1,14 @@
 package com.idata.profile.batch.asset;
 
 import com.idata.profile.entity.content.MediaAsset;
+import com.idata.profile.entity.content.MediaContent;
 import com.idata.profile.common.util.ImageAnnotationUtil;
 import com.idata.profile.infra.elasticsearch.MediaAssetEsService;
 import com.idata.profile.infra.embedding.EmbeddingService;
 import com.idata.profile.infra.milvus.MilvusVectorService;
 import com.idata.profile.infra.ocr.ImageOcrService;
 import com.idata.profile.mapper.content.MediaAssetMapper;
+import com.idata.profile.mapper.content.MediaContentMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -23,6 +25,7 @@ import java.util.concurrent.ExecutorService;
 public class ImageEmbeddingService {
 
     private final MediaAssetMapper mediaAssetMapper;
+    private final MediaContentMapper mediaContentMapper;
     private final MediaAssetEsService mediaAssetEsService;
     private final EmbeddingService embeddingService;
     private final MilvusVectorService milvusVectorService;
@@ -93,6 +96,13 @@ public class ImageEmbeddingService {
             String imageUrl = resolveImageUrl(asset);
             boolean processed = false;
             boolean changed = false;
+            MediaContent content = resolveLinkedContent(asset);
+            if (asset.getContentId() == null && content != null && content.getId() != null) {
+                asset.setContentId(content.getId());
+                changed = true;
+            }
+            String contentId = asset.getContentId() != null ? asset.getContentId().toString() : null;
+            String platform = content != null ? content.getPlatform() : null;
 
             if (asset.getOcrText() == null) {
                 String ocrText = imageOcrService.extractText(imageUrl);
@@ -110,8 +120,9 @@ public class ImageEmbeddingService {
                 if (embedding != null) {
                     String vectorId = milvusVectorService.insertImageEmbedding(
                             asset.getId().toString(),
-                            asset.getContentId() != null ? asset.getContentId().toString() : null,
-                            null,
+                            asset.getSourceAssetId(),
+                            contentId,
+                            platform,
                             0f,
                             embedding);
 
@@ -127,8 +138,9 @@ public class ImageEmbeddingService {
                 if (ocrEmbedding != null) {
                     String vectorId = milvusVectorService.insertImageOcrEmbedding(
                             asset.getId().toString(),
-                            asset.getContentId() != null ? asset.getContentId().toString() : null,
-                            null,
+                            asset.getSourceAssetId(),
+                            contentId,
+                            platform,
                             ocrEmbedding);
                     processed = true;
                     log.info("Image OCR embedding indexed, assetId={}, vectorId={}", asset.getId(), vectorId);
@@ -162,6 +174,19 @@ public class ImageEmbeddingService {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private MediaContent resolveLinkedContent(MediaAsset asset) {
+        if (asset == null) {
+            return null;
+        }
+        if (asset.getContentId() != null) {
+            return mediaContentMapper.selectById(asset.getContentId());
+        }
+        if (hasText(asset.getSourceAssetId())) {
+            return mediaContentMapper.selectBySourceMediaAssetId(asset.getSourceAssetId());
+        }
+        return null;
     }
 
     private boolean hasText(String value) {

@@ -40,10 +40,29 @@ public class MockPipelineInfraConfig {
             }
 
             @Override
+            public String insertImageEmbedding(String assetId, String sourceAssetId, String contentId,
+                                               String platform, float aigcScore,
+                                               float[] embedding) {
+                String vectorId = "mock_image_vector_" + UUID.randomUUID();
+                log.info("Mock Milvus image embedding inserted, assetId={}, sourceAssetId={}, contentId={}, platform={}, vectorId={}",
+                        assetId, sourceAssetId, contentId, platform, vectorId);
+                return vectorId;
+            }
+
+            @Override
             public String insertImageOcrEmbedding(String assetId, String contentId,
                                                   String platform, float[] embedding) {
                 String vectorId = "mock_image_ocr_vector_" + UUID.randomUUID();
                 log.info("Mock Milvus image OCR embedding inserted, assetId={}, vectorId={}", assetId, vectorId);
+                return vectorId;
+            }
+
+            @Override
+            public String insertImageOcrEmbedding(String assetId, String sourceAssetId, String contentId,
+                                                  String platform, float[] embedding) {
+                String vectorId = "mock_image_ocr_vector_" + UUID.randomUUID();
+                log.info("Mock Milvus image OCR embedding inserted, assetId={}, sourceAssetId={}, contentId={}, platform={}, vectorId={}",
+                        assetId, sourceAssetId, contentId, platform, vectorId);
                 return vectorId;
             }
         };

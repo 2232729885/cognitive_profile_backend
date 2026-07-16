@@ -54,8 +54,15 @@ public class MilvusVectorService {
     public String insertImageEmbedding(String assetId, String contentId,
                                        String platform, float aigcScore,
                                        float[] embedding) {
+        return insertImageEmbedding(assetId, null, contentId, platform, aigcScore, embedding);
+    }
+
+    public String insertImageEmbedding(String assetId, String sourceAssetId, String contentId,
+                                       String platform, float aigcScore,
+                                       float[] embedding) {
         String vectorId = "image_" + assetId;
         JsonObject row = baseRow(vectorId, assetId, "media_asset", platform, embedding);
+        row.addProperty("source_asset_id", sourceAssetId);
         row.addProperty("content_id", contentId);
         row.addProperty("aigc_score", aigcScore);
         insert(IMAGE_COLLECTION, row);
@@ -64,8 +71,14 @@ public class MilvusVectorService {
 
     public String insertImageOcrEmbedding(String assetId, String contentId,
                                           String platform, float[] embedding) {
+        return insertImageOcrEmbedding(assetId, null, contentId, platform, embedding);
+    }
+
+    public String insertImageOcrEmbedding(String assetId, String sourceAssetId, String contentId,
+                                          String platform, float[] embedding) {
         String vectorId = "image_ocr_" + assetId;
         JsonObject row = baseRow(vectorId, assetId, "media_asset_ocr", platform, embedding);
+        row.addProperty("source_asset_id", sourceAssetId);
         row.addProperty("content_id", contentId);
         row.addProperty("embedding_source", "ocr_text");
         insert(IMAGE_COLLECTION, row);
