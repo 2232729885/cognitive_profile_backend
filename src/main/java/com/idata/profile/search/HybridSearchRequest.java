@@ -13,4 +13,5 @@ public class HybridSearchRequest {
     private boolean enableNeo4j = false;
     private String imageUrl;
     private String targetModalities = "all";
+    private Double semanticMinScore;
 }

@@ -54,7 +54,8 @@ public class SearchController {
                 request.getQueryText(),
                 request.getPlatform(),
                 request.getLanguage(),
-                request.getTopK()));
+                request.getTopK(),
+                request.getSemanticMinScore()));
     }
 
     @PostMapping("/hybrid")
@@ -174,6 +175,7 @@ public class SearchController {
         private String platform;
         private String language;
         private int topK = 20;
+        private Double semanticMinScore;
     }
 
     @Data

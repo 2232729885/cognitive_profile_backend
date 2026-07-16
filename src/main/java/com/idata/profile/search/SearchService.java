@@ -38,6 +38,7 @@ public class SearchService {
     private static final int DEFAULT_TOP_K = 20;
     private static final int RRF_K = 60;
     private static final long HYBRID_ROUTE_TIMEOUT_SECONDS = 8L;
+    private static final float DEFAULT_CONTENT_SEMANTIC_MIN_SCORE = 0.45F;
 
     private final EmbeddingService embeddingService;
     private final MilvusVectorService milvusService;
@@ -85,11 +86,11 @@ public class SearchService {
     }
 
     public SearchResult searchBySemantic(String queryText, String platform,
-                                         String language, int topK) {
+                                         String language, int topK, Double semanticMinScore) {
         long startedAt = System.currentTimeMillis();
         int safeTopK = normalizeSize(topK);
         List<MilvusVectorService.ScoredEntityId> scored =
-                searchSemanticIds(queryText, platform, language, safeTopK);
+                searchSemanticIds(queryText, platform, language, safeTopK, semanticMinScore);
         List<String> ids = scored.stream()
                 .map(MilvusVectorService.ScoredEntityId::entityId)
                 .toList();
@@ -114,6 +115,7 @@ public class SearchService {
         String language = request == null ? null : request.getLanguage();
         boolean hasImage = request != null && hasText(request.getImageUrl()) && request.isEnableMilvus();
         String targetModality = normalizeTargetModality(request != null ? request.getTargetModalities() : null);
+        Double semanticMinScore = request == null ? null : request.getSemanticMinScore();
         if ("image".equals(targetModality)) {
             if (!isEnabled(request, "milvus")) {
                 SearchResult result = buildResult(List.of(), 0, "hybrid-image", startedAt);
@@ -135,7 +137,7 @@ public class SearchService {
                 ? safeRoute("es", () -> esService.searchByKeywordWithHighlight(queryText, platform, language, topK))
                 : CompletableFuture.completedFuture(List.of());
         CompletableFuture<List<MilvusVectorService.ScoredEntityId>> milvusFuture = isEnabled(request, "milvus")
-                ? safeRoute("milvus", () -> searchSemanticIds(queryText, platform, language, topK))
+                ? safeRoute("milvus", () -> searchSemanticIds(queryText, platform, language, topK, semanticMinScore))
                 : CompletableFuture.completedFuture(List.of());
         CompletableFuture<List<String>> neo4jFuture = request != null && request.isEnableNeo4j()
                 ? safeRoute("neo4j", () -> searchNeo4jContentIds(queryText, platform, language, topK))
@@ -919,7 +921,7 @@ public class SearchService {
     }
 
     private List<MilvusVectorService.ScoredEntityId> searchSemanticIds(
-            String queryText, String platform, String language, int topK) {
+            String queryText, String platform, String language, int topK, Double semanticMinScore) {
         if (!hasText(queryText) || topK <= 0) {
             return List.of();
         }
@@ -928,7 +930,10 @@ public class SearchService {
         if (embedding == null) {
             return List.of();
         }
-        return milvusService.searchTextEmbeddingsWithScore(embedding, topK, platform, language);
+        float minScore = normalizeSemanticMinScore(semanticMinScore);
+        return milvusService.searchTextEmbeddingsWithScore(embedding, topK, platform, language).stream()
+                .filter(result -> result.score() >= minScore)
+                .toList();
     }
 
     private List<String> searchAccountSemanticIds(String queryText, int topK) {
@@ -1154,6 +1159,13 @@ public class SearchService {
             case "text", "image" -> value;
             default -> "all";
         };
+    }
+
+    private float normalizeSemanticMinScore(Double semanticMinScore) {
+        if (semanticMinScore == null || !Double.isFinite(semanticMinScore)) {
+            return DEFAULT_CONTENT_SEMANTIC_MIN_SCORE;
+        }
+        return (float) Math.max(0D, Math.min(1D, semanticMinScore));
     }
 
     private int normalizeSize(int size) {
