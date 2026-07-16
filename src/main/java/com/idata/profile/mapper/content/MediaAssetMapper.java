@@ -38,6 +38,15 @@ public interface MediaAssetMapper extends BaseMapper<MediaAsset> {
             "AND asset_type = 'image' LIMIT #{limit}")
     List<MediaAsset> selectPendingEmbedding(@Param("limit") int limit);
 
+    @Select("SELECT * FROM media_assets WHERE ocr_text IS NULL " +
+            "AND asset_type = 'image' LIMIT #{limit}")
+    List<MediaAsset> selectPendingOcr(@Param("limit") int limit);
+
+    @Select("SELECT * FROM media_assets WHERE ocr_text IS NOT NULL " +
+            "AND asset_type = 'image' AND content_id IS NOT NULL " +
+            "ORDER BY created_at DESC LIMIT #{limit}")
+    List<MediaAsset> selectImageAssetsWithOcrText(@Param("limit") int limit);
+
     /** 查找有资产待T1标注、且资产已关联内容的内容ID列表（去重，用于ImageEmbeddingJob按内容重新标注） */
     @Select("SELECT DISTINCT content_id FROM media_assets " +
             "WHERE t1_annotated = FALSE AND content_id IS NOT NULL " +

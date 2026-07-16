@@ -2,8 +2,10 @@ package com.idata.profile.batch.asset;
 
 import com.idata.profile.entity.content.MediaAsset;
 import com.idata.profile.common.util.ImageAnnotationUtil;
+import com.idata.profile.infra.elasticsearch.MediaAssetEsService;
 import com.idata.profile.infra.embedding.EmbeddingService;
 import com.idata.profile.infra.milvus.MilvusVectorService;
+import com.idata.profile.infra.ocr.ImageOcrService;
 import com.idata.profile.mapper.content.MediaAssetMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,8 +23,10 @@ import java.util.concurrent.ExecutorService;
 public class ImageEmbeddingService {
 
     private final MediaAssetMapper mediaAssetMapper;
+    private final MediaAssetEsService mediaAssetEsService;
     private final EmbeddingService embeddingService;
     private final MilvusVectorService milvusVectorService;
+    private final ImageOcrService imageOcrService;
     private final ExecutorService pipelineThreadPool;
     private final ImageAnnotationUtil imageAnnotationUtil;
 
@@ -51,14 +55,30 @@ public class ImageEmbeddingService {
         return successCount;
     }
 
+    public int processPendingOcr(int limit) {
+        List<MediaAsset> pending = mediaAssetMapper.selectPendingOcr(limit);
+        int successCount = 0;
+        for (MediaAsset asset : pending) {
+            if (process(asset)) {
+                successCount++;
+            }
+        }
+        return successCount;
+    }
+
+    public int backfillImageAssetEsIndex(int limit) {
+        List<MediaAsset> assets = mediaAssetMapper.selectImageAssetsWithOcrText(limit);
+        for (MediaAsset asset : assets) {
+            mediaAssetEsService.indexImageAsset(asset);
+        }
+        return assets.size();
+    }
+
     public boolean processById(UUID assetId) {
         MediaAsset asset = mediaAssetMapper.selectById(assetId);
         if (asset == null) {
             log.warn("Media asset not found for image embedding, assetId={}", assetId);
             return false;
-        }
-        if (asset.getEmbeddingId() != null && !asset.getEmbeddingId().isBlank()) {
-            return true;
         }
         return process(asset);
     }
@@ -71,22 +91,55 @@ public class ImageEmbeddingService {
                 return false;
             }
             String imageUrl = resolveImageUrl(asset);
-            float[] embedding = embeddingService.generateImageEmbedding(imageUrl);
-            if (embedding == null) {
-                return false;
+            boolean processed = false;
+            boolean changed = false;
+
+            if (asset.getOcrText() == null) {
+                String ocrText = imageOcrService.extractText(imageUrl);
+                if (ocrText != null) {
+                    asset.setOcrText(ocrText);
+                    changed = true;
+                    processed = true;
+                    log.info("Image OCR completed, assetId={}, textLength={}",
+                            asset.getId(), ocrText.length());
+                }
             }
 
-            String vectorId = milvusVectorService.insertImageEmbedding(
-                    asset.getId().toString(),
-                    asset.getContentId() != null ? asset.getContentId().toString() : null,
-                    null,
-                    0f,
-                    embedding);
+            if (asset.getEmbeddingId() == null || asset.getEmbeddingId().isBlank()) {
+                float[] embedding = embeddingService.generateImageEmbedding(imageUrl);
+                if (embedding != null) {
+                    String vectorId = milvusVectorService.insertImageEmbedding(
+                            asset.getId().toString(),
+                            asset.getContentId() != null ? asset.getContentId().toString() : null,
+                            null,
+                            0f,
+                            embedding);
 
-            asset.setEmbeddingId(vectorId);
-            mediaAssetMapper.updateById(asset);
-            log.info("Image embedding indexed, assetId={}, vectorId={}", asset.getId(), vectorId);
-            return true;
+                    asset.setEmbeddingId(vectorId);
+                    changed = true;
+                    processed = true;
+                    log.info("Image embedding indexed, assetId={}, vectorId={}", asset.getId(), vectorId);
+                }
+            }
+
+            if (hasText(asset.getOcrText())) {
+                float[] ocrEmbedding = embeddingService.generateTextEmbedding(asset.getOcrText());
+                if (ocrEmbedding != null) {
+                    String vectorId = milvusVectorService.insertImageOcrEmbedding(
+                            asset.getId().toString(),
+                            asset.getContentId() != null ? asset.getContentId().toString() : null,
+                            null,
+                            ocrEmbedding);
+                    processed = true;
+                    log.info("Image OCR embedding indexed, assetId={}, vectorId={}", asset.getId(), vectorId);
+                }
+            }
+
+            if (changed) {
+                mediaAssetMapper.updateById(asset);
+            }
+            mediaAssetEsService.indexImageAsset(asset);
+            return processed;
         } catch (Exception e) {
             log.error("Image embedding failed, assetId={}, assetType={}, imageUrl={}, sourceUrl={}, storageUri={}",
                     asset.getId(), asset.getAssetType(), safeImageUrl(asset),
@@ -109,5 +162,9 @@ public class ImageEmbeddingService {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
     }
 }

@@ -62,6 +62,16 @@ public class MilvusVectorService {
         return vectorId;
     }
 
+    public String insertImageOcrEmbedding(String assetId, String contentId,
+                                          String platform, float[] embedding) {
+        String vectorId = "image_ocr_" + assetId;
+        JsonObject row = baseRow(vectorId, assetId, "media_asset_ocr", platform, embedding);
+        row.addProperty("content_id", contentId);
+        row.addProperty("embedding_source", "ocr_text");
+        insert(IMAGE_COLLECTION, row);
+        return vectorId;
+    }
+
     /**
      * 写入实体向量。
      *

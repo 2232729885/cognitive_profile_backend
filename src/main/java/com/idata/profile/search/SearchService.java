@@ -5,6 +5,7 @@ import com.idata.profile.entity.account.SocialAccount;
 import com.idata.profile.entity.content.MediaAsset;
 import com.idata.profile.entity.content.MediaContent;
 import com.idata.profile.infra.elasticsearch.EntityEsService;
+import com.idata.profile.infra.elasticsearch.MediaAssetEsService;
 import com.idata.profile.infra.elasticsearch.MediaContentEsService;
 import com.idata.profile.infra.elasticsearch.SocialAccountEsService;
 import com.idata.profile.infra.embedding.EmbeddingService;
@@ -43,11 +44,11 @@ public class SearchService {
     private static final int RRF_K = 60;
     private static final long HYBRID_ROUTE_TIMEOUT_SECONDS = 8L;
     private static final float DEFAULT_CONTENT_SEMANTIC_MIN_SCORE = 0.45F;
-    private static final float DEFAULT_ENTITY_SEARCH_SEMANTIC_MIN_SCORE = 0.60F;
 
     private final EmbeddingService embeddingService;
     private final MilvusVectorService milvusService;
     private final MediaContentEsService esService;
+    private final MediaAssetEsService mediaAssetEsService;
     private final EntityEsService entityEsService;
     private final SocialAccountEsService socialAccountEsService;
     private final Neo4jGraphService neo4jGraphService;
@@ -125,16 +126,24 @@ public class SearchService {
         String targetModality = normalizeTargetModality(request != null ? request.getTargetModalities() : null);
         Double semanticMinScore = request == null ? null : request.getSemanticMinScore();
         if ("image".equals(targetModality)) {
-            if (!isEnabled(request, "milvus")) {
-                SearchResult result = buildResult(List.of(), 0, "hybrid-image", startedAt);
-                result.setImageItems(List.of());
-                return result;
-            }
+            boolean keywordEnabled = isEnabled(request, "es");
+            boolean semanticEnabled = isEnabled(request, "milvus");
             if (hasImage) {
+                if (!semanticEnabled) {
+                    SearchResult result = buildResult(List.of(), 0, "hybrid-image", startedAt);
+                    result.setImageItems(List.of());
+                    return result;
+                }
                 return searchHybridImagesByImage(request.getImageUrl(), topK, safePage, safeSize, startedAt);
             }
             if (hasText(queryText)) {
-                return searchHybridImagesByText(queryText, topK, safePage, safeSize, semanticMinScore, startedAt);
+                if (!keywordEnabled && !semanticEnabled) {
+                    SearchResult result = buildResult(List.of(), 0, "hybrid-image", startedAt);
+                    result.setImageItems(List.of());
+                    return result;
+                }
+                return searchHybridImagesByText(queryText, topK, safePage, safeSize,
+                        semanticMinScore, keywordEnabled, semanticEnabled, startedAt);
             }
             SearchResult result = buildResult(List.of(), 0, "hybrid-image", startedAt);
             result.setImageItems(List.of());
@@ -209,11 +218,16 @@ public class SearchService {
     }
 
     private SearchResult searchHybridImagesByText(String queryText, int topK, int page, int size,
-                                                  Double semanticMinScore, long startedAt) {
-        float[] embedding = textEmbedding(queryText);
-        List<SearchResult.ImageItem> imageItems = embedding == null
+                                                  Double semanticMinScore, boolean keywordEnabled,
+                                                  boolean semanticEnabled, long startedAt) {
+        float[] embedding = semanticEnabled ? textEmbedding(queryText) : null;
+        List<SearchResult.ImageItem> semanticItems = embedding == null
                 ? List.of()
                 : searchImageSemanticAssets(embedding, topK, semanticMinScore);
+        List<SearchResult.ImageItem> keywordItems = keywordEnabled
+                ? searchImageKeywordAssets(queryText, topK)
+                : List.of();
+        List<SearchResult.ImageItem> imageItems = fuseImageItems(keywordItems, semanticItems, topK);
         SearchResult result = buildResult(List.of(), imageItems.size(), "hybrid-image", startedAt);
         result.setImageItems(pageSlice(imageItems, page, size));
         return result;
@@ -371,18 +385,14 @@ public class SearchService {
         List<Map<String, Object>> entityEsResults = entityEsFutures.stream()
                 .flatMap(future -> future.join().stream())
                 .toList();
-        List<MilvusVectorService.ScoredEntityId> entityMilvusResults = filterEntitySearchSemanticResults(
-                entityMilvusFutures.stream()
+        List<MilvusVectorService.ScoredEntityId> entityMilvusResults = entityMilvusFutures.stream()
                 .flatMap(future -> future.join().stream())
-                .toList());
+                .toList();
         List<SocialAccountEsService.EsAccountSearchResult> accountEsResults = accountEsFuture.join();
-        List<MilvusVectorService.ScoredEntityId> accountMilvusResults = filterEntitySearchSemanticResults(
-                accountMilvusFuture.join());
+        List<MilvusVectorService.ScoredEntityId> accountMilvusResults = accountMilvusFuture.join();
         List<MediaContentEsService.EsSearchResult> contentEsResults = contentEsFuture.join();
-        List<MilvusVectorService.ScoredEntityId> textMilvusResults = filterEntitySearchSemanticResults(
-                textMilvusFuture.join());
-        List<MilvusVectorService.ScoredEntityId> imageMilvusResults = filterEntitySearchSemanticResults(
-                imageMilvusFuture.join());
+        List<MilvusVectorService.ScoredEntityId> textMilvusResults = textMilvusFuture.join();
+        List<MilvusVectorService.ScoredEntityId> imageMilvusResults = imageMilvusFuture.join();
 
         List<String> entityEsIds = entityEsResults.stream()
                 .map(r -> scopedId("entity", (String) r.get("entityId")))
@@ -608,16 +618,6 @@ public class SearchService {
         }
     }
 
-    private List<MilvusVectorService.ScoredEntityId> filterEntitySearchSemanticResults(
-            List<MilvusVectorService.ScoredEntityId> results) {
-        if (results == null || results.isEmpty()) {
-            return List.of();
-        }
-        return results.stream()
-                .filter(result -> result.score() >= DEFAULT_ENTITY_SEARCH_SEMANTIC_MIN_SCORE)
-                .toList();
-    }
-
     private List<MilvusVectorService.ScoredEntityId> searchImageSemanticContentIds(float[] embedding, int topK) {
         List<MilvusVectorService.ScoredEntityId> assetScores =
                 milvusService.searchImageEmbeddingsWithScore(embedding, topK);
@@ -660,12 +660,43 @@ public class SearchService {
                 milvusService.searchImageEmbeddingsWithScore(embedding, topK).stream()
                         .filter(result -> result.score() >= minScore)
                         .toList();
+        Map<String, Double> scoresByAssetId = assetScores.stream()
+                .collect(Collectors.toMap(
+                        item -> normalizeImageAssetId(item.entityId()),
+                        item -> (double) item.score(),
+                        Math::max,
+                        LinkedHashMap::new));
         List<UUID> assetIds = assetScores.stream()
                 .map(item -> normalizeImageAssetId(item.entityId()))
                 .map(this::parseUuid)
                 .filter(Objects::nonNull)
                 .distinct()
                 .toList();
+        return buildImageItems(assetIds, scoresByAssetId);
+    }
+
+    private List<SearchResult.ImageItem> searchImageKeywordAssets(String queryText, int topK) {
+        if (!hasText(queryText) || topK <= 0) {
+            return List.of();
+        }
+        List<MediaAssetEsService.EsImageAssetSearchResult> assets =
+                mediaAssetEsService.searchImagesByKeyword(queryText.trim(), topK);
+        Map<String, Double> scoresByAssetId = assets.stream()
+                .collect(Collectors.toMap(
+                        MediaAssetEsService.EsImageAssetSearchResult::assetId,
+                        MediaAssetEsService.EsImageAssetSearchResult::score,
+                        Math::max,
+                        LinkedHashMap::new));
+        List<UUID> assetIds = assets.stream()
+                .map(MediaAssetEsService.EsImageAssetSearchResult::assetId)
+                .map(this::parseUuid)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        return buildImageItems(assetIds, scoresByAssetId);
+    }
+
+    private List<SearchResult.ImageItem> buildImageItems(List<UUID> assetIds, Map<String, Double> scoresByAssetId) {
         if (assetIds.isEmpty()) {
             return List.of();
         }
@@ -692,9 +723,8 @@ public class SearchService {
                 .collect(Collectors.toMap(c -> c.getId().toString(), c -> c, (left, right) -> left));
 
         List<SearchResult.ImageItem> items = new ArrayList<>();
-        for (MilvusVectorService.ScoredEntityId scoredAsset : assetScores) {
-            UUID assetId = parseUuid(normalizeImageAssetId(scoredAsset.entityId()));
-            MediaAsset asset = assetId == null ? null : assetsById.get(assetId);
+        for (UUID assetId : assetIds) {
+            MediaAsset asset = assetsById.get(assetId);
             MediaContent content = asset != null && asset.getContentId() != null
                     ? contentsById.get(asset.getContentId().toString())
                     : null;
@@ -711,7 +741,7 @@ public class SearchService {
             item.setMimeType(asset.getMimeType());
             item.setWidth(asset.getWidth());
             item.setHeight(asset.getHeight());
-            item.setSimilarityScore((double) scoredAsset.score());
+            item.setSimilarityScore(scoresByAssetId.get(asset.getId().toString()));
             item.setPlatform(content.getPlatform());
             item.setLanguage(content.getLanguage());
             item.setContentType(content.getContentType());
@@ -721,6 +751,31 @@ public class SearchService {
             items.add(item);
         }
         return items;
+    }
+
+    private List<SearchResult.ImageItem> fuseImageItems(List<SearchResult.ImageItem> keywordItems,
+                                                        List<SearchResult.ImageItem> semanticItems,
+                                                        int topK) {
+        List<String> keywordIds = keywordItems.stream()
+                .map(SearchResult.ImageItem::getAssetId)
+                .toList();
+        List<String> semanticIds = semanticItems.stream()
+                .map(SearchResult.ImageItem::getAssetId)
+                .toList();
+        Map<String, SearchResult.ImageItem> byId = new LinkedHashMap<>();
+        keywordItems.forEach(item -> byId.put(item.getAssetId(), item));
+        semanticItems.forEach(item -> byId.merge(item.getAssetId(), item, (keywordItem, semanticItem) -> {
+            keywordItem.setSimilarityScore(semanticItem.getSimilarityScore());
+            return keywordItem;
+        }));
+        List<String> fusedIds = new ArrayList<>(fuseByRrf(List.of(keywordIds, semanticIds)).keySet());
+        if (fusedIds.size() > topK) {
+            fusedIds = fusedIds.subList(0, topK);
+        }
+        return fusedIds.stream()
+                .map(byId::get)
+                .filter(Objects::nonNull)
+                .toList();
     }
 
     private String normalizeImageAssetId(String id) {

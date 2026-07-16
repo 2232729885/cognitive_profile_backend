@@ -1,6 +1,7 @@
 package com.idata.profile.config;
 
 import com.idata.profile.infra.elasticsearch.MediaContentEsService;
+import com.idata.profile.infra.elasticsearch.MediaAssetEsService;
 import com.idata.profile.infra.milvus.MilvusVectorService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
@@ -37,6 +38,14 @@ public class MockPipelineInfraConfig {
                 log.info("Mock Milvus image embedding inserted, assetId={}, vectorId={}", assetId, vectorId);
                 return vectorId;
             }
+
+            @Override
+            public String insertImageOcrEmbedding(String assetId, String contentId,
+                                                  String platform, float[] embedding) {
+                String vectorId = "mock_image_ocr_vector_" + UUID.randomUUID();
+                log.info("Mock Milvus image OCR embedding inserted, assetId={}, vectorId={}", assetId, vectorId);
+                return vectorId;
+            }
         };
     }
 
@@ -47,6 +56,18 @@ public class MockPipelineInfraConfig {
             @Override
             public void index(String contentId, Object document) {
                 log.info("Mock Elasticsearch indexed media content, contentId={}", contentId);
+            }
+        };
+    }
+
+    @Bean
+    @Primary
+    public MediaAssetEsService mockMediaAssetEsService() {
+        return new MediaAssetEsService(null) {
+            @Override
+            public void indexImageAsset(com.idata.profile.entity.content.MediaAsset asset) {
+                log.info("Mock Elasticsearch indexed image asset, assetId={}",
+                        asset != null ? asset.getId() : null);
             }
         };
     }
