@@ -29,23 +29,34 @@ public class EmbeddingService {
     private String embeddingModel;
 
     public float[] generateTextEmbedding(String text) {
-        return generateEmbedding(text, "text");
+        if (!hasText(text)) {
+            return null;
+        }
+        return generateEmbedding(Map.of("model", embeddingModel, "input", text), "text");
     }
 
     public float[] generateImageEmbedding(String imageUrl) {
-        return generateEmbedding(imageUrl, "image");
-    }
-
-    private float[] generateEmbedding(String input, String inputType) {
-        if (!hasText(input)) {
+        if (!hasText(imageUrl)) {
             return null;
         }
+        Map<String, Object> imageContent = Map.of(
+                "type", "image_url",
+                "image_url", Map.of("url", imageUrl));
+        Map<String, Object> userMessage = Map.of(
+                "role", "user",
+                "content", List.of(imageContent));
+        return generateEmbedding(Map.of(
+                "model", embeddingModel,
+                "messages", List.of(userMessage)), "image");
+    }
+
+    private float[] generateEmbedding(Map<String, Object> requestBody, String inputType) {
         try {
             EmbeddingApiResponse apiResponse = embeddingRestClient.post()
                     .uri(normalizeBaseUrl(embeddingBaseUrl) + "/embeddings")
                     .contentType(MediaType.APPLICATION_JSON)
                     .header(HttpHeaders.AUTHORIZATION, "Bearer " + embeddingApiKey)
-                    .body(Map.of("model", embeddingModel, "input", input))
+                    .body(requestBody)
                     .retrieve()
                     .body(EmbeddingApiResponse.class);
 

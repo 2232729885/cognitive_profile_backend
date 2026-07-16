@@ -32,8 +32,8 @@ spring:
 
   # Neo4j（spring-boot-starter-data-neo4j，Bolt协议直连）
   neo4j:
-#    uri: bolt://172.16.40.232:7687
-    uri: bolt://172.16.40.232:7688
+    uri: bolt://172.16.40.232:7687
+#    uri: bolt://172.16.40.232:7688
     authentication:
       username: neo4j
       password: neo4jpasswd

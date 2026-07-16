@@ -72,12 +72,14 @@ public class CleanAllData {
     private static final List<String> MILVUS_COLLECTIONS = List.of(
             "text_embeddings",
             "image_embeddings",
-            "entity_embeddings"
+            "entity_embeddings",
+            "account_embeddings"
     );
 
     private static final List<String> ES_INDICES = List.of(
             "media_contents_index",
             "entities_index",
+            "social_accounts_index",
             "workflow_logs_index"
     );
 
@@ -143,7 +145,7 @@ public class CleanAllData {
         long nodeCountBefore;
         long nodeCountAfter;
         try (Driver driver = GraphDatabase.driver(
-                "neo4j://172.16.40.232:7688",
+                "neo4j://172.16.40.232:7687",
                 AuthTokens.basic("neo4j", "neo4jpasswd"));
              Session session = driver.session()) {
             nodeCountBefore = session.run("MATCH (n) RETURN count(n) AS nodeCount")

@@ -19,7 +19,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
@@ -41,7 +40,6 @@ public class SocialAccountConsumer {
     private final EmbeddingService embeddingService;
 
     @KafkaListener(topics = KafkaTopicConstants.SOCIAL_ACCOUNT, groupId = "cognitive-profile-ingestion")
-    @Transactional
     public void onMessage(String rawMessage) {
         Object kafkaMessage = parseMessage(rawMessage);
         String sourceRecordId = extractSourceRecordId(kafkaMessage);
@@ -69,16 +67,34 @@ public class SocialAccountConsumer {
             rawRecordMapper.insert(rawRecord);
         }
 
-        SocialAccountNormalizer.NormalizedAccount normalized = normalizer.normalize(kafkaMessage, rawRecord);
-        annotateAccountType(normalized.getAccount());
-        UUID accountId = socialAccountMapper.upsertByPlatformAndUserId(normalized.getAccount());
-        normalized.getAccount().setId(accountId);
-        socialAccountEsService.indexAccount(normalized.getAccount());
-        indexAccountEmbedding(normalized.getAccount());
-        normalized.getSnapshot().setAccountId(accountId);
-        snapshotMapper.insert(normalized.getSnapshot());
-        rawRecord.setPipelineStatus(PipelineStatus.NORMALIZED.name());
-        rawRecordMapper.updateById(rawRecord);
+        try {
+            SocialAccountNormalizer.NormalizedAccount normalized = normalizer.normalize(kafkaMessage, rawRecord);
+            annotateAccountType(normalized.getAccount());
+            UUID accountId = socialAccountMapper.upsertByPlatformAndUserId(normalized.getAccount());
+            normalized.getAccount().setId(accountId);
+            normalized.getSnapshot().setAccountId(accountId);
+            snapshotMapper.insert(normalized.getSnapshot());
+
+            rawRecord.setPipelineStatus(PipelineStatus.NORMALIZED.name());
+            rawRecord.setErrorMessage(null);
+            rawRecordMapper.updateById(rawRecord);
+
+            indexAccountToEs(normalized.getAccount());
+            indexAccountEmbedding(normalized.getAccount());
+        } catch (Exception e) {
+            markFailed(rawRecord, e);
+            log.error("[SocialAccountConsumer] social_account processing failed, sourceRecordId={}, platform={}",
+                    sourceRecordId, IngestionMessageSupport.text(IngestionMessageSupport.root(kafkaMessage), "platform"), e);
+        }
+    }
+
+    private void indexAccountToEs(SocialAccount account) {
+        try {
+            socialAccountEsService.indexAccount(account);
+        } catch (Exception e) {
+            log.warn("[SocialAccountConsumer] account ES index failed, accountId={}",
+                    account != null ? account.getId() : null, e);
+        }
     }
 
     /**
@@ -160,6 +176,36 @@ public class SocialAccountConsumer {
             log.warn("[SocialAccountConsumer] T1 annotate_account_type failed, platform={}, platformUserId={}",
                     account.getPlatform(), account.getPlatformUserId(), e);
         }
+    }
+
+    private void markFailed(RawRecord rawRecord, Exception error) {
+        if (rawRecord == null || rawRecord.getId() == null) {
+            return;
+        }
+        try {
+            rawRecord.setPipelineStatus(PipelineStatus.FAILED.name());
+            rawRecord.setErrorMessage(errorMessage(error));
+            short retryCount = rawRecord.getRetryCount() == null ? 0 : rawRecord.getRetryCount();
+            rawRecord.setRetryCount((short) (retryCount + 1));
+            rawRecordMapper.updateById(rawRecord);
+        } catch (Exception updateError) {
+            log.warn("[SocialAccountConsumer] failed to mark raw record as FAILED, rawRecordId={}",
+                    rawRecord.getId(), updateError);
+        }
+    }
+
+    private String errorMessage(Exception error) {
+        if (error == null) {
+            return null;
+        }
+        String message = error.getMessage();
+        if (!IngestionMessageSupport.hasText(message) && error.getCause() != null) {
+            message = error.getCause().getMessage();
+        }
+        if (!IngestionMessageSupport.hasText(message)) {
+            message = error.getClass().getName();
+        }
+        return message.length() > 1000 ? message.substring(0, 1000) : message;
     }
 
     private Object parseMessage(String rawMessage) {
