@@ -1161,10 +1161,16 @@ SET agent_name = 'T3 信息融合',
     description = '跨语言实体归一和关系融合',
     mock_url = COALESCE(mock_url, 'http://localhost:8080/mock/t3'),
     active_url_type = COALESCE(active_url_type, 'mock'),
-    timeout_seconds = 60,
+    timeout_seconds = 1200,
     max_retries = 2,
     is_active = TRUE
 WHERE agent_code = 'T3';
+
+UPDATE sub_agent_registry
+SET timeout_seconds = 1200,
+    max_retries = 2,
+    is_active = TRUE
+WHERE agent_code IN ('T1', 'T2');
 
 -- ============================================================
 -- 验证建表结果

@@ -31,6 +31,8 @@ import java.time.Duration;
 @RequiredArgsConstructor
 public class AgentProxyClient {
 
+    private static final int STRUCTURED_LLM_AGENT_MIN_TIMEOUT_SECONDS = 1200;
+
     private final SubAgentRegistryMapper subAgentRegistryMapper;
     private final ObjectProvider<AgentProxyClient> selfProvider;
 
@@ -99,8 +101,8 @@ public class AgentProxyClient {
         if ("T6".equals(agentCode)) {
             return Math.max(timeout, 120);
         }
-        if ("T2".equals(agentCode)) {
-            return Math.max(timeout, 240);
+        if ("T1".equals(agentCode) || "T2".equals(agentCode) || "T3".equals(agentCode)) {
+            return Math.max(timeout, STRUCTURED_LLM_AGENT_MIN_TIMEOUT_SECONDS);
         }
         return timeout;
     }
