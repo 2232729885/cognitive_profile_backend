@@ -55,6 +55,8 @@ public class SearchController {
                 request.getPlatform(),
                 request.getLanguage(),
                 request.getTopK(),
+                request.getPage(),
+                request.getSize(),
                 request.getSemanticMinScore()));
     }
 
@@ -76,7 +78,8 @@ public class SearchController {
             return Result.fail("INVALID_PARAM", "imageUrl不能为空");
         }
         return Result.ok(searchService.searchByImage(
-                request.getImageUrl(), request.getTargetModalities(), request.getTopK()));
+                request.getImageUrl(), request.getTargetModalities(), request.getTopK(),
+                request.getPage(), request.getSize()));
     }
 
     @PostMapping("/image/base64")
@@ -90,7 +93,8 @@ public class SearchController {
             String objectPath = minioStorageService.upload("media-assets", key, image.bytes(), image.contentType());
             String imageUrl = buildMinioUrl(objectPath);
             return Result.ok(searchService.searchByImage(
-                    imageUrl, request.getTargetModalities(), request.getTopK()));
+                    imageUrl, request.getTargetModalities(), request.getTopK(),
+                    request.getPage(), request.getSize()));
         } catch (IllegalArgumentException e) {
             return Result.fail("INVALID_FORMAT", "图片base64格式不合法");
         }
@@ -99,7 +103,9 @@ public class SearchController {
     @PostMapping("/image/upload")
     public Result<SearchResult> searchByUploadedImage(@RequestParam("file") MultipartFile file,
                                                       @RequestParam(defaultValue = "all") String targetModalities,
-                                                      @RequestParam(defaultValue = "20") int topK) throws IOException {
+                                                      @RequestParam(required = false) Integer topK,
+                                                      @RequestParam(defaultValue = "0") int page,
+                                                      @RequestParam(defaultValue = "10") int size) throws IOException {
         if (file == null || file.isEmpty()) {
             return Result.fail("INVALID_FILE", "上传文件不能为空");
         }
@@ -110,7 +116,7 @@ public class SearchController {
         String key = "search-temp/" + UUID.randomUUID() + "." + extensionOf(file.getOriginalFilename(), file.getContentType());
         String objectPath = minioStorageService.upload("media-assets", key, file.getBytes(), file.getContentType());
         String imageUrl = buildMinioUrl(objectPath);
-        return Result.ok(searchService.searchByImage(imageUrl, targetModalities, topK));
+        return Result.ok(searchService.searchByImage(imageUrl, targetModalities, topK, page, size));
     }
 
     @GetMapping("/graph/overview")
@@ -174,7 +180,9 @@ public class SearchController {
         private String queryText;
         private String platform;
         private String language;
-        private int topK = 20;
+        private Integer topK;
+        private int page = 0;
+        private int size = 10;
         private Double semanticMinScore;
     }
 
@@ -197,14 +205,18 @@ public class SearchController {
     public static class ImageSearchRequest {
         private String imageUrl;
         private String targetModalities = "all";
-        private int topK = 20;
+        private Integer topK;
+        private int page = 0;
+        private int size = 10;
     }
 
     @Data
     public static class ImageBase64SearchRequest {
         private String imageBase64;
         private String targetModalities = "all";
-        private int topK = 20;
+        private Integer topK;
+        private int page = 0;
+        private int size = 10;
     }
 
     private ParsedBase64Image parseBase64Image(String value) {

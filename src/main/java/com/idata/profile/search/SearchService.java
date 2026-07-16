@@ -36,6 +36,10 @@ import java.util.stream.Collectors;
 public class SearchService {
 
     private static final int DEFAULT_TOP_K = 20;
+    private static final int DEFAULT_PAGE_SIZE = 10;
+    private static final int DEFAULT_RECALL_SIZE = 50;
+    private static final int MAX_RECALL_SIZE = 500;
+    private static final int MAX_PAGE_SIZE = 100;
     private static final int RRF_K = 60;
     private static final long HYBRID_ROUTE_TIMEOUT_SECONDS = 8L;
     private static final float DEFAULT_CONTENT_SEMANTIC_MIN_SCORE = 0.45F;
@@ -53,8 +57,8 @@ public class SearchService {
     public SearchResult searchByText(String keyword, String platform,
                                      String language, int page, int size) {
         long startedAt = System.currentTimeMillis();
-        int safePage = Math.max(page, 0);
-        int safeSize = normalizeSize(size);
+        int safePage = normalizePage(page);
+        int safeSize = normalizePageSize(size);
         int fetchSize = Math.max((safePage + 1) * safeSize, safeSize);
 
         List<MediaContentEsService.EsSearchResult> esResults = esService.searchByKeywordWithHighlight(
@@ -75,9 +79,7 @@ public class SearchService {
                         MediaContentEsService.EsSearchResult::getScore,
                         (left, right) -> left,
                         LinkedHashMap::new));
-        int fromIndex = Math.min(safePage * safeSize, rankedIds.size());
-        int toIndex = Math.min(fromIndex + safeSize, rankedIds.size());
-        List<MediaContent> items = fetchContentsInOrder(rankedIds.subList(fromIndex, toIndex));
+        List<MediaContent> items = fetchContentsInOrder(pageSlice(rankedIds, safePage, safeSize));
 
         SearchResult result = buildResult(items, rankedIds.size(), "text", startedAt);
         result.setHighlights(highlights);
@@ -86,15 +88,18 @@ public class SearchService {
     }
 
     public SearchResult searchBySemantic(String queryText, String platform,
-                                         String language, int topK, Double semanticMinScore) {
+                                         String language, Integer topK, int page, int size, Double semanticMinScore) {
         long startedAt = System.currentTimeMillis();
-        int safeTopK = normalizeSize(topK);
+        int safePage = normalizePage(page);
+        int safeSize = normalizePageSize(size);
+        int safeTopK = normalizeRecallSize(topK, safePage, safeSize);
         List<MilvusVectorService.ScoredEntityId> scored =
                 searchSemanticIds(queryText, platform, language, safeTopK, semanticMinScore);
         List<String> ids = scored.stream()
                 .map(MilvusVectorService.ScoredEntityId::entityId)
                 .toList();
-        List<MediaContent> items = fetchContentsInOrder(ids);
+        List<String> pageIds = pageSlice(ids, safePage, safeSize);
+        List<MediaContent> items = fetchContentsInOrder(pageIds);
         Map<String, Double> similarityScores = scored.stream()
                 .collect(Collectors.toMap(
                         MilvusVectorService.ScoredEntityId::entityId,
@@ -109,7 +114,9 @@ public class SearchService {
 
     public SearchResult searchHybrid(HybridSearchRequest request) {
         long startedAt = System.currentTimeMillis();
-        int topK = request != null && request.getTopK() > 0 ? request.getTopK() : DEFAULT_TOP_K;
+        int safePage = normalizePage(request == null ? 0 : request.getPage());
+        int safeSize = normalizePageSize(request == null ? DEFAULT_PAGE_SIZE : request.getSize());
+        int topK = normalizeRecallSize(request == null ? null : request.getTopK(), safePage, safeSize);
         String queryText = request == null ? null : request.getQueryText();
         String platform = request == null ? null : request.getPlatform();
         String language = request == null ? null : request.getLanguage();
@@ -123,10 +130,10 @@ public class SearchService {
                 return result;
             }
             if (hasImage) {
-                return searchHybridImagesByImage(request.getImageUrl(), topK, startedAt);
+                return searchHybridImagesByImage(request.getImageUrl(), topK, safePage, safeSize, startedAt);
             }
             if (hasText(queryText)) {
-                return searchHybridImagesByText(queryText, topK, startedAt);
+                return searchHybridImagesByText(queryText, topK, safePage, safeSize, startedAt);
             }
             SearchResult result = buildResult(List.of(), 0, "hybrid-image", startedAt);
             result.setImageItems(List.of());
@@ -146,8 +153,12 @@ public class SearchService {
                 ? safeRoute("image", () -> vectorizeAndSearchByImage(
                 request.getImageUrl(), request.getTargetModalities(), topK))
                 : CompletableFuture.completedFuture(List.of());
+        CompletableFuture<List<SearchResult.ImageItem>> imageItemsFuture =
+                hasImage && "all".equals(targetModality)
+                        ? safeRoute("image-items", () -> searchImageItemsByImage(request.getImageUrl(), topK))
+                        : CompletableFuture.completedFuture(List.of());
 
-        CompletableFuture.allOf(esFuture, milvusFuture, neo4jFuture, imageFuture).join();
+        CompletableFuture.allOf(esFuture, milvusFuture, neo4jFuture, imageFuture, imageItemsFuture).join();
 
         List<MediaContentEsService.EsSearchResult> esResults = esFuture.join();
         List<String> esIds = esResults.stream()
@@ -161,8 +172,8 @@ public class SearchService {
         Map<String, Double> fusedScores = fuseByRrf(List.of(
                 esIds, milvusIds, neo4jFuture.join(), imageFuture.join()));
         List<String> fusedIds = new ArrayList<>(fusedScores.keySet());
-        List<String> topIds = fusedIds.size() > topK ? fusedIds.subList(0, topK) : fusedIds;
-        List<MediaContent> items = fetchContentsInOrder(topIds);
+        List<String> pageIds = pageSlice(fusedIds, safePage, safeSize);
+        List<MediaContent> items = fetchContentsInOrder(pageIds);
 
         Map<String, Map<String, List<String>>> highlights = esResults.stream()
                 .collect(Collectors.toMap(
@@ -189,27 +200,33 @@ public class SearchService {
         result.setScores(scores);
         result.setSimilarityScores(similarityScores);
         result.setFusionScores(fusedScores);
+        List<SearchResult.ImageItem> imageItems = imageItemsFuture.join();
+        if (!imageItems.isEmpty()) {
+            result.setImageItems(pageSlice(imageItems, safePage, safeSize));
+        }
         return result;
     }
 
-    private SearchResult searchHybridImagesByText(String queryText, int topK, long startedAt) {
+    private SearchResult searchHybridImagesByText(String queryText, int topK, int page, int size, long startedAt) {
         float[] embedding = textEmbedding(queryText);
         List<SearchResult.ImageItem> imageItems = embedding == null
                 ? List.of()
                 : searchImageSemanticAssets(embedding, topK);
         SearchResult result = buildResult(List.of(), imageItems.size(), "hybrid-image", startedAt);
-        result.setImageItems(imageItems);
+        result.setImageItems(pageSlice(imageItems, page, size));
         return result;
     }
 
-    private SearchResult searchHybridImagesByImage(String imageUrl, int topK, long startedAt) {
-        float[] embedding = imageEmbedding(imageUrl);
-        List<SearchResult.ImageItem> imageItems = embedding == null
-                ? List.of()
-                : searchImageSemanticAssets(embedding, topK);
+    private SearchResult searchHybridImagesByImage(String imageUrl, int topK, int page, int size, long startedAt) {
+        List<SearchResult.ImageItem> imageItems = searchImageItemsByImage(imageUrl, topK);
         SearchResult result = buildResult(List.of(), imageItems.size(), "hybrid-image", startedAt);
-        result.setImageItems(imageItems);
+        result.setImageItems(pageSlice(imageItems, page, size));
         return result;
+    }
+
+    private List<SearchResult.ImageItem> searchImageItemsByImage(String imageUrl, int topK) {
+        float[] embedding = imageEmbedding(imageUrl);
+        return embedding == null ? List.of() : searchImageSemanticAssets(embedding, topK);
     }
 
     public List<SocialAccount> searchAccounts(String queryText, String platform, String accountType, int topK) {
@@ -474,17 +491,27 @@ public class SearchService {
         return result;
     }
 
-    public SearchResult searchByImage(String imageUrl, String targetModalities, int topK) {
+    public SearchResult searchByImage(String imageUrl, String targetModalities, Integer topK, int page, int size) {
         long startedAt = System.currentTimeMillis();
-        int safeTopK = normalizeSize(topK);
+        int safePage = normalizePage(page);
+        int safeSize = normalizePageSize(size);
+        int safeTopK = normalizeRecallSize(topK, safePage, safeSize);
         String targetModality = normalizeTargetModality(targetModalities);
         if ("image".equals(targetModality)) {
-            return searchHybridImagesByImage(imageUrl, safeTopK, startedAt);
+            return searchHybridImagesByImage(imageUrl, safeTopK, safePage, safeSize, startedAt);
         }
         List<String> ids = vectorizeAndSearchByImage(
                 imageUrl, targetModality, safeTopK);
-        List<MediaContent> items = fetchContentsInOrder(ids);
-        return buildResult(items, ids.size(), "image", startedAt);
+        List<String> pageIds = pageSlice(ids, safePage, safeSize);
+        List<MediaContent> items = fetchContentsInOrder(pageIds);
+        SearchResult result = buildResult(items, ids.size(), "image", startedAt);
+        if ("all".equals(targetModality)) {
+            List<SearchResult.ImageItem> imageItems = searchImageItemsByImage(imageUrl, safeTopK);
+            if (!imageItems.isEmpty()) {
+                result.setImageItems(pageSlice(imageItems, safePage, safeSize));
+            }
+        }
+        return result;
     }
 
     private <T> CompletableFuture<List<T>> safeRoute(String routeName, SearchRoute<T> route) {
@@ -1170,6 +1197,36 @@ public class SearchService {
 
     private int normalizeSize(int size) {
         return size > 0 ? size : DEFAULT_TOP_K;
+    }
+
+    private int normalizeRecallSize(Integer requestedTopK, int page, int size) {
+        if (requestedTopK != null && requestedTopK > 0) {
+            return Math.min(requestedTopK, MAX_RECALL_SIZE);
+        }
+        int requiredForPage = (normalizePage(page) + 1) * normalizePageSize(size) * 3;
+        return Math.min(Math.max(requiredForPage, DEFAULT_RECALL_SIZE), MAX_RECALL_SIZE);
+    }
+
+    private int normalizePage(int page) {
+        return Math.max(page, 0);
+    }
+
+    private int normalizePageSize(int size) {
+        if (size <= 0) {
+            return DEFAULT_PAGE_SIZE;
+        }
+        return Math.min(size, MAX_PAGE_SIZE);
+    }
+
+    private <T> List<T> pageSlice(List<T> items, int page, int size) {
+        if (items == null || items.isEmpty()) {
+            return List.of();
+        }
+        int safePage = normalizePage(page);
+        int safeSize = normalizePageSize(size);
+        int fromIndex = Math.min(safePage * safeSize, items.size());
+        int toIndex = Math.min(fromIndex + safeSize, items.size());
+        return items.subList(fromIndex, toIndex);
     }
 
     private UUID parseUuid(String value) {

@@ -7,7 +7,9 @@ public class HybridSearchRequest {
     private String queryText;
     private String platform;
     private String language;
-    private int topK = 20;
+    private Integer topK;
+    private int page = 0;
+    private int size = 10;
     private boolean enableEs = true;
     private boolean enableMilvus = true;
     private boolean enableNeo4j = false;
