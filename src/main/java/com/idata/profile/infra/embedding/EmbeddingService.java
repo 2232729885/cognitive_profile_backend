@@ -11,11 +11,14 @@ import org.springframework.web.client.RestClient;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Semaphore;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class EmbeddingService {
+
+    private static final Semaphore IMAGE_EMBEDDING_SEMAPHORE = new Semaphore(1);
 
     private final RestClient embeddingRestClient = RestClient.create();
 
@@ -39,18 +42,35 @@ public class EmbeddingService {
         if (!hasText(imageUrl)) {
             return null;
         }
-        Map<String, Object> imageContent = Map.of(
-                "type", "image_url",
-                "image_url", Map.of("url", imageUrl));
-        Map<String, Object> userMessage = Map.of(
-                "role", "user",
-                "content", List.of(imageContent));
-        return generateEmbedding(Map.of(
-                "model", embeddingModel,
-                "messages", List.of(userMessage)), "image");
+        boolean acquired = false;
+        try {
+            IMAGE_EMBEDDING_SEMAPHORE.acquire();
+            acquired = true;
+            Map<String, Object> imageContent = Map.of(
+                    "type", "image_url",
+                    "image_url", Map.of("url", imageUrl));
+            Map<String, Object> userMessage = Map.of(
+                    "role", "user",
+                    "content", List.of(imageContent));
+            return generateEmbedding(Map.of(
+                    "model", embeddingModel,
+                    "messages", List.of(userMessage)), "image", imageUrl);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("[EmbeddingService] image embedding interrupted, imageUrl={}", imageUrl, e);
+            return null;
+        } finally {
+            if (acquired) {
+                IMAGE_EMBEDDING_SEMAPHORE.release();
+            }
+        }
     }
 
     private float[] generateEmbedding(Map<String, Object> requestBody, String inputType) {
+        return generateEmbedding(requestBody, inputType, null);
+    }
+
+    private float[] generateEmbedding(Map<String, Object> requestBody, String inputType, String source) {
         try {
             EmbeddingApiResponse apiResponse = embeddingRestClient.post()
                     .uri(normalizeBaseUrl(embeddingBaseUrl) + "/embeddings")
@@ -72,7 +92,11 @@ public class EmbeddingService {
             }
             return embedding;
         } catch (Exception e) {
-            log.warn("[EmbeddingService] {} embedding failed", inputType, e);
+            if (hasText(source)) {
+                log.warn("[EmbeddingService] {} embedding failed, source={}", inputType, source, e);
+            } else {
+                log.warn("[EmbeddingService] {} embedding failed", inputType, e);
+            }
             return null;
         }
     }

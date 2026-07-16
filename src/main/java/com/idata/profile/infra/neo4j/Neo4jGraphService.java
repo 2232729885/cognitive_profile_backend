@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Service
@@ -29,6 +30,7 @@ public class Neo4jGraphService {
 
     private final Neo4jClient neo4jClient;
     private final Object graphWriteLock = new Object();
+    private final Set<String> knownRelationshipTypes = ConcurrentHashMap.newKeySet();
 
     public void mergeNode(String label, String id, Map<String, Object> properties) {
         String cypher = String.format("MERGE (n:%s {id: $id}) SET n += $properties", label);
@@ -53,10 +55,14 @@ public class Neo4jGraphService {
                         .bind(toId).to("toId")
                         .bind(properties).to("properties")
                         .run());
+        knownRelationshipTypes.add(relationType);
     }
 
     public boolean relationExists(String fromId, String toId, String relationType) {
         if (!hasText(fromId) || !hasText(toId) || !hasText(relationType)) {
+            return false;
+        }
+        if (!relationshipTypeExists(relationType)) {
             return false;
         }
         String cypher = String.format("""
@@ -90,6 +96,7 @@ public class Neo4jGraphService {
                         .bind(toProperties).to("toProperties")
                         .bind(relationProperties).to("relationProperties")
                         .run());
+        knownRelationshipTypes.add(relationType);
     }
 
     /**
@@ -659,6 +666,25 @@ public class Neo4jGraphService {
 
     private boolean hasText(String value) {
         return value != null && !value.trim().isEmpty();
+    }
+
+    private boolean relationshipTypeExists(String relationType) {
+        if (knownRelationshipTypes.contains(relationType)) {
+            return true;
+        }
+        boolean exists = neo4jClient.query("""
+                        CALL db.relationshipTypes() YIELD relationshipType
+                        WHERE relationshipType = $relationType
+                        RETURN count(*) > 0 AS exists
+                        """)
+                .bind(relationType).to("relationType")
+                .fetchAs(Boolean.class)
+                .one()
+                .orElse(false);
+        if (exists) {
+            knownRelationshipTypes.add(relationType);
+        }
+        return exists;
     }
 
     private boolean isTransientNeo4jError(Throwable error) {

@@ -1,6 +1,7 @@
 package com.idata.profile.batch.asset;
 
 import com.idata.profile.entity.content.MediaAsset;
+import com.idata.profile.common.util.ImageAnnotationUtil;
 import com.idata.profile.infra.embedding.EmbeddingService;
 import com.idata.profile.infra.milvus.MilvusVectorService;
 import com.idata.profile.mapper.content.MediaAssetMapper;
@@ -23,6 +24,7 @@ public class ImageEmbeddingService {
     private final EmbeddingService embeddingService;
     private final MilvusVectorService milvusVectorService;
     private final ExecutorService pipelineThreadPool;
+    private final ImageAnnotationUtil imageAnnotationUtil;
 
     public void submitAfterCommit(UUID assetId) {
         Runnable task = () -> pipelineThreadPool.submit(() -> processById(assetId));
@@ -63,7 +65,13 @@ public class ImageEmbeddingService {
 
     private boolean process(MediaAsset asset) {
         try {
-            float[] embedding = embeddingService.generateImageEmbedding(resolveImageUrl(asset));
+            if (!"image".equalsIgnoreCase(asset.getAssetType())) {
+                log.debug("Skip non-image asset embedding, assetId={}, assetType={}",
+                        asset.getId(), asset.getAssetType());
+                return false;
+            }
+            String imageUrl = resolveImageUrl(asset);
+            float[] embedding = embeddingService.generateImageEmbedding(imageUrl);
             if (embedding == null) {
                 return false;
             }
@@ -80,22 +88,26 @@ public class ImageEmbeddingService {
             log.info("Image embedding indexed, assetId={}, vectorId={}", asset.getId(), vectorId);
             return true;
         } catch (Exception e) {
-            log.error("Image embedding failed, assetId={}, sourceUrl={}, storageUri={}",
-                    asset.getId(), asset.getSourceUrl(), asset.getStorageUri(), e);
+            log.error("Image embedding failed, assetId={}, assetType={}, imageUrl={}, sourceUrl={}, storageUri={}",
+                    asset.getId(), asset.getAssetType(), safeImageUrl(asset),
+                    asset.getSourceUrl(), asset.getStorageUri(), e);
             return false;
         }
     }
 
     private String resolveImageUrl(MediaAsset asset) {
-        if (asset.getSourceUrl() != null && !asset.getSourceUrl().isBlank()) {
-            return asset.getSourceUrl();
-        }
-        if (asset.getStorageUri() != null && !asset.getStorageUri().isBlank()) {
-            return asset.getStorageUri();
-        }
-        if (asset.getMinioBucket() != null && asset.getMinioKey() != null) {
-            return asset.getMinioBucket() + "/" + asset.getMinioKey();
+        String imageUrl = imageAnnotationUtil.buildImageUrl(asset);
+        if (imageUrl != null && !imageUrl.isBlank()) {
+            return imageUrl;
         }
         throw new IllegalArgumentException("Media asset has no image URL or storage URI, assetId=" + asset.getId());
+    }
+
+    private String safeImageUrl(MediaAsset asset) {
+        try {
+            return resolveImageUrl(asset);
+        } catch (Exception e) {
+            return null;
+        }
     }
 }

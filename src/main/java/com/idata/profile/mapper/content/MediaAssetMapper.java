@@ -35,7 +35,7 @@ public interface MediaAssetMapper extends BaseMapper<MediaAsset> {
     MediaAsset selectBySha256(@Param("sha256") String sha256);
 
     @Select("SELECT * FROM media_assets WHERE embedding_id IS NULL " +
-            "AND asset_type IN ('image','video') LIMIT #{limit}")
+            "AND asset_type = 'image' LIMIT #{limit}")
     List<MediaAsset> selectPendingEmbedding(@Param("limit") int limit);
 
     /** 查找有资产待T1标注、且资产已关联内容的内容ID列表（去重，用于ImageEmbeddingJob按内容重新标注） */
