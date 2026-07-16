@@ -43,6 +43,7 @@ public class SearchService {
     private static final int RRF_K = 60;
     private static final long HYBRID_ROUTE_TIMEOUT_SECONDS = 8L;
     private static final float DEFAULT_CONTENT_SEMANTIC_MIN_SCORE = 0.45F;
+    private static final float DEFAULT_ENTITY_SEARCH_SEMANTIC_MIN_SCORE = 0.60F;
 
     private final EmbeddingService embeddingService;
     private final MilvusVectorService milvusService;
@@ -133,7 +134,7 @@ public class SearchService {
                 return searchHybridImagesByImage(request.getImageUrl(), topK, safePage, safeSize, startedAt);
             }
             if (hasText(queryText)) {
-                return searchHybridImagesByText(queryText, topK, safePage, safeSize, startedAt);
+                return searchHybridImagesByText(queryText, topK, safePage, safeSize, semanticMinScore, startedAt);
             }
             SearchResult result = buildResult(List.of(), 0, "hybrid-image", startedAt);
             result.setImageItems(List.of());
@@ -207,11 +208,12 @@ public class SearchService {
         return result;
     }
 
-    private SearchResult searchHybridImagesByText(String queryText, int topK, int page, int size, long startedAt) {
+    private SearchResult searchHybridImagesByText(String queryText, int topK, int page, int size,
+                                                  Double semanticMinScore, long startedAt) {
         float[] embedding = textEmbedding(queryText);
         List<SearchResult.ImageItem> imageItems = embedding == null
                 ? List.of()
-                : searchImageSemanticAssets(embedding, topK);
+                : searchImageSemanticAssets(embedding, topK, semanticMinScore);
         SearchResult result = buildResult(List.of(), imageItems.size(), "hybrid-image", startedAt);
         result.setImageItems(pageSlice(imageItems, page, size));
         return result;
@@ -226,7 +228,7 @@ public class SearchService {
 
     private List<SearchResult.ImageItem> searchImageItemsByImage(String imageUrl, int topK) {
         float[] embedding = imageEmbedding(imageUrl);
-        return embedding == null ? List.of() : searchImageSemanticAssets(embedding, topK);
+        return embedding == null ? List.of() : searchImageSemanticAssets(embedding, topK, null);
     }
 
     public List<SocialAccount> searchAccounts(String queryText, String platform, String accountType, int topK) {
@@ -369,14 +371,18 @@ public class SearchService {
         List<Map<String, Object>> entityEsResults = entityEsFutures.stream()
                 .flatMap(future -> future.join().stream())
                 .toList();
-        List<MilvusVectorService.ScoredEntityId> entityMilvusResults = entityMilvusFutures.stream()
+        List<MilvusVectorService.ScoredEntityId> entityMilvusResults = filterEntitySearchSemanticResults(
+                entityMilvusFutures.stream()
                 .flatMap(future -> future.join().stream())
-                .toList();
+                .toList());
         List<SocialAccountEsService.EsAccountSearchResult> accountEsResults = accountEsFuture.join();
-        List<MilvusVectorService.ScoredEntityId> accountMilvusResults = accountMilvusFuture.join();
+        List<MilvusVectorService.ScoredEntityId> accountMilvusResults = filterEntitySearchSemanticResults(
+                accountMilvusFuture.join());
         List<MediaContentEsService.EsSearchResult> contentEsResults = contentEsFuture.join();
-        List<MilvusVectorService.ScoredEntityId> textMilvusResults = textMilvusFuture.join();
-        List<MilvusVectorService.ScoredEntityId> imageMilvusResults = imageMilvusFuture.join();
+        List<MilvusVectorService.ScoredEntityId> textMilvusResults = filterEntitySearchSemanticResults(
+                textMilvusFuture.join());
+        List<MilvusVectorService.ScoredEntityId> imageMilvusResults = filterEntitySearchSemanticResults(
+                imageMilvusFuture.join());
 
         List<String> entityEsIds = entityEsResults.stream()
                 .map(r -> scopedId("entity", (String) r.get("entityId")))
@@ -602,6 +608,16 @@ public class SearchService {
         }
     }
 
+    private List<MilvusVectorService.ScoredEntityId> filterEntitySearchSemanticResults(
+            List<MilvusVectorService.ScoredEntityId> results) {
+        if (results == null || results.isEmpty()) {
+            return List.of();
+        }
+        return results.stream()
+                .filter(result -> result.score() >= DEFAULT_ENTITY_SEARCH_SEMANTIC_MIN_SCORE)
+                .toList();
+    }
+
     private List<MilvusVectorService.ScoredEntityId> searchImageSemanticContentIds(float[] embedding, int topK) {
         List<MilvusVectorService.ScoredEntityId> assetScores =
                 milvusService.searchImageEmbeddingsWithScore(embedding, topK);
@@ -637,9 +653,13 @@ public class SearchService {
                 .toList();
     }
 
-    private List<SearchResult.ImageItem> searchImageSemanticAssets(float[] embedding, int topK) {
+    private List<SearchResult.ImageItem> searchImageSemanticAssets(float[] embedding, int topK,
+                                                                   Double semanticMinScore) {
+        float minScore = semanticMinScore == null ? 0F : normalizeSemanticMinScore(semanticMinScore);
         List<MilvusVectorService.ScoredEntityId> assetScores =
-                milvusService.searchImageEmbeddingsWithScore(embedding, topK);
+                milvusService.searchImageEmbeddingsWithScore(embedding, topK).stream()
+                        .filter(result -> result.score() >= minScore)
+                        .toList();
         List<UUID> assetIds = assetScores.stream()
                 .map(item -> normalizeImageAssetId(item.entityId()))
                 .map(this::parseUuid)
