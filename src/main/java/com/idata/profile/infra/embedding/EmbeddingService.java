@@ -19,6 +19,7 @@ import java.util.concurrent.Semaphore;
 public class EmbeddingService {
 
     private static final Semaphore IMAGE_EMBEDDING_SEMAPHORE = new Semaphore(1);
+    private static final Semaphore TEXT_EMBEDDING_SEMAPHORE = new Semaphore(2);
 
     private final RestClient embeddingRestClient = RestClient.create();
 
@@ -35,7 +36,20 @@ public class EmbeddingService {
         if (!hasText(text)) {
             return null;
         }
-        return generateEmbedding(Map.of("model", embeddingModel, "input", text), "text");
+        boolean acquired = false;
+        try {
+            TEXT_EMBEDDING_SEMAPHORE.acquire();
+            acquired = true;
+            return generateEmbedding(Map.of("model", embeddingModel, "input", text), "text");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("[EmbeddingService] text embedding interrupted", e);
+            return null;
+        } finally {
+            if (acquired) {
+                TEXT_EMBEDDING_SEMAPHORE.release();
+            }
+        }
     }
 
     public float[] generateImageEmbedding(String imageUrl) {

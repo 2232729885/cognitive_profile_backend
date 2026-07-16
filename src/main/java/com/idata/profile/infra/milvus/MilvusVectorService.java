@@ -3,6 +3,7 @@ package com.idata.profile.infra.milvus;
 import com.google.gson.Gson;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
+import io.milvus.common.clientenum.FunctionType;
 import io.milvus.v2.client.MilvusClientV2;
 import io.milvus.v2.common.DataType;
 import io.milvus.v2.common.IndexParam;
@@ -10,20 +11,28 @@ import io.milvus.v2.service.collection.request.AddFieldReq;
 import io.milvus.v2.service.collection.request.CreateCollectionReq;
 import io.milvus.v2.service.collection.request.HasCollectionReq;
 import io.milvus.v2.service.collection.request.LoadCollectionReq;
+import io.milvus.v2.service.vector.request.AnnSearchReq;
+import io.milvus.v2.service.vector.request.HybridSearchReq;
 import io.milvus.v2.service.vector.request.SearchReq;
 import io.milvus.v2.service.vector.request.UpsertReq;
+import io.milvus.v2.service.vector.request.data.BaseVector;
+import io.milvus.v2.service.vector.request.data.EmbeddedText;
 import io.milvus.v2.service.vector.request.data.FloatVec;
+import io.milvus.v2.service.vector.request.ranker.RRFRanker;
 import io.milvus.v2.service.vector.response.SearchResp;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -34,6 +43,7 @@ public class MilvusVectorService {
     private static final String MEDIA_CONTENT_COLLECTION = "media_content_embeddings";
     private static final String MEDIA_ASSET_COLLECTION = "media_asset_embeddings";
     private static final String ENTITY_COLLECTION = "entity_embeddings";
+    private static final String ENTITY_HYBRID_POC_COLLECTION = "entity_hybrid_poc_embeddings";
 
     private static final String CONTENT_TITLE_VECTOR_FIELD = "title_embedding";
     private static final String CONTENT_TEXT_VECTOR_FIELD = "text_embedding";
@@ -42,11 +52,29 @@ public class MilvusVectorService {
     private static final String ENTITY_NAME_VECTOR_FIELD = "name_embedding";
     private static final String ENTITY_ALIAS_VECTOR_FIELD = "alias_embedding";
     private static final String ENTITY_DESCRIPTION_VECTOR_FIELD = "description_embedding";
+    private static final String ENTITY_KEYWORD_TEXT_FIELD = "keyword_text";
+    private static final String ENTITY_KEYWORD_SPARSE_FIELD = "keyword_sparse";
     private static final Gson GSON = new Gson();
+    private static final float[] ZERO_EMBEDDING = new float[EMBEDDING_DIMENSION];
+    private static final float MIN_VECTOR_SCORE = 0.000001F;
+    private static final int ID_MAX_LENGTH = 128;
+    private static final int VECTOR_ID_MAX_LENGTH = 192;
+    private static final int PLATFORM_MAX_LENGTH = 64;
+    private static final int LANGUAGE_MAX_LENGTH = 32;
+    private static final int TYPE_MAX_LENGTH = 64;
+    private static final int SOURCE_ASSET_ID_MAX_LENGTH = 256;
+    private static final int MIME_TYPE_MAX_LENGTH = 128;
+    private static final int CANONICAL_NAME_MAX_LENGTH = 512;
+    private static final int ALIASES_MAX_LENGTH = 2048;
+    private static final int KEYWORD_TEXT_MAX_LENGTH = 4096;
 
     private final MilvusClientV2 milvusClient;
 
     public record ScoredEntityId(String entityId, float score) {
+    }
+
+    public record EntityHybridPocResult(String entityId, String entityType, float fusionScore,
+                                        Float keywordScore, Float semanticScore) {
     }
 
     public String insertMediaContentEmbedding(String contentId, String platform, String language,
@@ -60,11 +88,11 @@ public class MilvusVectorService {
 
         String vectorId = "media_content_" + contentId;
         JsonObject row = new JsonObject();
-        row.addProperty("id", vectorId);
-        row.addProperty("content_id", contentId);
-        row.addProperty("platform", platform);
-        row.addProperty("language", language);
-        row.addProperty("content_type", contentType);
+        addText(row, "id", vectorId, ID_MAX_LENGTH);
+        addText(row, "content_id", contentId, ID_MAX_LENGTH);
+        addText(row, "platform", platform, PLATFORM_MAX_LENGTH);
+        addText(row, "language", language, LANGUAGE_MAX_LENGTH);
+        addText(row, "content_type", contentType, TYPE_MAX_LENGTH);
         row.addProperty("published_at", publishedAt);
         addVector(row, CONTENT_TITLE_VECTOR_FIELD, titleEmbedding);
         addVector(row, CONTENT_TEXT_VECTOR_FIELD, textEmbedding);
@@ -90,13 +118,13 @@ public class MilvusVectorService {
 
         String vectorId = "media_asset_" + assetId;
         JsonObject row = new JsonObject();
-        row.addProperty("id", vectorId);
-        row.addProperty("asset_id", assetId);
-        row.addProperty("source_asset_id", sourceAssetId);
-        row.addProperty("content_id", contentId);
-        row.addProperty("platform", platform);
-        row.addProperty("asset_type", assetType);
-        row.addProperty("mime_type", mimeType);
+        addText(row, "id", vectorId, ID_MAX_LENGTH);
+        addText(row, "asset_id", assetId, ID_MAX_LENGTH);
+        addText(row, "source_asset_id", sourceAssetId, SOURCE_ASSET_ID_MAX_LENGTH);
+        addText(row, "content_id", contentId, ID_MAX_LENGTH);
+        addText(row, "platform", platform, PLATFORM_MAX_LENGTH);
+        addText(row, "asset_type", assetType, TYPE_MAX_LENGTH);
+        addText(row, "mime_type", mimeType, MIME_TYPE_MAX_LENGTH);
         addVector(row, ASSET_IMAGE_VECTOR_FIELD, imageEmbedding);
         addVector(row, ASSET_OCR_TEXT_VECTOR_FIELD, ocrTextEmbedding);
         insert(MEDIA_ASSET_COLLECTION, row);
@@ -146,18 +174,43 @@ public class MilvusVectorService {
 
         String vectorId = "entity_" + normalizeEntityType(entityType) + "_" + entityId;
         JsonObject row = new JsonObject();
-        row.addProperty("id", vectorId);
-        row.addProperty("entity_id", entityId);
-        row.addProperty("entity_type", normalizeEntityType(entityType));
-        row.addProperty("canonical_name", canonicalName);
-        row.addProperty("aliases", aliases);
-        row.addProperty("source_id", sourceId);
-        row.addProperty("platform", platform);
+        addText(row, "id", vectorId, VECTOR_ID_MAX_LENGTH);
+        addText(row, "entity_id", entityId, ID_MAX_LENGTH);
+        addText(row, "entity_type", normalizeEntityType(entityType), TYPE_MAX_LENGTH);
+        addText(row, "canonical_name", canonicalName, CANONICAL_NAME_MAX_LENGTH);
+        addText(row, "aliases", aliases, ALIASES_MAX_LENGTH);
+        addText(row, "source_id", sourceId, ID_MAX_LENGTH);
+        addText(row, "platform", platform, PLATFORM_MAX_LENGTH);
         addVector(row, ENTITY_NAME_VECTOR_FIELD, nameEmbedding);
         addVector(row, ENTITY_ALIAS_VECTOR_FIELD, aliasEmbedding);
         addVector(row, ENTITY_DESCRIPTION_VECTOR_FIELD, descriptionEmbedding);
-        insert(ENTITY_COLLECTION, row);
+        try {
+            insert(ENTITY_COLLECTION, row);
+            upsertEntityHybridPocEmbedding(row, canonicalName, aliases);
+        } catch (RuntimeException e) {
+            log.warn("Failed to upsert entity embeddings, entityId={}, entityType={}",
+                    entityId, normalizeEntityType(entityType), e);
+            return null;
+        }
         return vectorId;
+    }
+
+    private void upsertEntityHybridPocEmbedding(JsonObject baseRow, String canonicalName, String aliases) {
+        if (milvusClient == null) {
+            return;
+        }
+        try {
+            if (!collectionExists(ENTITY_HYBRID_POC_COLLECTION)) {
+                return;
+            }
+            JsonObject row = baseRow.deepCopy();
+            addText(row, ENTITY_KEYWORD_TEXT_FIELD, buildEntityKeywordText(row, canonicalName, aliases),
+                    KEYWORD_TEXT_MAX_LENGTH);
+            insert(ENTITY_HYBRID_POC_COLLECTION, row);
+        } catch (RuntimeException e) {
+            log.warn("Failed to upsert entity hybrid POC embedding, entityId={}",
+                    baseRow.has("entity_id") ? baseRow.get("entity_id").getAsString() : null, e);
+        }
     }
 
     private String upsertEntityEmbedding(String entityId, String entityType, String canonicalName,
@@ -249,6 +302,135 @@ public class MilvusVectorService {
         return mergeByMaxScore(List.of(nameResults, aliasResults, descriptionResults), topK);
     }
 
+    public List<ScoredEntityId> searchEntityHybridPoc(String keyword, float[] queryEmbedding, int topK,
+                                                      String entityType) {
+        Collection<String> entityTypes = hasText(entityType) ? List.of(entityType) : List.of();
+        return searchEntityHybridPocDetailed(keyword, queryEmbedding, topK, entityTypes).stream()
+                .map(result -> new ScoredEntityId(result.entityId(), result.fusionScore()))
+                .toList();
+    }
+
+    public List<EntityHybridPocResult> searchEntityHybridPocDetailed(String keyword, float[] queryEmbedding,
+                                                                     int topK, Collection<String> entityTypes) {
+        if (milvusClient == null || !hasText(keyword) || topK <= 0) {
+            return List.of();
+        }
+        validateEmbedding(queryEmbedding);
+        String filter = buildEntityTypeFilter(entityTypes);
+        try {
+            if (!collectionExists(ENTITY_HYBRID_POC_COLLECTION)) {
+                return List.of();
+            }
+            List<ScoredEntityId> keywordResults = searchEntityHybridPocKeyword(keyword, topK, filter);
+            List<ScoredEntityId> semanticResults = mergeByMaxScore(List.of(
+                    searchEntityHybridPocDense(ENTITY_NAME_VECTOR_FIELD, queryEmbedding, topK, filter),
+                    searchEntityHybridPocDense(ENTITY_ALIAS_VECTOR_FIELD, queryEmbedding, topK, filter),
+                    searchEntityHybridPocDense(ENTITY_DESCRIPTION_VECTOR_FIELD, queryEmbedding, topK, filter)), topK);
+            Map<String, Float> keywordScores = scoreMap(keywordResults);
+            Map<String, Float> semanticScores = scoreMap(semanticResults);
+
+            List<AnnSearchReq> requests = new ArrayList<>();
+            requests.add(AnnSearchReq.builder()
+                    .vectorFieldName(ENTITY_KEYWORD_SPARSE_FIELD)
+                    .vectors(List.<BaseVector>of(new EmbeddedText(keyword)))
+                    .filter(filter)
+                    .limit(topK)
+                    .build());
+            requests.add(entityDenseSearchReq(ENTITY_NAME_VECTOR_FIELD, queryEmbedding, topK, filter));
+            requests.add(entityDenseSearchReq(ENTITY_ALIAS_VECTOR_FIELD, queryEmbedding, topK, filter));
+            requests.add(entityDenseSearchReq(ENTITY_DESCRIPTION_VECTOR_FIELD, queryEmbedding, topK, filter));
+
+            SearchResp response = milvusClient.hybridSearch(HybridSearchReq.builder()
+                    .collectionName(ENTITY_HYBRID_POC_COLLECTION)
+                    .searchRequests(requests)
+                    .ranker(RRFRanker.builder().k(60).build())
+                    .limit(topK)
+                    .outFields(List.of("entity_id", "entity_type"))
+                    .build());
+            return extractEntityHybridPocResults(response, keywordScores, semanticScores);
+        } catch (RuntimeException e) {
+            log.warn("Milvus entity hybrid POC search failed, entityTypes={}, topK={}", entityTypes, topK, e);
+            return List.of();
+        }
+    }
+
+    private List<ScoredEntityId> searchEntityHybridPocKeyword(String keyword, int topK, String filter) {
+        try {
+            SearchReq.SearchReqBuilder builder = SearchReq.builder()
+                    .collectionName(ENTITY_HYBRID_POC_COLLECTION)
+                    .annsField(ENTITY_KEYWORD_SPARSE_FIELD)
+                    .topK(topK)
+                    .data(List.<BaseVector>of(new EmbeddedText(keyword)))
+                    .outputFields(List.of("entity_id"));
+            if (hasText(filter)) {
+                builder.filter(filter);
+            }
+            SearchResp response = milvusClient.search(builder.build());
+            return extractSearchFieldWithScore(response, "entity_id");
+        } catch (RuntimeException e) {
+            log.warn("Milvus entity hybrid POC keyword score search failed, topK={}", topK, e);
+            return List.of();
+        }
+    }
+
+    private List<ScoredEntityId> searchEntityHybridPocDense(String vectorField, float[] queryEmbedding,
+                                                           int topK, String filter) {
+        return searchEmbeddingsWithScore(
+                ENTITY_HYBRID_POC_COLLECTION, vectorField, queryEmbedding, topK, filter, "entity_id");
+    }
+
+    private Map<String, Float> scoreMap(List<ScoredEntityId> results) {
+        Map<String, Float> scores = new LinkedHashMap<>();
+        for (ScoredEntityId result : results) {
+            if (result != null && hasText(result.entityId())) {
+                scores.merge(result.entityId(), result.score(), Math::max);
+            }
+        }
+        return scores;
+    }
+
+    private List<EntityHybridPocResult> extractEntityHybridPocResults(
+            SearchResp response, Map<String, Float> keywordScores, Map<String, Float> semanticScores) {
+        if (response == null || response.getSearchResults() == null || response.getSearchResults().isEmpty()) {
+            return List.of();
+        }
+
+        List<EntityHybridPocResult> results = new ArrayList<>();
+        for (List<SearchResp.SearchResult> group : response.getSearchResults()) {
+            if (group == null) {
+                continue;
+            }
+            for (SearchResp.SearchResult result : group) {
+                if (result == null || result.getEntity() == null) {
+                    continue;
+                }
+                Object entityId = result.getEntity().get("entity_id");
+                if (entityId == null) {
+                    continue;
+                }
+                String id = entityId.toString();
+                Object entityType = result.getEntity().get("entity_type");
+                results.add(new EntityHybridPocResult(
+                        id,
+                        entityType == null ? null : entityType.toString(),
+                        result.getScore(),
+                        keywordScores.get(id),
+                        semanticScores.get(id)));
+            }
+        }
+        return results;
+    }
+
+    private AnnSearchReq entityDenseSearchReq(String vectorField, float[] queryEmbedding, int topK, String filter) {
+        return AnnSearchReq.builder()
+                .vectorFieldName(vectorField)
+                .vectors(List.<BaseVector>of(new FloatVec(queryEmbedding)))
+                .metricType(IndexParam.MetricType.COSINE)
+                .filter(filter)
+                .limit(topK)
+                .build();
+    }
+
     public void ensureAllCollections() {
         if (milvusClient == null) {
             log.info("Milvus client not configured, skip collection initialization");
@@ -257,6 +439,7 @@ public class MilvusVectorService {
         ensure("media content", this::ensureMediaContentCollection);
         ensure("media asset", this::ensureMediaAssetCollection);
         ensure("entity", this::ensureEntityCollection);
+        ensure("entity hybrid POC", this::ensureEntityHybridPocCollection);
     }
 
     private void ensure(String label, Runnable action) {
@@ -281,8 +464,8 @@ public class MilvusVectorService {
                 .addField(varcharField("language", 32, true, false))
                 .addField(varcharField("content_type", 64, true, false))
                 .addField(int64Field("published_at", true))
-                .addField(vectorField(CONTENT_TITLE_VECTOR_FIELD, true))
-                .addField(vectorField(CONTENT_TEXT_VECTOR_FIELD, true));
+                .addField(vectorField(CONTENT_TITLE_VECTOR_FIELD))
+                .addField(vectorField(CONTENT_TEXT_VECTOR_FIELD));
         createCollection(MEDIA_CONTENT_COLLECTION, schema, List.of(
                 vectorIndex(CONTENT_TITLE_VECTOR_FIELD),
                 vectorIndex(CONTENT_TEXT_VECTOR_FIELD)));
@@ -302,8 +485,8 @@ public class MilvusVectorService {
                 .addField(varcharField("platform", 64, true, false))
                 .addField(varcharField("asset_type", 32, true, false))
                 .addField(varcharField("mime_type", 128, true, false))
-                .addField(vectorField(ASSET_IMAGE_VECTOR_FIELD, true))
-                .addField(vectorField(ASSET_OCR_TEXT_VECTOR_FIELD, true));
+                .addField(vectorField(ASSET_IMAGE_VECTOR_FIELD))
+                .addField(vectorField(ASSET_OCR_TEXT_VECTOR_FIELD));
         createCollection(MEDIA_ASSET_COLLECTION, schema, List.of(
                 vectorIndex(ASSET_IMAGE_VECTOR_FIELD),
                 vectorIndex(ASSET_OCR_TEXT_VECTOR_FIELD)));
@@ -323,10 +506,42 @@ public class MilvusVectorService {
                 .addField(varcharField("aliases", 2048, true, false))
                 .addField(varcharField("source_id", 128, true, false))
                 .addField(varcharField("platform", 64, true, false))
-                .addField(vectorField(ENTITY_NAME_VECTOR_FIELD, true))
-                .addField(vectorField(ENTITY_ALIAS_VECTOR_FIELD, true))
-                .addField(vectorField(ENTITY_DESCRIPTION_VECTOR_FIELD, true));
+                .addField(vectorField(ENTITY_NAME_VECTOR_FIELD))
+                .addField(vectorField(ENTITY_ALIAS_VECTOR_FIELD))
+                .addField(vectorField(ENTITY_DESCRIPTION_VECTOR_FIELD));
         createCollection(ENTITY_COLLECTION, schema, List.of(
+                vectorIndex(ENTITY_NAME_VECTOR_FIELD),
+                vectorIndex(ENTITY_ALIAS_VECTOR_FIELD),
+                vectorIndex(ENTITY_DESCRIPTION_VECTOR_FIELD)));
+    }
+
+    private void ensureEntityHybridPocCollection() {
+        if (collectionExists(ENTITY_HYBRID_POC_COLLECTION)) {
+            return;
+        }
+        CreateCollectionReq.CollectionSchema schema = CreateCollectionReq.CollectionSchema.builder()
+                .enableDynamicField(true)
+                .build()
+                .addField(varcharField("id", 192, false, true))
+                .addField(varcharField("entity_id", 128, false, false))
+                .addField(varcharField("entity_type", 64, false, false))
+                .addField(varcharField("canonical_name", 512, true, false))
+                .addField(varcharField("aliases", 2048, true, false))
+                .addField(varcharField("source_id", 128, true, false))
+                .addField(varcharField("platform", 64, true, false))
+                .addField(analyzedTextField(ENTITY_KEYWORD_TEXT_FIELD, 4096))
+                .addField(sparseVectorField(ENTITY_KEYWORD_SPARSE_FIELD))
+                .addField(vectorField(ENTITY_NAME_VECTOR_FIELD))
+                .addField(vectorField(ENTITY_ALIAS_VECTOR_FIELD))
+                .addField(vectorField(ENTITY_DESCRIPTION_VECTOR_FIELD))
+                .addFunction(CreateCollectionReq.Function.builder()
+                        .name("entity_keyword_bm25")
+                        .functionType(FunctionType.BM25)
+                        .inputFieldNames(List.of(ENTITY_KEYWORD_TEXT_FIELD))
+                        .outputFieldNames(List.of(ENTITY_KEYWORD_SPARSE_FIELD))
+                        .build());
+        createCollection(ENTITY_HYBRID_POC_COLLECTION, schema, List.of(
+                sparseBm25Index(ENTITY_KEYWORD_SPARSE_FIELD),
                 vectorIndex(ENTITY_NAME_VECTOR_FIELD),
                 vectorIndex(ENTITY_ALIAS_VECTOR_FIELD),
                 vectorIndex(ENTITY_DESCRIPTION_VECTOR_FIELD)));
@@ -376,12 +591,29 @@ public class MilvusVectorService {
                 .build();
     }
 
-    private AddFieldReq vectorField(String name, boolean nullable) {
+    private AddFieldReq vectorField(String name) {
         return AddFieldReq.builder()
                 .fieldName(name)
                 .dataType(DataType.FloatVector)
                 .dimension(EMBEDDING_DIMENSION)
-                .isNullable(nullable)
+                .build();
+    }
+
+    private AddFieldReq sparseVectorField(String name) {
+        return AddFieldReq.builder()
+                .fieldName(name)
+                .dataType(DataType.SparseFloatVector)
+                .build();
+    }
+
+    private AddFieldReq analyzedTextField(String name, int maxLength) {
+        return AddFieldReq.builder()
+                .fieldName(name)
+                .dataType(DataType.VarChar)
+                .maxLength(maxLength)
+                .enableAnalyzer(true)
+                .enableMatch(true)
+                .analyzerParams(Map.of("type", "chinese"))
                 .build();
     }
 
@@ -391,6 +623,15 @@ public class MilvusVectorService {
                 .indexName(fieldName + "_idx")
                 .indexType(IndexParam.IndexType.AUTOINDEX)
                 .metricType(IndexParam.MetricType.COSINE)
+                .build();
+    }
+
+    private IndexParam sparseBm25Index(String fieldName) {
+        return IndexParam.builder()
+                .fieldName(fieldName)
+                .indexName(fieldName + "_idx")
+                .indexType(IndexParam.IndexType.AUTOINDEX)
+                .metricType(IndexParam.MetricType.BM25)
                 .build();
     }
 
@@ -405,10 +646,25 @@ public class MilvusVectorService {
 
     private void addVector(JsonObject row, String fieldName, float[] embedding) {
         if (embedding == null) {
-            row.add(fieldName, JsonNull.INSTANCE);
+            row.add(fieldName, GSON.toJsonTree(toFloatList(ZERO_EMBEDDING)));
             return;
         }
         row.add(fieldName, GSON.toJsonTree(toFloatList(embedding)));
+    }
+
+    private void addText(JsonObject row, String fieldName, String value, int maxLength) {
+        if (value == null) {
+            row.add(fieldName, JsonNull.INSTANCE);
+            return;
+        }
+        row.addProperty(fieldName, truncate(value, maxLength));
+    }
+
+    private String truncate(String value, int maxLength) {
+        if (value == null || value.length() <= maxLength) {
+            return value;
+        }
+        return value.substring(0, maxLength);
     }
 
     private List<String> searchEmbeddings(String collectionName, String vectorField, float[] queryEmbedding,
@@ -486,6 +742,7 @@ public class MilvusVectorService {
         }
         return scores.entrySet().stream()
                 .sorted(Map.Entry.<String, Float>comparingByValue(Comparator.reverseOrder()))
+                .filter(entry -> entry.getValue() > MIN_VECTOR_SCORE)
                 .limit(topK)
                 .map(entry -> new ScoredEntityId(entry.getKey(), entry.getValue()))
                 .toList();
@@ -502,8 +759,48 @@ public class MilvusVectorService {
         return String.join(" && ", filters);
     }
 
+    private String buildEntityTypeFilter(Collection<String> entityTypes) {
+        if (entityTypes == null || entityTypes.isEmpty()) {
+            return null;
+        }
+        List<String> normalized = entityTypes.stream()
+                .filter(this::hasText)
+                .map(this::normalizeEntityType)
+                .filter(this::hasText)
+                .distinct()
+                .toList();
+        if (normalized.isEmpty()) {
+            return null;
+        }
+        if (normalized.size() == 1) {
+            return "entity_type == \"" + escapeFilterValue(normalized.get(0)) + "\"";
+        }
+        return "entity_type in [" + normalized.stream()
+                .filter(Objects::nonNull)
+                .map(type -> "\"" + escapeFilterValue(type) + "\"")
+                .collect(Collectors.joining(", ")) + "]";
+    }
+
     private String escapeFilterValue(String value) {
         return value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    private String buildEntityKeywordText(JsonObject row, String canonicalName, String aliases) {
+        StringBuilder text = new StringBuilder();
+        appendKeywordText(text, canonicalName);
+        appendKeywordText(text, aliases);
+        appendKeywordText(text, jsonString(row, "source_id"));
+        return text.toString().trim();
+    }
+
+    private void appendKeywordText(StringBuilder text, String value) {
+        if (hasText(value)) {
+            text.append(value.trim()).append('\n');
+        }
+    }
+
+    private String jsonString(JsonObject row, String field) {
+        return row.has(field) && !row.get(field).isJsonNull() ? row.get(field).getAsString() : null;
     }
 
     private String normalizeEntityType(String entityType) {

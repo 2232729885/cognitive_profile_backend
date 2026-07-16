@@ -100,13 +100,14 @@ public class EntityEsService {
 
     public List<Map<String, Object>> searchEntities(String keyword, String entityType, int topK,
                                                     Map<String, String> filters) {
+        List<String> searchFields = searchFieldsFor(entityType);
         try {
             var response = esClient.search(s -> {
                 var q = s.index(ENTITY_INDEX).size(topK)
                         .query(qb -> qb.bool(b -> {
                             b.must(m -> m.multiMatch(mm -> mm
                                     .query(keyword)
-                                    .fields("canonical_name^3", "normalized_name^2", "aliases^2", "source_id")));
+                                    .fields(searchFields)));
                             if (entityType != null && !entityType.isBlank()) {
                                 b.filter(f -> f.term(t -> t.field("entity_type").value(normalizeEntityType(entityType))));
                             }
@@ -192,6 +193,14 @@ public class EntityEsService {
         String noDiacritics = decomposed.replaceAll("\\p{M}", "");
         String noPunct = noDiacritics.toLowerCase(java.util.Locale.ROOT).replaceAll("[\\p{Punct}]", " ");
         return noPunct.trim().replaceAll("\\s+", " ");
+    }
+
+    private List<String> searchFieldsFor(String entityType) {
+        String normalizedType = normalizeEntityType(entityType);
+        if ("SocialAccount".equals(normalizedType)) {
+            return List.of("canonical_name^4", "normalized_name^3", "source_id^2");
+        }
+        return List.of("canonical_name^3", "normalized_name^2", "aliases^2", "source_id");
     }
 
     private String normalizeEntityType(String entityType) {

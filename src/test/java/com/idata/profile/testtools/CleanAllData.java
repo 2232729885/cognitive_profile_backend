@@ -73,6 +73,7 @@ public class CleanAllData {
             "media_content_embeddings",
             "media_asset_embeddings",
             "entity_embeddings",
+            "entity_hybrid_poc_embeddings",
             "text_embeddings",
             "image_embeddings",
             "account_embeddings"

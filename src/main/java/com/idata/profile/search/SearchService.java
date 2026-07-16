@@ -43,6 +43,7 @@ public class SearchService {
     private static final int RRF_K = 60;
     private static final long HYBRID_ROUTE_TIMEOUT_SECONDS = 8L;
     private static final float DEFAULT_CONTENT_SEMANTIC_MIN_SCORE = 0.45F;
+    private static final List<String> STANDARD_ENTITY_TYPES = List.of("Person", "Organization", "Event", "Location");
 
     private final EmbeddingService embeddingService;
     private final MilvusVectorService milvusService;
@@ -308,7 +309,13 @@ public class SearchService {
         List<String> requestedTypes = normalizeEntityTypes(request.getEntityTypes());
         String retrievalMode = normalizeRetrievalMode(request.getRetrievalMode());
         if (retrievalMode == null) {
-            return EntityCandidateSearchResponse.fail("400", "retrieval_mode只支持keyword、semantic、both");
+            return EntityCandidateSearchResponse.fail("400", "retrieval_mode只支持keyword、semantic、both、hybrid");
+        }
+
+        if ("hybrid".equals(retrievalMode)) {
+            List<EntityCandidateSearchResponse.Candidate> hybridCandidates =
+                    searchEntityCandidatesFromMilvusHybridPoc(request.getQuery(), requestedTypes, safeTopK);
+            return EntityCandidateSearchResponse.ok(request.getTraceId(), List.of(), List.of(), hybridCandidates);
         }
 
         CompletableFuture<List<EntityCandidateSearchResponse.Candidate>> keywordFuture =
@@ -602,7 +609,7 @@ public class SearchService {
     private String normalizeRetrievalMode(String retrievalMode) {
         String mode = hasText(retrievalMode) ? retrievalMode.trim().toLowerCase() : "both";
         return switch (mode) {
-            case "keyword", "semantic", "both" -> mode;
+            case "keyword", "semantic", "both", "hybrid" -> mode;
             default -> null;
         };
     }
@@ -907,6 +914,46 @@ public class SearchService {
         return hydrateEntityCandidates(scored, topK);
     }
 
+    private List<EntityCandidateSearchResponse.Candidate> searchEntityCandidatesFromMilvusHybridPoc(
+            String keyword, List<String> requestedTypes, int topK) {
+        if (!hasText(keyword) || topK <= 0) {
+            return List.of();
+        }
+        float[] embedding = textEmbedding(keyword);
+        if (embedding == null) {
+            return List.of();
+        }
+
+        boolean allDomains = requestedTypes == null || requestedTypes.isEmpty();
+        List<String> standardTypes = standardEntityTypes(requestedTypes);
+        boolean includeEntities = allDomains || !standardTypes.isEmpty();
+        boolean includeAccounts = allDomains || containsType(requestedTypes, "SocialAccount");
+        boolean includeContents = allDomains || containsType(requestedTypes, "MediaContent");
+
+        List<String> typeFilters = new ArrayList<>();
+        if (includeEntities) {
+            typeFilters.addAll(allDomains ? STANDARD_ENTITY_TYPES : standardTypes);
+        }
+        if (includeAccounts) {
+            typeFilters.add("SocialAccount");
+        }
+        if (includeContents) {
+            typeFilters.add("MediaContent");
+        }
+        if (typeFilters.isEmpty()) {
+            return List.of();
+        }
+
+        List<ScoredScopedId> scored = new ArrayList<>();
+        milvusService.searchEntityHybridPocDetailed(keyword, embedding, topK, typeFilters).forEach(result -> {
+            String domain = domainForEntityType(result.entityType());
+            if (domain != null) {
+                addHybridScored(scored, domain, result);
+            }
+        });
+        return hydrateEntityCandidates(scored, topK);
+    }
+
     private List<EntityCandidateSearchResponse.Candidate> hydrateEntityCandidates(
             List<ScoredScopedId> scored, int topK) {
         if (scored == null || scored.isEmpty()) {
@@ -965,7 +1012,7 @@ public class SearchService {
                     item = mediaContentResult(content);
                 }
             }
-            EntityCandidateSearchResponse.Candidate candidate = toEntityCandidate(item, scoredId.score());
+            EntityCandidateSearchResponse.Candidate candidate = toEntityCandidate(item, scoredId);
             if (candidate != null) {
                 candidates.add(candidate);
             }
@@ -973,7 +1020,7 @@ public class SearchService {
         return candidates;
     }
 
-    private EntityCandidateSearchResponse.Candidate toEntityCandidate(Map<String, Object> item, double score) {
+    private EntityCandidateSearchResponse.Candidate toEntityCandidate(Map<String, Object> item, ScoredScopedId scored) {
         if (item == null) {
             return null;
         }
@@ -992,20 +1039,26 @@ public class SearchService {
         if (!hasText(nodeId) || !hasText(entityType) || !hasText(name)) {
             return null;
         }
-        return new EntityCandidateSearchResponse.Candidate(nodeId, name, entityType, score);
+        EntityCandidateSearchResponse.Candidate candidate =
+                new EntityCandidateSearchResponse.Candidate(nodeId, name, entityType, scored.score());
+        candidate.setKeywordScore(scored.keywordScore());
+        candidate.setSemanticScore(scored.semanticScore());
+        candidate.setFusionScore(scored.fusionScore());
+        candidate.setMatchedChannels(scored.matchedChannels());
+        return candidate;
     }
 
     private List<ScoredScopedId> dedupeAndRank(List<ScoredScopedId> scored, int topK) {
-        Map<String, Double> bestScores = new LinkedHashMap<>();
+        Map<String, ScoredScopedId> bestScores = new LinkedHashMap<>();
         for (ScoredScopedId item : scored) {
             if (item != null && hasText(item.scopedId())) {
-                bestScores.merge(item.scopedId(), item.score(), Math::max);
+                bestScores.merge(item.scopedId(), item, (left, right) ->
+                        right.score() > left.score() ? right : left);
             }
         }
-        return bestScores.entrySet().stream()
-                .sorted(Map.Entry.<String, Double>comparingByValue(Comparator.reverseOrder()))
+        return bestScores.values().stream()
+                .sorted(Comparator.comparingDouble(ScoredScopedId::score).reversed())
                 .limit(topK)
-                .map(entry -> new ScoredScopedId(entry.getKey(), entry.getValue()))
                 .toList();
     }
 
@@ -1016,12 +1069,46 @@ public class SearchService {
         }
     }
 
+    private void addHybridScored(List<ScoredScopedId> scored, String domain,
+                                 MilvusVectorService.EntityHybridPocResult result) {
+        String scopedId = scopedId(domain, result.entityId());
+        if (!hasText(scopedId)) {
+            return;
+        }
+        List<String> channels = new ArrayList<>();
+        if (result.keywordScore() != null) {
+            channels.add("keyword");
+        }
+        if (result.semanticScore() != null) {
+            channels.add("semantic");
+        }
+        scored.add(new ScoredScopedId(
+                scopedId,
+                (double) result.fusionScore(),
+                result.keywordScore() == null ? null : result.keywordScore().doubleValue(),
+                result.semanticScore() == null ? null : result.semanticScore().doubleValue(),
+                (double) result.fusionScore(),
+                channels));
+    }
+
     private double scoreValue(Object score) {
         return score instanceof Number number ? number.doubleValue() : 0D;
     }
 
     private boolean containsType(List<String> types, String type) {
         return types != null && types.stream().anyMatch(type::equalsIgnoreCase);
+    }
+
+    private String domainForEntityType(String entityType) {
+        if (!hasText(entityType)) {
+            return null;
+        }
+        return switch (entityType.trim().toLowerCase()) {
+            case "socialaccount", "social_account", "account" -> "account";
+            case "mediacontent", "media_content", "content" -> "content";
+            case "person", "organization", "event", "location" -> "entity";
+            default -> null;
+        };
     }
 
     private List<String> standardEntityTypes(List<String> requestedTypes) {
@@ -1045,7 +1132,11 @@ public class SearchService {
         return null;
     }
 
-    private record ScoredScopedId(String scopedId, double score) {
+    private record ScoredScopedId(String scopedId, double score, Double keywordScore, Double semanticScore,
+                                  Double fusionScore, List<String> matchedChannels) {
+        private ScoredScopedId(String scopedId, double score) {
+            this(scopedId, score, null, null, null, List.of());
+        }
     }
 
     private List<MilvusVectorService.ScoredEntityId> searchSemanticIds(

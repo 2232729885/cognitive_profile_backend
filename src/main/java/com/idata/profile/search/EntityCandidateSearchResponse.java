@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.util.List;
+import java.util.Map;
 
 @Data
 @NoArgsConstructor
@@ -19,15 +20,23 @@ public class EntityCandidateSearchResponse {
     public static EntityCandidateSearchResponse ok(String traceId,
                                                    List<Candidate> keywordCandidates,
                                                    List<Candidate> semanticCandidates) {
+        return ok(traceId, keywordCandidates, semanticCandidates, List.of());
+    }
+
+    public static EntityCandidateSearchResponse ok(String traceId,
+                                                   List<Candidate> keywordCandidates,
+                                                   List<Candidate> semanticCandidates,
+                                                   List<Candidate> hybridCandidates) {
         DataPayload data = new DataPayload(
                 traceId,
                 keywordCandidates == null ? List.of() : keywordCandidates,
-                semanticCandidates == null ? List.of() : semanticCandidates);
+                semanticCandidates == null ? List.of() : semanticCandidates,
+                hybridCandidates == null ? List.of() : hybridCandidates);
         return new EntityCandidateSearchResponse("200", "success", data);
     }
 
     public static EntityCandidateSearchResponse fail(String code, String msg) {
-        return new EntityCandidateSearchResponse(code, msg, new DataPayload(null, List.of(), List.of()));
+        return new EntityCandidateSearchResponse(code, msg, new DataPayload(null, List.of(), List.of(), List.of()));
     }
 
     @Data
@@ -40,6 +49,8 @@ public class EntityCandidateSearchResponse {
         private List<Candidate> keywordCandidates;
         @JsonProperty("semantic_candidates")
         private List<Candidate> semanticCandidates;
+        @JsonProperty("hybrid_candidates")
+        private List<Candidate> hybridCandidates;
     }
 
     @Data
@@ -51,6 +62,25 @@ public class EntityCandidateSearchResponse {
         private String name;
         @JsonProperty("entity_type")
         private String entityType;
+        /**
+         * Backward-compatible primary score. For hybrid retrieval this is the RRF fusion score.
+         */
         private Double score;
+        @JsonProperty("keyword_score")
+        private Double keywordScore;
+        @JsonProperty("semantic_score")
+        private Double semanticScore;
+        @JsonProperty("fusion_score")
+        private Double fusionScore;
+        @JsonProperty("matched_channels")
+        private List<String> matchedChannels;
+        private Map<String, Object> metadata;
+
+        public Candidate(String entityId, String name, String entityType, Double score) {
+            this.entityId = entityId;
+            this.name = name;
+            this.entityType = entityType;
+            this.score = score;
+        }
     }
 }

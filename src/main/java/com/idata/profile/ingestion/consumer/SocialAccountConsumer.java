@@ -118,8 +118,6 @@ public class SocialAccountConsumer {
         List<String> aliases = new ArrayList<>();
         addAlias(aliases, account.getHandle());
         addAlias(aliases, account.getPlatformUserId());
-        addAlias(aliases, account.getBio());
-        addAlias(aliases, account.getSelfDeclaredLocation());
         return aliases;
     }
 
