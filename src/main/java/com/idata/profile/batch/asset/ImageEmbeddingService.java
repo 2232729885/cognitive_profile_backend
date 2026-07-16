@@ -115,36 +115,26 @@ public class ImageEmbeddingService {
                 }
             }
 
-            if (asset.getEmbeddingId() == null || asset.getEmbeddingId().isBlank()) {
-                float[] embedding = embeddingService.generateImageEmbedding(imageUrl);
-                if (embedding != null) {
-                    String vectorId = milvusVectorService.insertImageEmbedding(
-                            asset.getId().toString(),
-                            asset.getSourceAssetId(),
-                            contentId,
-                            platform,
-                            0f,
-                            embedding);
-
-                    asset.setEmbeddingId(vectorId);
-                    changed = true;
-                    processed = true;
-                    log.info("Image embedding indexed, assetId={}, vectorId={}", asset.getId(), vectorId);
-                }
-            }
-
+            float[] imageEmbedding = embeddingService.generateImageEmbedding(imageUrl);
+            float[] ocrEmbedding = null;
             if (hasText(asset.getOcrText())) {
-                float[] ocrEmbedding = embeddingService.generateTextEmbedding(asset.getOcrText());
-                if (ocrEmbedding != null) {
-                    String vectorId = milvusVectorService.insertImageOcrEmbedding(
-                            asset.getId().toString(),
-                            asset.getSourceAssetId(),
-                            contentId,
-                            platform,
-                            ocrEmbedding);
-                    processed = true;
-                    log.info("Image OCR embedding indexed, assetId={}, vectorId={}", asset.getId(), vectorId);
-                }
+                ocrEmbedding = embeddingService.generateTextEmbedding(asset.getOcrText());
+            }
+            if (imageEmbedding != null || ocrEmbedding != null) {
+                String vectorId = milvusVectorService.upsertMediaAssetEmbedding(
+                        asset.getId().toString(),
+                        asset.getSourceAssetId(),
+                        contentId,
+                        platform,
+                        asset.getAssetType(),
+                        asset.getMimeType(),
+                        imageEmbedding,
+                        ocrEmbedding);
+                asset.setEmbeddingId(vectorId);
+                changed = true;
+                processed = true;
+                log.info("Media asset embeddings indexed, assetId={}, vectorId={}, hasImageEmbedding={}, hasOcrEmbedding={}",
+                        asset.getId(), vectorId, imageEmbedding != null, ocrEmbedding != null);
             }
 
             if (changed) {

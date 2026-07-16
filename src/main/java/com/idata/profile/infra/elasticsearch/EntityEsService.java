@@ -46,6 +46,11 @@ public class EntityEsService {
                             .properties("aliases", p -> p
                                     .text(t -> t.analyzer("ik_max_word").searchAnalyzer("ik_smart")))
                             .properties("entity_type", p -> p.keyword(k -> k))
+                            .properties("source_id", p -> p.keyword(k -> k))
+                            .properties("platform", p -> p.keyword(k -> k))
+                            .properties("account_entity_type", p -> p.keyword(k -> k))
+                            .properties("account_type", p -> p.keyword(k -> k))
+                            .properties("content_type", p -> p.keyword(k -> k))
                             .properties("importance_score", p -> p.float_(f -> f))));
             log.info("ES entity index created: {}", ENTITY_INDEX);
         } catch (IOException e) {
@@ -58,14 +63,23 @@ public class EntityEsService {
      */
     public void indexEntity(String entityId, String canonicalName,
                             List<String> aliases, String entityType, double importanceScore) {
+        indexEntity(entityId, canonicalName, aliases, entityType, importanceScore, Map.of());
+    }
+
+    public void indexEntity(String entityId, String canonicalName,
+                            List<String> aliases, String entityType, double importanceScore,
+                            Map<String, Object> extraFields) {
         try {
             Map<String, Object> doc = new LinkedHashMap<>();
             doc.put("entity_id", entityId);
             doc.put("canonical_name", canonicalName);
             doc.put("normalized_name", normalize(canonicalName));
             doc.put("aliases", aliases != null ? aliases : List.of());
-            doc.put("entity_type", entityType);
+            doc.put("entity_type", normalizeEntityType(entityType));
             doc.put("importance_score", importanceScore);
+            if (extraFields != null && !extraFields.isEmpty()) {
+                doc.putAll(extraFields);
+            }
 
             esClient.index(i -> i
                     .index(ENTITY_INDEX)
@@ -81,15 +95,27 @@ public class EntityEsService {
      * 按名称模糊搜索实体（候选召回用）。
      */
     public List<Map<String, Object>> searchEntities(String keyword, String entityType, int topK) {
+        return searchEntities(keyword, entityType, topK, Map.of());
+    }
+
+    public List<Map<String, Object>> searchEntities(String keyword, String entityType, int topK,
+                                                    Map<String, String> filters) {
         try {
             var response = esClient.search(s -> {
                 var q = s.index(ENTITY_INDEX).size(topK)
                         .query(qb -> qb.bool(b -> {
                             b.must(m -> m.multiMatch(mm -> mm
                                     .query(keyword)
-                                    .fields("canonical_name^2", "normalized_name^2", "aliases")));
+                                    .fields("canonical_name^3", "normalized_name^2", "aliases^2", "source_id")));
                             if (entityType != null && !entityType.isBlank()) {
-                                b.filter(f -> f.term(t -> t.field("entity_type").value(entityType)));
+                                b.filter(f -> f.term(t -> t.field("entity_type").value(normalizeEntityType(entityType))));
+                            }
+                            if (filters != null) {
+                                filters.forEach((field, value) -> {
+                                    if (field != null && value != null && !value.isBlank()) {
+                                        b.filter(f -> f.term(t -> t.field(field).value(value)));
+                                    }
+                                });
                             }
                             return b;
                         }));
@@ -166,5 +192,20 @@ public class EntityEsService {
         String noDiacritics = decomposed.replaceAll("\\p{M}", "");
         String noPunct = noDiacritics.toLowerCase(java.util.Locale.ROOT).replaceAll("[\\p{Punct}]", " ");
         return noPunct.trim().replaceAll("\\s+", " ");
+    }
+
+    private String normalizeEntityType(String entityType) {
+        if (entityType == null || entityType.isBlank()) {
+            return entityType;
+        }
+        return switch (entityType.trim().toLowerCase()) {
+            case "person" -> "Person";
+            case "organization", "org" -> "Organization";
+            case "event" -> "Event";
+            case "location" -> "Location";
+            case "socialaccount", "social_account", "account" -> "SocialAccount";
+            case "mediacontent", "media_content", "content" -> "MediaContent";
+            default -> entityType.trim();
+        };
     }
 }

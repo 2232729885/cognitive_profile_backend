@@ -31,6 +31,37 @@ public class MockPipelineInfraConfig {
             }
 
             @Override
+            public String insertMediaContentEmbedding(String contentId, String platform, String language,
+                                                      String contentType, long publishedAt,
+                                                      float[] titleEmbedding, float[] textEmbedding) {
+                String vectorId = "mock_media_content_vector_" + UUID.randomUUID();
+                log.info("Mock Milvus media content embeddings inserted, contentId={}, vectorId={}",
+                        contentId, vectorId);
+                return vectorId;
+            }
+
+            @Override
+            public String upsertMediaAssetEmbedding(String assetId, String sourceAssetId, String contentId,
+                                                    String platform, String assetType, String mimeType,
+                                                    float[] imageEmbedding, float[] ocrTextEmbedding) {
+                String vectorId = "mock_media_asset_vector_" + UUID.randomUUID();
+                log.info("Mock Milvus media asset embeddings upserted, assetId={}, vectorId={}",
+                        assetId, vectorId);
+                return vectorId;
+            }
+
+            @Override
+            public String upsertEntityEmbedding(String entityId, String entityType, String canonicalName,
+                                                String aliases, String sourceId, String platform,
+                                                float[] nameEmbedding, float[] aliasEmbedding,
+                                                float[] descriptionEmbedding) {
+                String vectorId = "mock_entity_vector_" + UUID.randomUUID();
+                log.info("Mock Milvus entity embeddings upserted, entityId={}, entityType={}, vectorId={}",
+                        entityId, entityType, vectorId);
+                return vectorId;
+            }
+
+            @Override
             public String insertImageEmbedding(String assetId, String contentId,
                                                String platform, float aigcScore,
                                                float[] embedding) {

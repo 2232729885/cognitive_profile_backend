@@ -7,7 +7,6 @@ import com.idata.profile.entity.content.MediaContent;
 import com.idata.profile.infra.elasticsearch.EntityEsService;
 import com.idata.profile.infra.elasticsearch.MediaAssetEsService;
 import com.idata.profile.infra.elasticsearch.MediaContentEsService;
-import com.idata.profile.infra.elasticsearch.SocialAccountEsService;
 import com.idata.profile.infra.embedding.EmbeddingService;
 import com.idata.profile.infra.milvus.MilvusVectorService;
 import com.idata.profile.infra.neo4j.Neo4jGraphService;
@@ -50,7 +49,6 @@ public class SearchService {
     private final MediaContentEsService esService;
     private final MediaAssetEsService mediaAssetEsService;
     private final EntityEsService entityEsService;
-    private final SocialAccountEsService socialAccountEsService;
     private final Neo4jGraphService neo4jGraphService;
     private final MediaContentMapper mediaContentMapper;
     private final MediaAssetMapper mediaAssetMapper;
@@ -242,14 +240,14 @@ public class SearchService {
 
     private List<SearchResult.ImageItem> searchImageItemsByImage(String imageUrl, int topK) {
         float[] embedding = imageEmbedding(imageUrl);
-        return embedding == null ? List.of() : searchImageSemanticAssets(embedding, topK, null);
+        return embedding == null ? List.of() : searchImageVisualAssets(embedding, topK);
     }
 
     public List<SocialAccount> searchAccounts(String queryText, String platform, String accountType, int topK) {
         int safeTopK = normalizeSize(topK);
 
         CompletableFuture<List<String>> esFuture = safeRoute("account-es",
-                () -> socialAccountEsService.searchByKeyword(queryText, platform, accountType, safeTopK));
+                () -> searchAccountKeywordIds(queryText, platform, accountType, safeTopK));
         CompletableFuture<List<String>> milvusFuture = safeRoute("account-milvus",
                 () -> searchAccountSemanticIds(queryText, safeTopK));
 
@@ -277,6 +275,23 @@ public class SearchService {
                 .filter(Objects::nonNull)
                 .filter(account -> !hasText(platform) || platform.equals(account.getPlatform()))
                 .filter(account -> !hasText(accountType) || accountType.equals(account.getAccountType()))
+                .toList();
+    }
+
+    private List<String> searchAccountKeywordIds(String queryText, String platform, String accountType, int topK) {
+        if (!hasText(queryText) || topK <= 0) {
+            return List.of();
+        }
+        Map<String, String> filters = new LinkedHashMap<>();
+        if (hasText(platform)) {
+            filters.put("platform", platform);
+        }
+        if (hasText(accountType)) {
+            filters.put("account_type", accountType);
+        }
+        return entityEsService.searchEntities(queryText, "SocialAccount", topK, filters).stream()
+                .map(result -> stringValue(result.get("entityId")))
+                .filter(this::hasText)
                 .toList();
     }
 
@@ -341,35 +356,39 @@ public class SearchService {
                 entityTypeFilters.addAll(standardEntityTypes);
             }
         }
+        List<String> entityMilvusTypeFilters = new ArrayList<>();
+        if (includeEntities) {
+            if (allDomains) {
+                entityMilvusTypeFilters.addAll(List.of("Person", "Organization", "Event", "Location"));
+            } else {
+                entityMilvusTypeFilters.addAll(standardEntityTypes);
+            }
+        }
         List<CompletableFuture<List<Map<String, Object>>>> entityEsFutures = entityTypeFilters.stream()
                 .map(type -> safeRoute("entity-es", () -> entityEsService.searchEntities(keyword, type, safeTopK)))
                 .toList();
         List<CompletableFuture<List<MilvusVectorService.ScoredEntityId>>> entityMilvusFutures =
-                embedding == null ? List.of() : entityTypeFilters.stream()
+                embedding == null ? List.of() : entityMilvusTypeFilters.stream()
                         .map(type -> safeRoute("entity-milvus",
                                 () -> milvusService.searchEntityEmbeddings(embedding, safeTopK, type)))
                         .toList();
-        CompletableFuture<List<SocialAccountEsService.EsAccountSearchResult>> accountEsFuture = includeAccounts
-                ? safeRoute("account-es", () -> socialAccountEsService.searchByKeywordWithScore(
-                keyword, null, null, safeTopK))
+        CompletableFuture<List<Map<String, Object>>> accountEsFuture = includeAccounts
+                ? safeRoute("account-es", () -> entityEsService.searchEntities(
+                keyword, "SocialAccount", safeTopK))
                 : CompletableFuture.completedFuture(List.of());
         CompletableFuture<List<MilvusVectorService.ScoredEntityId>> accountMilvusFuture =
                 includeAccounts && embedding != null
-                        ? safeRoute("account-milvus", () -> milvusService.searchAccountEmbeddings(embedding, safeTopK))
+                        ? safeRoute("account-milvus",
+                        () -> milvusService.searchEntityEmbeddings(embedding, safeTopK, "SocialAccount"))
                         : CompletableFuture.completedFuture(List.of());
-        CompletableFuture<List<MediaContentEsService.EsSearchResult>> contentEsFuture = includeContents
-                ? safeRoute("content-es", () -> esService.searchByKeywordWithHighlight(
-                keyword, null, null, safeTopK))
+        CompletableFuture<List<Map<String, Object>>> contentEsFuture = includeContents
+                ? safeRoute("content-es", () -> entityEsService.searchEntities(
+                keyword, "MediaContent", safeTopK))
                 : CompletableFuture.completedFuture(List.of());
-        CompletableFuture<List<MilvusVectorService.ScoredEntityId>> textMilvusFuture =
+        CompletableFuture<List<MilvusVectorService.ScoredEntityId>> contentMilvusFuture =
                 includeContents && embedding != null
-                        ? safeRoute("content-text-milvus",
-                        () -> milvusService.searchTextEmbeddingsWithScore(embedding, safeTopK, null, null))
-                        : CompletableFuture.completedFuture(List.of());
-        CompletableFuture<List<MilvusVectorService.ScoredEntityId>> imageMilvusFuture =
-                includeContents && embedding != null
-                        ? safeRoute("content-image-milvus",
-                        () -> searchImageSemanticContentIds(embedding, safeTopK))
+                        ? safeRoute("content-entity-milvus",
+                        () -> milvusService.searchEntityEmbeddings(embedding, safeTopK, "MediaContent"))
                         : CompletableFuture.completedFuture(List.of());
 
         List<CompletableFuture<?>> futures = new ArrayList<>();
@@ -378,8 +397,7 @@ public class SearchService {
         futures.add(accountEsFuture);
         futures.add(accountMilvusFuture);
         futures.add(contentEsFuture);
-        futures.add(textMilvusFuture);
-        futures.add(imageMilvusFuture);
+        futures.add(contentMilvusFuture);
         CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new)).join();
 
         List<Map<String, Object>> entityEsResults = entityEsFutures.stream()
@@ -388,11 +406,10 @@ public class SearchService {
         List<MilvusVectorService.ScoredEntityId> entityMilvusResults = entityMilvusFutures.stream()
                 .flatMap(future -> future.join().stream())
                 .toList();
-        List<SocialAccountEsService.EsAccountSearchResult> accountEsResults = accountEsFuture.join();
+        List<Map<String, Object>> accountEsResults = accountEsFuture.join();
         List<MilvusVectorService.ScoredEntityId> accountMilvusResults = accountMilvusFuture.join();
-        List<MediaContentEsService.EsSearchResult> contentEsResults = contentEsFuture.join();
-        List<MilvusVectorService.ScoredEntityId> textMilvusResults = textMilvusFuture.join();
-        List<MilvusVectorService.ScoredEntityId> imageMilvusResults = imageMilvusFuture.join();
+        List<Map<String, Object>> contentEsResults = contentEsFuture.join();
+        List<MilvusVectorService.ScoredEntityId> contentMilvusResults = contentMilvusFuture.join();
 
         List<String> entityEsIds = entityEsResults.stream()
                 .map(r -> scopedId("entity", (String) r.get("entityId")))
@@ -401,42 +418,35 @@ public class SearchService {
                 .map(r -> scopedId("entity", r.entityId()))
                 .toList();
         List<String> accountEsIds = accountEsResults.stream()
-                .map(r -> scopedId("account", r.accountId()))
+                .map(r -> scopedId("account", stringValue(r.get("entityId"))))
                 .toList();
         List<String> accountMilvusIds = accountMilvusResults.stream()
                 .map(r -> scopedId("account", r.entityId()))
                 .toList();
         List<String> contentEsIds = contentEsResults.stream()
-                .map(r -> scopedId("content", r.getContentId()))
+                .map(r -> scopedId("content", stringValue(r.get("entityId"))))
                 .toList();
-        List<String> textMilvusIds = textMilvusResults.stream()
-                .map(r -> scopedId("content", r.entityId()))
-                .toList();
-        List<String> imageMilvusIds = imageMilvusResults.stream()
+        List<String> contentMilvusIds = contentMilvusResults.stream()
                 .map(r -> scopedId("content", r.entityId()))
                 .toList();
 
         Map<String, Double> esScores = new LinkedHashMap<>();
         entityEsResults.forEach(r -> putScore(esScores, scopedId("entity", (String) r.get("entityId")),
                 r.get("score")));
-        accountEsResults.forEach(r -> putScore(esScores, scopedId("account", r.accountId()), r.score()));
-        contentEsResults.forEach(r -> putScore(esScores, scopedId("content", r.getContentId()), r.getScore()));
+        accountEsResults.forEach(r -> putScore(esScores, scopedId("account", stringValue(r.get("entityId"))),
+                r.get("score")));
+        contentEsResults.forEach(r -> putScore(esScores, scopedId("content", stringValue(r.get("entityId"))),
+                r.get("score")));
 
         Map<String, Double> similarityScores = new LinkedHashMap<>();
         entityMilvusResults.forEach(r -> putScore(similarityScores, scopedId("entity", r.entityId()), r.score()));
         accountMilvusResults.forEach(r -> putScore(similarityScores, scopedId("account", r.entityId()), r.score()));
-        textMilvusResults.forEach(r -> putScore(similarityScores, scopedId("content", r.entityId()), r.score()));
-        imageMilvusResults.forEach(r -> {
-            String id = scopedId("content", r.entityId());
-            if (hasText(id)) {
-                similarityScores.merge(id, (double) r.score(), Math::max);
-            }
-        });
+        contentMilvusResults.forEach(r -> putScore(similarityScores, scopedId("content", r.entityId()), r.score()));
 
         Map<String, Double> fusedScores = fuseByRrf(List.of(
                 entityEsIds, entityMilvusIds,
                 accountEsIds, accountMilvusIds,
-                contentEsIds, textMilvusIds, imageMilvusIds));
+                contentEsIds, contentMilvusIds));
         List<String> topScopedIds = new ArrayList<>(fusedScores.keySet());
         if (topScopedIds.size() > safeTopK) {
             topScopedIds = topScopedIds.subList(0, safeTopK);
@@ -620,7 +630,7 @@ public class SearchService {
 
     private List<MilvusVectorService.ScoredEntityId> searchImageSemanticContentIds(float[] embedding, int topK) {
         List<MilvusVectorService.ScoredEntityId> assetScores =
-                milvusService.searchImageEmbeddingsWithScore(embedding, topK);
+                milvusService.searchMediaAssetTextEmbeddingsWithScore(embedding, topK);
         List<UUID> assetIds = assetScores.stream()
                 .map(item -> item.entityId() != null && item.entityId().startsWith("image_")
                         ? item.entityId().substring("image_".length())
@@ -657,9 +667,27 @@ public class SearchService {
                                                                    Double semanticMinScore) {
         float minScore = semanticMinScore == null ? 0F : normalizeSemanticMinScore(semanticMinScore);
         List<MilvusVectorService.ScoredEntityId> assetScores =
-                milvusService.searchImageEmbeddingsWithScore(embedding, topK).stream()
+                milvusService.searchMediaAssetTextEmbeddingsWithScore(embedding, topK).stream()
                         .filter(result -> result.score() >= minScore)
                         .toList();
+        Map<String, Double> scoresByAssetId = assetScores.stream()
+                .collect(Collectors.toMap(
+                        item -> normalizeImageAssetId(item.entityId()),
+                        item -> (double) item.score(),
+                        Math::max,
+                        LinkedHashMap::new));
+        List<UUID> assetIds = assetScores.stream()
+                .map(item -> normalizeImageAssetId(item.entityId()))
+                .map(this::parseUuid)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        return buildImageItems(assetIds, scoresByAssetId);
+    }
+
+    private List<SearchResult.ImageItem> searchImageVisualAssets(float[] embedding, int topK) {
+        List<MilvusVectorService.ScoredEntityId> assetScores =
+                milvusService.searchMediaAssetImageEmbeddingsWithScore(embedding, topK);
         Map<String, Double> scoresByAssetId = assetScores.stream()
                 .collect(Collectors.toMap(
                         item -> normalizeImageAssetId(item.entityId()),
@@ -834,12 +862,12 @@ public class SearchService {
             }
         }
         if (includeAccounts) {
-            socialAccountEsService.searchByKeywordWithScore(keyword, null, null, topK).forEach(result ->
-                    addScored(scored, "account", result.accountId(), result.score()));
+            entityEsService.searchEntities(keyword, "SocialAccount", topK).forEach(result ->
+                    addScored(scored, "account", stringValue(result.get("entityId")), result.get("score")));
         }
         if (includeContents) {
-            esService.searchByKeywordWithHighlight(keyword, null, null, topK).forEach(result ->
-                    addScored(scored, "content", result.getContentId(), result.getScore()));
+            entityEsService.searchEntities(keyword, "MediaContent", topK).forEach(result ->
+                    addScored(scored, "content", stringValue(result.get("entityId")), result.get("score")));
         }
         return hydrateEntityCandidates(scored, topK);
     }
@@ -862,20 +890,18 @@ public class SearchService {
 
         List<ScoredScopedId> scored = new ArrayList<>();
         if (includeEntities) {
-            List<String> filters = allDomains ? java.util.Collections.singletonList(null) : standardTypes;
+            List<String> filters = allDomains ? List.of("Person", "Organization", "Event", "Location") : standardTypes;
             for (String type : filters) {
                 milvusService.searchEntityEmbeddings(embedding, topK, type).forEach(result ->
                         addScored(scored, "entity", result.entityId(), result.score()));
             }
         }
         if (includeAccounts) {
-            milvusService.searchAccountEmbeddings(embedding, topK).forEach(result ->
+            milvusService.searchEntityEmbeddings(embedding, topK, "SocialAccount").forEach(result ->
                     addScored(scored, "account", result.entityId(), result.score()));
         }
         if (includeContents) {
-            milvusService.searchTextEmbeddingsWithScore(embedding, topK, null, null).forEach(result ->
-                    addScored(scored, "content", result.entityId(), result.score()));
-            searchImageSemanticContentIds(embedding, topK).forEach(result ->
+            milvusService.searchEntityEmbeddings(embedding, topK, "MediaContent").forEach(result ->
                     addScored(scored, "content", result.entityId(), result.score()));
         }
         return hydrateEntityCandidates(scored, topK);
@@ -1046,14 +1072,14 @@ public class SearchService {
         if (embedding == null) {
             return List.of();
         }
-        return milvusService.searchAccountEmbeddings(embedding, topK).stream()
+        return milvusService.searchEntityEmbeddings(embedding, topK, "SocialAccount").stream()
                 .map(MilvusVectorService.ScoredEntityId::entityId)
                 .toList();
     }
 
     /**
      * 把图片向量化后查 Milvus，返回 content_id 列表。
-     * 同时支持 text_embeddings（以图搜文）和 image_embeddings（以图搜图）。
+     * 同时支持 media_content_embeddings（以图搜文）和 media_asset_embeddings（以图搜图）。
      */
     private List<String> vectorizeAndSearchByImage(String imageUrl, String targetModalities, int topK) {
         if (!hasText(imageUrl) || topK <= 0) {

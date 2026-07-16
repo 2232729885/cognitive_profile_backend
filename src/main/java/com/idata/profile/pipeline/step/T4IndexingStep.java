@@ -5,6 +5,7 @@ import com.idata.profile.common.util.T1AnnotationView;
 import com.idata.profile.entity.content.MediaContent;
 import com.idata.profile.entity.raw.RawRecord;
 import com.idata.profile.entity.task.PipelineTask;
+import com.idata.profile.infra.elasticsearch.EntityEsService;
 import com.idata.profile.infra.elasticsearch.MediaContentEsService;
 import com.idata.profile.infra.embedding.EmbeddingService;
 import com.idata.profile.infra.milvus.MilvusVectorService;
@@ -16,9 +17,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 @Slf4j
@@ -26,20 +29,11 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class T4IndexingStep {
 
-    /**
-     * 中文/CJK文本很多分词器编码效率不如英文，几千个字符就可能超过embedding模型的token上限
-     * （real case: 4063个字符被编码成8193个token，超过当时8192的上限）。这里按字符数保守截断，
-     * 不追求精确算token数，留足够余量，截断只影响这次送去向量化的文本，不影响正文本身的存储/展示。
-     *
-     * vLLM部署的 --max-model-len 已经从8192调到16384（模型本身原生支持到32768，
-     * 8192只是之前部署时设的偏保守的值），这里的截断阈值跟着放宽到6000字符——
-     * 按最坏情况每字符2个token估算，6000字符约12000个token，离16384还留了近30%余量，
-     * 绝大多数内容根本不会被截断，只有极端长的文章才会碰到这条线。
-     */
     private static final int MAX_EMBEDDING_TEXT_LENGTH = 6000;
 
     private final EmbeddingService embeddingService;
     private final MilvusVectorService milvusVectorService;
+    private final EntityEsService entityEsService;
     private final MediaContentEsService mediaContentEsService;
     private final MediaContentMapper mediaContentMapper;
     private final RawRecordMapper rawRecordMapper;
@@ -53,36 +47,45 @@ public class T4IndexingStep {
 
         MediaContent mc = mediaContentMapper.selectById(task.getContentId());
         T1AnnotationView t1View = T1AnnotationView.parse(mc.getT1Annotation());
-        String embeddingText = buildContentEmbeddingText(mc, t1View);
 
-        String textVectorId = null;
-        boolean textEmbeddingSkipped = !hasText(embeddingText);
+        float[] titleEmbedding = generateEmbedding(mc.getTitle());
+        float[] textEmbedding = generateEmbedding(buildContentTextEmbeddingText(mc, t1View));
+        boolean textEmbeddingSkipped = titleEmbedding == null && textEmbedding == null;
+        String vectorId = null;
         if (textEmbeddingSkipped) {
-            log.info("[T4] 跳过文本向量化：embedding text为空, contentId={}", mc.getId());
+            log.warn("[T4] media content vectorization skipped, contentId={}", mc.getId());
         } else {
-            float[] embedding = embeddingService.generateTextEmbedding(truncateForEmbedding(embeddingText));
-            if (embedding == null) {
-                // 调用失败（比如超过模型token上限、网络问题等）不应该让整条流水线任务失败，
-                // 按"跳过文本向量化"处理，其余步骤（ES索引、pipeline状态推进）照常进行，
-                // t4_output.textEmbeddingSkipped=true 会如实记录这次没有向量，方便后续排查/重跑
-                log.warn("[T4] 文本向量化调用失败，跳过本次向量化，contentId={}", mc.getId());
-                textEmbeddingSkipped = true;
-            } else {
-                textVectorId = milvusVectorService.insertTextEmbedding(
-                        mc.getId().toString(),
-                        "media_content",
-                        mc.getPlatform(),
-                        mc.getLanguage(),
-                        mc.getPublishedAt() != null ? mc.getPublishedAt().toEpochSecond() : 0L,
-                        0f,
-                        embedding);
-            }
+            vectorId = milvusVectorService.insertMediaContentEmbedding(
+                    mc.getId().toString(),
+                    mc.getPlatform(),
+                    mc.getLanguage(),
+                    mc.getContentType(),
+                    mc.getPublishedAt() != null ? mc.getPublishedAt().toEpochSecond() : 0L,
+                    titleEmbedding,
+                    textEmbedding);
+            milvusVectorService.upsertEntityEmbedding(
+                    mc.getId().toString(),
+                    "MediaContent",
+                    firstText(mc.getTitle(), mc.getPlatformContentId(), mc.getUrl()),
+                    null,
+                    mc.getPlatformContentId(),
+                    mc.getPlatform(),
+                    titleEmbedding,
+                    null,
+                    textEmbedding);
         }
 
         mediaContentEsService.index(mc.getId().toString(), buildEsDocument(mc, t1View));
+        entityEsService.indexEntity(
+                mc.getId().toString(),
+                firstText(mc.getTitle(), mc.getPlatformContentId(), mc.getUrl()),
+                contentAliases(mc),
+                "MediaContent",
+                0D,
+                contentEntityFields(mc));
 
         RawRecord rawRecord = rawRecordMapper.selectById(task.getRawRecordId());
-        rawRecord.setT4Output(buildT4Output(textVectorId, textEmbeddingSkipped));
+        rawRecord.setT4Output(buildT4Output(vectorId, textEmbeddingSkipped));
         rawRecord.setPipelineStatus(PipelineStatus.T4_INDEXED.name());
         rawRecordMapper.updateById(rawRecord);
 
@@ -92,12 +95,18 @@ public class T4IndexingStep {
         pipelineTaskMapper.updateById(task);
     }
 
-    private String buildContentEmbeddingText(MediaContent mc, T1AnnotationView t1View) {
+    private float[] generateEmbedding(String text) {
+        if (!hasText(text)) {
+            return null;
+        }
+        return embeddingService.generateTextEmbedding(truncateForEmbedding(text));
+    }
+
+    private String buildContentTextEmbeddingText(MediaContent mc, T1AnnotationView t1View) {
         if (mc == null) {
             return null;
         }
         StringBuilder text = new StringBuilder();
-        appendEmbeddingField(text, "title", mc.getTitle());
         appendEmbeddingField(text, "summary", t1View.summaryText());
         appendEmbeddingField(text, "body_text", mc.getBodyText());
         appendEmbeddingField(text, "hashtags", mc.getHashtags());
@@ -161,9 +170,42 @@ public class T4IndexingStep {
         return document;
     }
 
-    private String buildT4Output(String textVectorId, boolean textEmbeddingSkipped) {
-        String vectorValue = textVectorId != null ? "\"" + textVectorId + "\"" : "null";
+    private List<String> contentAliases(MediaContent mc) {
+        List<String> aliases = new ArrayList<>();
+        addAlias(aliases, mc.getPlatformContentId());
+        addAlias(aliases, mc.getUrl());
+        addAliases(aliases, mc.getHashtags());
+        addAliases(aliases, mc.getMentions());
+        addAlias(aliases, mc.getNewsSourceName());
+        addAlias(aliases, mc.getNewsDomain());
+        return aliases;
+    }
+
+    private void addAlias(List<String> aliases, String value) {
+        if (hasText(value) && aliases.stream().noneMatch(existing -> existing.equalsIgnoreCase(value.trim()))) {
+            aliases.add(value.trim());
+        }
+    }
+
+    private void addAliases(List<String> aliases, String[] values) {
+        if (values == null) {
+            return;
+        }
+        Arrays.stream(values).forEach(value -> addAlias(aliases, value));
+    }
+
+    private Map<String, Object> contentEntityFields(MediaContent mc) {
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("platform", mc.getPlatform());
+        fields.put("source_id", mc.getPlatformContentId());
+        fields.put("content_type", mc.getContentType());
+        return fields;
+    }
+
+    private String buildT4Output(String vectorId, boolean textEmbeddingSkipped) {
+        String vectorValue = vectorId != null ? "\"" + vectorId + "\"" : "null";
         return "{\"textVectorId\":" + vectorValue
+                + ",\"mediaContentVectorId\":" + vectorValue
                 + ",\"textEmbeddingSkipped\":" + textEmbeddingSkipped + "}";
     }
 
@@ -199,5 +241,17 @@ public class T4IndexingStep {
             return text;
         }
         return text.substring(0, MAX_EMBEDDING_TEXT_LENGTH);
+    }
+
+    private String firstText(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (hasText(value)) {
+                return value.trim();
+            }
+        }
+        return null;
     }
 }

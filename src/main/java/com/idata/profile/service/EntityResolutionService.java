@@ -248,22 +248,43 @@ public class EntityResolutionService {
 
     private void syncEntityVectorToMilvus(String stableId, T2ExtractResponse.ExtractedMention entity) {
         try {
-            String embeddingText = buildEntityEmbeddingText(entity);
-            if (!hasText(embeddingText)) {
+            String canonicalName = entityName(entity);
+            String aliases = entity.getAliases() == null || entity.getAliases().isEmpty()
+                    ? null
+                    : String.join(" / ", entity.getAliases());
+            String descriptionText = buildEntityEmbeddingText(entity);
+            if (!hasText(canonicalName) && !hasText(aliases) && !hasText(descriptionText)) {
                 return;
             }
-            float[] embedding = embeddingService.generateTextEmbedding(embeddingText);
-            if (embedding == null) {
+            float[] nameEmbedding = generateEntityEmbedding(canonicalName);
+            float[] aliasEmbedding = generateEntityEmbedding(aliases);
+            float[] descriptionEmbedding = generateEntityEmbedding(descriptionText);
+            if (nameEmbedding == null && aliasEmbedding == null && descriptionEmbedding == null) {
                 return;
             }
-            milvusVectorService.insertEntityEmbedding(
-                    stableId, entity.getType(), entityName(entity), embedding);
+            milvusVectorService.upsertEntityEmbedding(
+                    stableId,
+                    entity.getType(),
+                    canonicalName,
+                    aliases,
+                    null,
+                    null,
+                    nameEmbedding,
+                    aliasEmbedding,
+                    descriptionEmbedding);
             log.debug("[EntityResolutionService] entity vector indexed, entityId={}, name={}",
-                    stableId, entityName(entity));
+                    stableId, canonicalName);
         } catch (Exception e) {
             log.warn("[EntityResolutionService] entity vector indexing failed, entityId={}, name={}",
                     stableId, entityName(entity), e);
         }
+    }
+
+    private float[] generateEntityEmbedding(String text) {
+        if (!hasText(text)) {
+            return null;
+        }
+        return embeddingService.generateTextEmbedding(text);
     }
 
     private String buildEntityEmbeddingText(T2ExtractResponse.ExtractedMention entity) {

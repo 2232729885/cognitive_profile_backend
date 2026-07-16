@@ -70,9 +70,11 @@ public class CleanAllData {
     );
 
     private static final List<String> MILVUS_COLLECTIONS = List.of(
+            "media_content_embeddings",
+            "media_asset_embeddings",
+            "entity_embeddings",
             "text_embeddings",
             "image_embeddings",
-            "entity_embeddings",
             "account_embeddings"
     );
 

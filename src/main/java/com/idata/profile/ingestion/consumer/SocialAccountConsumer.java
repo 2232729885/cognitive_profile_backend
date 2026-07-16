@@ -7,7 +7,7 @@ import com.idata.profile.common.constant.PipelineStatus;
 import com.idata.profile.common.constant.RecordType;
 import com.idata.profile.entity.account.SocialAccount;
 import com.idata.profile.entity.raw.RawRecord;
-import com.idata.profile.infra.elasticsearch.SocialAccountEsService;
+import com.idata.profile.infra.elasticsearch.EntityEsService;
 import com.idata.profile.infra.embedding.EmbeddingService;
 import com.idata.profile.infra.kafka.KafkaTopicConstants;
 import com.idata.profile.infra.milvus.MilvusVectorService;
@@ -21,8 +21,11 @@ import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Slf4j
@@ -35,7 +38,7 @@ public class SocialAccountConsumer {
     private final SocialAccountMapper socialAccountMapper;
     private final SocialAccountSnapshotMapper snapshotMapper;
     private final AgentProxyClient agentProxyClient;
-    private final SocialAccountEsService socialAccountEsService;
+    private final EntityEsService entityEsService;
     private final MilvusVectorService milvusVectorService;
     private final EmbeddingService embeddingService;
 
@@ -89,11 +92,41 @@ public class SocialAccountConsumer {
     }
 
     private void indexAccountToEs(SocialAccount account) {
+        if (account == null || account.getId() == null) {
+            return;
+        }
         try {
-            socialAccountEsService.indexAccount(account);
+            Map<String, Object> extraFields = new LinkedHashMap<>();
+            extraFields.put("platform", account.getPlatform());
+            extraFields.put("source_id", account.getPlatformUserId());
+            extraFields.put("account_entity_type", account.getAccountEntityType());
+            extraFields.put("account_type", account.getAccountType());
+            entityEsService.indexEntity(
+                    account.getId().toString(),
+                    firstText(account.getDisplayName(), account.getHandle(), account.getPlatformUserId()),
+                    accountAliases(account),
+                    "SocialAccount",
+                    account.getFollowersCount() != null ? account.getFollowersCount().doubleValue() : 0D,
+                    extraFields);
         } catch (Exception e) {
             log.warn("[SocialAccountConsumer] account ES index failed, accountId={}",
                     account != null ? account.getId() : null, e);
+        }
+    }
+
+    private List<String> accountAliases(SocialAccount account) {
+        List<String> aliases = new ArrayList<>();
+        addAlias(aliases, account.getHandle());
+        addAlias(aliases, account.getPlatformUserId());
+        addAlias(aliases, account.getBio());
+        addAlias(aliases, account.getSelfDeclaredLocation());
+        return aliases;
+    }
+
+    private void addAlias(List<String> aliases, String value) {
+        if (IngestionMessageSupport.hasText(value)
+                && aliases.stream().noneMatch(existing -> existing.equalsIgnoreCase(value.trim()))) {
+            aliases.add(value.trim());
         }
     }
 
@@ -101,19 +134,68 @@ public class SocialAccountConsumer {
      * bio为空时没有语义可提取，直接跳过；调用失败也不影响主流程，只记警告。
      */
     private void indexAccountEmbedding(SocialAccount account) {
-        String embeddingText = buildAccountEmbeddingText(account);
-        if (account == null || account.getId() == null || !IngestionMessageSupport.hasText(embeddingText)) {
+        if (account == null || account.getId() == null) {
+            return;
+        }
+        String canonicalName = firstText(account.getDisplayName(), account.getHandle(), account.getPlatformUserId());
+        String aliases = aliasText(account);
+        String descriptionText = buildAccountEmbeddingText(account);
+        if (!IngestionMessageSupport.hasText(canonicalName)
+                && !IngestionMessageSupport.hasText(aliases)
+                && !IngestionMessageSupport.hasText(descriptionText)) {
             return;
         }
         try {
-            float[] embedding = embeddingService.generateTextEmbedding(embeddingText);
-            if (embedding != null) {
-                milvusVectorService.insertAccountEmbedding(
-                        account.getId().toString(), account.getPlatform(), embedding);
+            float[] nameEmbedding = generateEmbedding(canonicalName);
+            float[] aliasEmbedding = generateEmbedding(aliases);
+            float[] descriptionEmbedding = generateEmbedding(descriptionText);
+            if (nameEmbedding != null || aliasEmbedding != null || descriptionEmbedding != null) {
+                milvusVectorService.upsertEntityEmbedding(
+                        account.getId().toString(),
+                        "SocialAccount",
+                        canonicalName,
+                        aliases,
+                        account.getPlatformUserId(),
+                        account.getPlatform(),
+                        nameEmbedding,
+                        aliasEmbedding,
+                        descriptionEmbedding);
             }
         } catch (Exception e) {
             log.warn("[SocialAccountConsumer] account embedding failed, accountId={}", account.getId(), e);
         }
+    }
+
+    private float[] generateEmbedding(String text) {
+        if (!IngestionMessageSupport.hasText(text)) {
+            return null;
+        }
+        return embeddingService.generateTextEmbedding(text);
+    }
+
+    private String aliasText(SocialAccount account) {
+        String handle = account.getHandle();
+        String displayName = account.getDisplayName();
+        if (!IngestionMessageSupport.hasText(handle)) {
+            return null;
+        }
+        if (IngestionMessageSupport.hasText(displayName)
+                && handle.trim().equalsIgnoreCase(displayName.trim())) {
+            return null;
+        }
+        return handle;
+    }
+
+    private String firstText(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (IngestionMessageSupport.hasText(value)) {
+                return value.trim();
+            }
+        }
+        return null;
     }
 
     private String buildAccountEmbeddingText(SocialAccount account) {
