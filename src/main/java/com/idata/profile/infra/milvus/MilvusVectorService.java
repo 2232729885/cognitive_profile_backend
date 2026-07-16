@@ -74,7 +74,10 @@ public class MilvusVectorService {
     }
 
     public record EntityHybridPocResult(String entityId, String entityType, float fusionScore,
-                                        Float keywordScore, Float semanticScore) {
+                                        Float keywordScore, Float semanticScore, String semanticField) {
+    }
+
+    private record ScoredEntityField(String entityId, float score, String fieldName) {
     }
 
     public String insertMediaContentEmbedding(String contentId, String platform, String language,
@@ -322,12 +325,12 @@ public class MilvusVectorService {
                 return List.of();
             }
             List<ScoredEntityId> keywordResults = searchEntityHybridPocKeyword(keyword, topK, filter);
-            List<ScoredEntityId> semanticResults = mergeByMaxScore(List.of(
-                    searchEntityHybridPocDense(ENTITY_NAME_VECTOR_FIELD, queryEmbedding, topK, filter),
-                    searchEntityHybridPocDense(ENTITY_ALIAS_VECTOR_FIELD, queryEmbedding, topK, filter),
-                    searchEntityHybridPocDense(ENTITY_DESCRIPTION_VECTOR_FIELD, queryEmbedding, topK, filter)), topK);
+            List<ScoredEntityField> semanticResults = mergeByMaxFieldScore(List.of(
+                    searchEntityHybridPocDenseWithField(ENTITY_NAME_VECTOR_FIELD, queryEmbedding, topK, filter),
+                    searchEntityHybridPocDenseWithField(ENTITY_ALIAS_VECTOR_FIELD, queryEmbedding, topK, filter),
+                    searchEntityHybridPocDenseWithField(ENTITY_DESCRIPTION_VECTOR_FIELD, queryEmbedding, topK, filter)), topK);
             Map<String, Float> keywordScores = scoreMap(keywordResults);
-            Map<String, Float> semanticScores = scoreMap(semanticResults);
+            Map<String, ScoredEntityField> semanticScores = fieldScoreMap(semanticResults);
 
             List<AnnSearchReq> requests = new ArrayList<>();
             requests.add(AnnSearchReq.builder()
@@ -373,10 +376,13 @@ public class MilvusVectorService {
         }
     }
 
-    private List<ScoredEntityId> searchEntityHybridPocDense(String vectorField, float[] queryEmbedding,
-                                                           int topK, String filter) {
+    private List<ScoredEntityField> searchEntityHybridPocDenseWithField(String vectorField, float[] queryEmbedding,
+                                                                        int topK, String filter) {
         return searchEmbeddingsWithScore(
-                ENTITY_HYBRID_POC_COLLECTION, vectorField, queryEmbedding, topK, filter, "entity_id");
+                ENTITY_HYBRID_POC_COLLECTION, vectorField, queryEmbedding, topK, filter, "entity_id")
+                .stream()
+                .map(result -> new ScoredEntityField(result.entityId(), result.score(), vectorField))
+                .toList();
     }
 
     private Map<String, Float> scoreMap(List<ScoredEntityId> results) {
@@ -389,8 +395,19 @@ public class MilvusVectorService {
         return scores;
     }
 
+    private Map<String, ScoredEntityField> fieldScoreMap(List<ScoredEntityField> results) {
+        Map<String, ScoredEntityField> scores = new LinkedHashMap<>();
+        for (ScoredEntityField result : results) {
+            if (result != null && hasText(result.entityId())) {
+                scores.merge(result.entityId(), result, (left, right) ->
+                        right.score() > left.score() ? right : left);
+            }
+        }
+        return scores;
+    }
+
     private List<EntityHybridPocResult> extractEntityHybridPocResults(
-            SearchResp response, Map<String, Float> keywordScores, Map<String, Float> semanticScores) {
+            SearchResp response, Map<String, Float> keywordScores, Map<String, ScoredEntityField> semanticScores) {
         if (response == null || response.getSearchResults() == null || response.getSearchResults().isEmpty()) {
             return List.of();
         }
@@ -410,12 +427,14 @@ public class MilvusVectorService {
                 }
                 String id = entityId.toString();
                 Object entityType = result.getEntity().get("entity_type");
+                ScoredEntityField semanticScore = semanticScores.get(id);
                 results.add(new EntityHybridPocResult(
                         id,
                         entityType == null ? null : entityType.toString(),
                         result.getScore(),
                         keywordScores.get(id),
-                        semanticScores.get(id)));
+                        semanticScore == null ? null : semanticScore.score(),
+                        semanticScore == null ? null : semanticScore.fieldName()));
             }
         }
         return results;
@@ -745,6 +764,23 @@ public class MilvusVectorService {
                 .filter(entry -> entry.getValue() > MIN_VECTOR_SCORE)
                 .limit(topK)
                 .map(entry -> new ScoredEntityId(entry.getKey(), entry.getValue()))
+                .toList();
+    }
+
+    private List<ScoredEntityField> mergeByMaxFieldScore(List<List<ScoredEntityField>> resultLists, int topK) {
+        Map<String, ScoredEntityField> scores = new LinkedHashMap<>();
+        for (List<ScoredEntityField> results : resultLists) {
+            for (ScoredEntityField result : results) {
+                if (hasText(result.entityId())) {
+                    scores.merge(result.entityId(), result, (left, right) ->
+                            right.score() > left.score() ? right : left);
+                }
+            }
+        }
+        return scores.values().stream()
+                .sorted(Comparator.comparingDouble(ScoredEntityField::score).reversed())
+                .filter(result -> result.score() > MIN_VECTOR_SCORE)
+                .limit(topK)
                 .toList();
     }
 

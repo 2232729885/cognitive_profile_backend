@@ -314,7 +314,8 @@ public class SearchService {
 
         if ("hybrid".equals(retrievalMode)) {
             List<EntityCandidateSearchResponse.Candidate> hybridCandidates =
-                    searchEntityCandidatesFromMilvusHybridPoc(request.getQuery(), requestedTypes, safeTopK);
+                    searchEntityCandidatesFromMilvusHybridPoc(
+                            request.getQuery(), requestedTypes, safeTopK, request.getSemanticMinScore());
             return EntityCandidateSearchResponse.ok(request.getTraceId(), List.of(), List.of(), hybridCandidates);
         }
 
@@ -915,7 +916,7 @@ public class SearchService {
     }
 
     private List<EntityCandidateSearchResponse.Candidate> searchEntityCandidatesFromMilvusHybridPoc(
-            String keyword, List<String> requestedTypes, int topK) {
+            String keyword, List<String> requestedTypes, int topK, Double semanticMinScore) {
         if (!hasText(keyword) || topK <= 0) {
             return List.of();
         }
@@ -951,11 +952,16 @@ public class SearchService {
                 addHybridScored(scored, domain, result);
             }
         });
-        return hydrateEntityCandidates(scored, topK);
+        return hydrateEntityCandidates(scored, topK, normalizeEntityHybridSemanticMinScore(semanticMinScore));
     }
 
     private List<EntityCandidateSearchResponse.Candidate> hydrateEntityCandidates(
             List<ScoredScopedId> scored, int topK) {
+        return hydrateEntityCandidates(scored, topK, null);
+    }
+
+    private List<EntityCandidateSearchResponse.Candidate> hydrateEntityCandidates(
+            List<ScoredScopedId> scored, int topK, Double hybridSemanticMinScore) {
         if (scored == null || scored.isEmpty()) {
             return List.of();
         }
@@ -1012,7 +1018,7 @@ public class SearchService {
                     item = mediaContentResult(content);
                 }
             }
-            EntityCandidateSearchResponse.Candidate candidate = toEntityCandidate(item, scoredId);
+            EntityCandidateSearchResponse.Candidate candidate = toEntityCandidate(item, scoredId, hybridSemanticMinScore);
             if (candidate != null) {
                 candidates.add(candidate);
             }
@@ -1021,6 +1027,11 @@ public class SearchService {
     }
 
     private EntityCandidateSearchResponse.Candidate toEntityCandidate(Map<String, Object> item, ScoredScopedId scored) {
+        return toEntityCandidate(item, scored, null);
+    }
+
+    private EntityCandidateSearchResponse.Candidate toEntityCandidate(
+            Map<String, Object> item, ScoredScopedId scored, Double hybridSemanticMinScore) {
         if (item == null) {
             return null;
         }
@@ -1043,9 +1054,47 @@ public class SearchService {
                 new EntityCandidateSearchResponse.Candidate(nodeId, name, entityType, scored.score());
         candidate.setKeywordScore(scored.keywordScore());
         candidate.setSemanticScore(scored.semanticScore());
+        candidate.setSemanticField(scored.semanticField());
         candidate.setFusionScore(scored.fusionScore());
         candidate.setMatchedChannels(scored.matchedChannels());
+        if (!shouldKeepHybridCandidate(candidate, hybridSemanticMinScore)) {
+            return null;
+        }
         return candidate;
+    }
+
+    private boolean shouldKeepHybridCandidate(EntityCandidateSearchResponse.Candidate candidate,
+                                              Double hybridSemanticMinScore) {
+        if (candidate.getFusionScore() == null) {
+            return true;
+        }
+        List<String> channels = candidate.getMatchedChannels();
+        if (channels == null || channels.isEmpty()) {
+            return false;
+        }
+        boolean semanticMatched = channels.contains("semantic");
+        Double normalizedMinScore = normalizeEntityHybridSemanticMinScore(hybridSemanticMinScore);
+        if (semanticMatched && normalizedMinScore != null
+                && scoreValue(candidate.getSemanticScore()) < normalizedMinScore) {
+            return false;
+        }
+        return !"MediaContent".equalsIgnoreCase(candidate.getEntityType())
+                || !looksLikeOpaqueContentName(candidate.getName());
+    }
+
+    private boolean looksLikeOpaqueContentName(String name) {
+        if (!hasText(name)) {
+            return true;
+        }
+        String normalized = name.trim();
+        return normalized.length() <= 12 && normalized.matches("[A-Za-z0-9_-]+");
+    }
+
+    private Double normalizeEntityHybridSemanticMinScore(Double semanticMinScore) {
+        if (semanticMinScore == null || !Double.isFinite(semanticMinScore)) {
+            return null;
+        }
+        return Math.max(0D, Math.min(1D, semanticMinScore));
     }
 
     private List<ScoredScopedId> dedupeAndRank(List<ScoredScopedId> scored, int topK) {
@@ -1087,6 +1136,7 @@ public class SearchService {
                 (double) result.fusionScore(),
                 result.keywordScore() == null ? null : result.keywordScore().doubleValue(),
                 result.semanticScore() == null ? null : result.semanticScore().doubleValue(),
+                result.semanticField(),
                 (double) result.fusionScore(),
                 channels));
     }
@@ -1133,9 +1183,10 @@ public class SearchService {
     }
 
     private record ScoredScopedId(String scopedId, double score, Double keywordScore, Double semanticScore,
+                                  String semanticField,
                                   Double fusionScore, List<String> matchedChannels) {
         private ScoredScopedId(String scopedId, double score) {
-            this(scopedId, score, null, null, null, List.of());
+            this(scopedId, score, null, null, null, null, List.of());
         }
     }
 

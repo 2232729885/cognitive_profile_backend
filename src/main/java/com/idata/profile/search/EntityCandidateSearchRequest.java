@@ -23,6 +23,13 @@ public class EntityCandidateSearchRequest {
     @JsonProperty("retrieval_mode")
     private String retrievalMode = "both";
 
+    /**
+     * Optional threshold for semantic candidates in retrieval_mode=hybrid.
+     * Null means no semantic score filtering.
+     */
+    @JsonProperty("semantic_min_score")
+    private Double semanticMinScore;
+
     @JsonProperty("trace_id")
     private String traceId;
 

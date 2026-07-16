@@ -70,6 +70,8 @@ public class EntityCandidateSearchResponse {
         private Double keywordScore;
         @JsonProperty("semantic_score")
         private Double semanticScore;
+        @JsonProperty("semantic_field")
+        private String semanticField;
         @JsonProperty("fusion_score")
         private Double fusionScore;
         @JsonProperty("matched_channels")
