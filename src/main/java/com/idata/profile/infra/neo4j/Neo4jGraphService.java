@@ -43,7 +43,8 @@ public class Neo4jGraphService {
                               String toLabel, String toId,
                               String relationType, Map<String, Object> properties) {
         String cypher = String.format(
-                "MATCH (a:%s {id: $fromId}), (b:%s {id: $toId}) " +
+                "MATCH (a:%s {id: $fromId}) " +
+                        "MATCH (b:%s {id: $toId}) " +
                         "MERGE (a)-[r:%s]->(b) SET r += $properties",
                 fromLabel, toLabel, relationType);
         runWrite("mergeRelation " + fromId + "-" + relationType + "->" + toId, () ->

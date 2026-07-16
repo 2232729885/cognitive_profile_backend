@@ -46,14 +46,18 @@ public class PipelineExecutor {
 
     private void execute(UUID taskId) {
         PipelineTask task = pipelineTaskMapper.selectById(taskId);
+        String currentStep = "UNKNOWN";
         try {
             if (!"done".equals(task.getT1Status())) {
+                currentStep = "T1";
                 t1Step.run(task);
             }
             if (!"done".equals(task.getT2Status())) {
+                currentStep = "T2";
                 t2Step.run(task);
             }
             if (!"done".equals(task.getT4Status())) {
+                currentStep = "T4";
                 t4Step.run(task);
             }
 
@@ -61,7 +65,7 @@ public class PipelineExecutor {
             pipelineTaskMapper.updateById(task);
         } catch (Exception e) {
             log.error("流水线执行失败, taskId={}", taskId, e);
-            retryHandler.markFailedAndRetry(task, "UNKNOWN", e);
+            retryHandler.markFailedAndRetry(task, currentStep, e);
         }
     }
 }

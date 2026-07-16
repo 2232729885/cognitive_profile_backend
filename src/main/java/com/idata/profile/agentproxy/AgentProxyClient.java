@@ -5,6 +5,7 @@ import com.idata.profile.mapper.system.SubAgentRegistryMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
@@ -74,6 +75,8 @@ public class AgentProxyClient {
 
         return restClient(timeoutSeconds(agentCode, agent.getTimeoutSeconds())).post()
                 .uri(baseUrl + "/" + action)
+                .contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.APPLICATION_JSON)
                 .body(request)
                 .retrieve()
                 .body(responseType);
@@ -95,6 +98,9 @@ public class AgentProxyClient {
                 : configuredTimeoutSeconds;
         if ("T6".equals(agentCode)) {
             return Math.max(timeout, 120);
+        }
+        if ("T2".equals(agentCode)) {
+            return Math.max(timeout, 240);
         }
         return timeout;
     }

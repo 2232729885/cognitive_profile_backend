@@ -22,7 +22,9 @@ import org.springframework.stereotype.Component;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -48,8 +50,21 @@ public class T2ExtractionStep {
         pipelineTaskMapper.updateById(task);
 
         MediaContent mc = mediaContentMapper.selectById(task.getContentId());
-        T2ExtractResponse response = agentProxyClient.call(
-                "T2", "extract_entities", buildRequest(mc), T2ExtractResponse.class);
+        if (mc == null) {
+            throw new IllegalStateException("MediaContent not found, contentId=" + task.getContentId());
+        }
+
+        T2ExtractResponse response;
+        if (hasExtractableText(mc)) {
+            response = agentProxyClient.call(
+                    "T2", "extract_entities", buildRequest(mc), T2ExtractResponse.class);
+        } else {
+            log.info("[T2] skip extraction: title and text are empty, contentId={}", mc.getId());
+            response = emptyResponse(mc);
+        }
+        if (response == null) {
+            response = emptyResponse(mc);
+        }
 
         EntityResolutionService.ResolutionResult resolutionResult = entityResolutionService.resolveMentions(
                 response != null ? response.getEntities() : null,
@@ -80,8 +95,8 @@ public class T2ExtractionStep {
 
     private T2ExtractRequest buildRequest(MediaContent mc) {
         T2ExtractRequest request = new T2ExtractRequest();
-        request.setTitle(mc.getTitle());
-        request.setText(mc.getBodyText());
+        request.setTitle(blankToNull(mc.getTitle()));
+        request.setText(extractionText(mc));
         request.setLanguage(mc.getLanguage());
         Object t1EntitiesHint = extractT1EntitiesHint(mc);
         if (t1EntitiesHint != null) {
@@ -101,6 +116,31 @@ public class T2ExtractionStep {
         context.setQuotedContentId(mc.getQuotedContentId());
         request.setContext(context);
         return request;
+    }
+
+    private boolean hasExtractableText(MediaContent mc) {
+        return hasText(mc.getTitle()) || hasText(mc.getBodyText());
+    }
+
+    private String extractionText(MediaContent mc) {
+        List<String> parts = new ArrayList<>();
+        if (hasText(mc.getTitle())) {
+            parts.add(mc.getTitle().trim());
+        }
+        if (hasText(mc.getBodyText())) {
+            parts.add(mc.getBodyText().trim());
+        }
+        return String.join("\n\n", parts);
+    }
+
+    private T2ExtractResponse emptyResponse(MediaContent mc) {
+        T2ExtractResponse response = new T2ExtractResponse();
+        response.setContentId(mc.getId().toString());
+        response.setEntities(List.of());
+        response.setRelations(List.of());
+        response.setResolvedAuthorAccountId(null);
+        response.setModelVersion("backend-empty-input");
+        return response;
     }
 
     private Object extractT1EntitiesHint(MediaContent mc) {
@@ -312,6 +352,10 @@ public class T2ExtractionStep {
         if (hasText(value)) {
             target.put(key, value);
         }
+    }
+
+    private String blankToNull(String value) {
+        return hasText(value) ? value.trim() : null;
     }
 
     private void putIfNotNull(Map<String, Object> target, String key, Object value) {
