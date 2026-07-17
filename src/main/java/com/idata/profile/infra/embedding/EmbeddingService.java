@@ -6,22 +6,20 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class EmbeddingService {
-
-    private static final Semaphore IMAGE_EMBEDDING_SEMAPHORE = new Semaphore(1);
-    private static final Semaphore TEXT_EMBEDDING_SEMAPHORE = new Semaphore(2);
-
-    private final RestClient embeddingRestClient = RestClient.create();
 
     @Value("${llm.embedding.base-url}")
     private String embeddingBaseUrl;
@@ -32,22 +30,37 @@ public class EmbeddingService {
     @Value("${llm.embedding.model}")
     private String embeddingModel;
 
+    @Value("${llm.embedding.text-concurrency:1}")
+    private int textConcurrency;
+
+    @Value("${llm.embedding.image-concurrency:1}")
+    private int imageConcurrency;
+
+    @Value("${llm.embedding.timeout-seconds:60}")
+    private int timeoutSeconds;
+
+    private Semaphore textSemaphore;
+    private Semaphore imageSemaphore;
+
     public float[] generateTextEmbedding(String text) {
         if (!hasText(text)) {
             return null;
         }
         boolean acquired = false;
         try {
-            TEXT_EMBEDDING_SEMAPHORE.acquire();
-            acquired = true;
+            acquired = textSemaphore().tryAcquire(Math.max(1, timeoutSeconds), TimeUnit.SECONDS);
+            if (!acquired) {
+                log.warn("[EmbeddingService] text embedding skipped because route is busy");
+                return null;
+            }
             return generateEmbedding(Map.of("model", embeddingModel, "input", text), "text");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            log.warn("[EmbeddingService] text embedding interrupted", e);
+            log.warn("[EmbeddingService] text embedding interrupted");
             return null;
         } finally {
             if (acquired) {
-                TEXT_EMBEDDING_SEMAPHORE.release();
+                textSemaphore().release();
             }
         }
     }
@@ -58,8 +71,11 @@ public class EmbeddingService {
         }
         boolean acquired = false;
         try {
-            IMAGE_EMBEDDING_SEMAPHORE.acquire();
-            acquired = true;
+            acquired = imageSemaphore().tryAcquire(Math.max(1, timeoutSeconds), TimeUnit.SECONDS);
+            if (!acquired) {
+                log.warn("[EmbeddingService] image embedding skipped because route is busy, imageUrl={}", imageUrl);
+                return null;
+            }
             Map<String, Object> imageContent = Map.of(
                     "type", "image_url",
                     "image_url", Map.of("url", imageUrl));
@@ -71,11 +87,11 @@ public class EmbeddingService {
                     "messages", List.of(userMessage)), "image", imageUrl);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            log.warn("[EmbeddingService] image embedding interrupted, imageUrl={}", imageUrl, e);
+            log.warn("[EmbeddingService] image embedding interrupted, imageUrl={}", imageUrl);
             return null;
         } finally {
             if (acquired) {
-                IMAGE_EMBEDDING_SEMAPHORE.release();
+                imageSemaphore().release();
             }
         }
     }
@@ -86,7 +102,7 @@ public class EmbeddingService {
 
     private float[] generateEmbedding(Map<String, Object> requestBody, String inputType, String source) {
         try {
-            EmbeddingApiResponse apiResponse = embeddingRestClient.post()
+            EmbeddingApiResponse apiResponse = restClient().post()
                     .uri(normalizeBaseUrl(embeddingBaseUrl) + "/embeddings")
                     .contentType(MediaType.APPLICATION_JSON)
                     .header(HttpHeaders.AUTHORIZATION, "Bearer " + embeddingApiKey)
@@ -107,12 +123,37 @@ public class EmbeddingService {
             return embedding;
         } catch (Exception e) {
             if (hasText(source)) {
-                log.warn("[EmbeddingService] {} embedding failed, source={}", inputType, source, e);
+                log.warn("[EmbeddingService] {} embedding failed, source={}, reason={}",
+                        inputType, source, rootMessage(e));
             } else {
-                log.warn("[EmbeddingService] {} embedding failed", inputType, e);
+                log.warn("[EmbeddingService] {} embedding failed, reason={}", inputType, rootMessage(e));
             }
             return null;
         }
+    }
+
+    private RestClient restClient() {
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        Duration timeout = Duration.ofSeconds(Math.max(1, timeoutSeconds));
+        requestFactory.setConnectTimeout(timeout);
+        requestFactory.setReadTimeout(timeout);
+        return RestClient.builder()
+                .requestFactory(requestFactory)
+                .build();
+    }
+
+    private synchronized Semaphore textSemaphore() {
+        if (textSemaphore == null) {
+            textSemaphore = new Semaphore(Math.max(1, textConcurrency));
+        }
+        return textSemaphore;
+    }
+
+    private synchronized Semaphore imageSemaphore() {
+        if (imageSemaphore == null) {
+            imageSemaphore = new Semaphore(Math.max(1, imageConcurrency));
+        }
+        return imageSemaphore;
     }
 
     private String normalizeBaseUrl(String baseUrl) {
@@ -124,6 +165,14 @@ public class EmbeddingService {
 
     private boolean hasText(String value) {
         return value != null && !value.trim().isEmpty();
+    }
+
+    private String rootMessage(Throwable throwable) {
+        Throwable current = throwable;
+        while (current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current.getMessage();
     }
 
     @Data

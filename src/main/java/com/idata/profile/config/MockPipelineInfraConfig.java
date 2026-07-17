@@ -34,6 +34,15 @@ public class MockPipelineInfraConfig {
             public String insertMediaContentEmbedding(String contentId, String platform, String language,
                                                       String contentType, long publishedAt,
                                                       float[] titleEmbedding, float[] textEmbedding) {
+                return insertMediaContentEmbedding(contentId, platform, language, contentType, publishedAt,
+                        titleEmbedding, null, textEmbedding);
+            }
+
+            @Override
+            public String insertMediaContentEmbedding(String contentId, String platform, String language,
+                                                      String contentType, long publishedAt,
+                                                      float[] titleEmbedding, float[] summaryEmbedding,
+                                                      float[] bodyEmbedding) {
                 String vectorId = "mock_media_content_vector_" + UUID.randomUUID();
                 log.info("Mock Milvus media content embeddings inserted, contentId={}, vectorId={}",
                         contentId, vectorId);
@@ -44,6 +53,16 @@ public class MockPipelineInfraConfig {
             public String upsertMediaAssetEmbedding(String assetId, String sourceAssetId, String contentId,
                                                     String platform, String assetType, String mimeType,
                                                     float[] imageEmbedding, float[] ocrTextEmbedding) {
+                return upsertMediaAssetEmbedding(assetId, sourceAssetId, contentId, platform, assetType, mimeType,
+                        null, null, imageEmbedding, ocrTextEmbedding, null, null);
+            }
+
+            @Override
+            public String upsertMediaAssetEmbedding(String assetId, String sourceAssetId, String contentId,
+                                                    String platform, String mediaType, String mimeType,
+                                                    Float segmentStart, Float segmentEnd,
+                                                    float[] visualEmbedding, float[] ocrEmbedding,
+                                                    float[] asrEmbedding, float[] captionEmbedding) {
                 String vectorId = "mock_media_asset_vector_" + UUID.randomUUID();
                 log.info("Mock Milvus media asset embeddings upserted, assetId={}, vectorId={}",
                         assetId, vectorId);
@@ -116,6 +135,11 @@ public class MockPipelineInfraConfig {
         return new MediaAssetEsService(null) {
             @Override
             public void indexImageAsset(com.idata.profile.entity.content.MediaAsset asset) {
+                indexAsset(asset);
+            }
+
+            @Override
+            public void indexAsset(com.idata.profile.entity.content.MediaAsset asset) {
                 log.info("Mock Elasticsearch indexed image asset, assetId={}",
                         asset != null ? asset.getId() : null);
             }

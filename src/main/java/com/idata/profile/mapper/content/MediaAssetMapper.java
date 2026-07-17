@@ -35,7 +35,7 @@ public interface MediaAssetMapper extends BaseMapper<MediaAsset> {
     MediaAsset selectBySha256(@Param("sha256") String sha256);
 
     @Select("SELECT * FROM media_assets WHERE embedding_id IS NULL " +
-            "AND asset_type = 'image' LIMIT #{limit}")
+            "AND asset_type IN ('image','video','audio') LIMIT #{limit}")
     List<MediaAsset> selectPendingEmbedding(@Param("limit") int limit);
 
     @Select("SELECT * FROM media_assets WHERE ocr_text IS NULL " +

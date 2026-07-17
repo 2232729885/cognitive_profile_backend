@@ -48,9 +48,15 @@ public class T4IndexingStep {
         MediaContent mc = mediaContentMapper.selectById(task.getContentId());
         T1AnnotationView t1View = T1AnnotationView.parse(mc.getT1Annotation());
 
+        String summaryText = t1View.summaryText();
+        String bodyEmbeddingText = buildContentBodyEmbeddingText(mc, t1View);
+        String contentDescriptionText = combineText(summaryText, bodyEmbeddingText);
+        List<String> contentAliases = contentAliases(mc);
+        String contentAliasText = contentAliases.isEmpty() ? null : String.join("\n", contentAliases);
         float[] titleEmbedding = generateEmbedding(mc.getTitle());
-        float[] textEmbedding = generateEmbedding(buildContentTextEmbeddingText(mc, t1View));
-        boolean textEmbeddingSkipped = titleEmbedding == null && textEmbedding == null;
+        float[] summaryEmbedding = generateEmbedding(summaryText);
+        float[] bodyEmbedding = generateEmbedding(bodyEmbeddingText);
+        boolean textEmbeddingSkipped = titleEmbedding == null && summaryEmbedding == null && bodyEmbedding == null;
         String vectorId = null;
         if (textEmbeddingSkipped) {
             log.warn("[T4] media content vectorization skipped, contentId={}", mc.getId());
@@ -62,24 +68,26 @@ public class T4IndexingStep {
                     mc.getContentType(),
                     mc.getPublishedAt() != null ? mc.getPublishedAt().toEpochSecond() : 0L,
                     titleEmbedding,
-                    textEmbedding);
+                    summaryEmbedding,
+                    bodyEmbedding);
             milvusVectorService.upsertEntityEmbedding(
                     mc.getId().toString(),
                     "MediaContent",
                     firstText(mc.getTitle(), mc.getPlatformContentId(), mc.getUrl()),
-                    null,
+                    contentAliasText,
                     mc.getPlatformContentId(),
                     mc.getPlatform(),
+                    contentDescriptionText,
                     titleEmbedding,
                     null,
-                    textEmbedding);
+                    firstEmbedding(bodyEmbedding, summaryEmbedding));
         }
 
         mediaContentEsService.index(mc.getId().toString(), buildEsDocument(mc, t1View));
         entityEsService.indexEntity(
                 mc.getId().toString(),
                 firstText(mc.getTitle(), mc.getPlatformContentId(), mc.getUrl()),
-                contentAliases(mc),
+                contentAliases,
                 "MediaContent",
                 0D,
                 contentEntityFields(mc));
@@ -102,12 +110,11 @@ public class T4IndexingStep {
         return embeddingService.generateTextEmbedding(truncateForEmbedding(text));
     }
 
-    private String buildContentTextEmbeddingText(MediaContent mc, T1AnnotationView t1View) {
+    private String buildContentBodyEmbeddingText(MediaContent mc, T1AnnotationView t1View) {
         if (mc == null) {
             return null;
         }
         StringBuilder text = new StringBuilder();
-        appendEmbeddingField(text, "summary", t1View.summaryText());
         appendEmbeddingField(text, "body_text", mc.getBodyText());
         appendEmbeddingField(text, "hashtags", mc.getHashtags());
         appendEmbeddingField(text, "mentions", mc.getMentions());
@@ -128,6 +135,31 @@ public class T4IndexingStep {
         appendEmbeddingField(text, "platform", mc.getPlatform());
         appendEmbeddingField(text, "language", mc.getLanguage());
         return text.toString();
+    }
+
+    private String combineText(String... values) {
+        if (values == null) {
+            return null;
+        }
+        StringBuilder text = new StringBuilder();
+        for (String value : values) {
+            if (hasText(value)) {
+                text.append(value.trim()).append('\n');
+            }
+        }
+        return text.isEmpty() ? null : text.toString();
+    }
+
+    private float[] firstEmbedding(float[]... embeddings) {
+        if (embeddings == null) {
+            return null;
+        }
+        for (float[] embedding : embeddings) {
+            if (embedding != null) {
+                return embedding;
+            }
+        }
+        return null;
     }
 
     private Object buildEsDocument(MediaContent mc, T1AnnotationView t1View) {

@@ -50,14 +50,27 @@ public class MediaAssetEsService {
                                     .text(t -> t
                                             .analyzer("ik_max_word")
                                             .searchAnalyzer("ik_smart")))
+                            .properties("asr_text", p -> p
+                                    .text(t -> t
+                                            .analyzer("ik_max_word")
+                                            .searchAnalyzer("ik_smart")))
+                            .properties("caption_text", p -> p
+                                    .text(t -> t
+                                            .analyzer("ik_max_word")
+                                            .searchAnalyzer("ik_smart")))
+                            .properties("asset_id", p -> p.keyword(k -> k))
+                            .properties("segment_id", p -> p.keyword(k -> k))
                             .properties("source_asset_id", p -> p.keyword(k -> k))
                             .properties("asset_type", p -> p.keyword(k -> k))
+                            .properties("media_type", p -> p.keyword(k -> k))
                             .properties("content_id", p -> p.keyword(k -> k))
                             .properties("source_url", p -> p.keyword(k -> k))
                             .properties("storage_uri", p -> p.keyword(k -> k))
                             .properties("mime_type", p -> p.keyword(k -> k))
                             .properties("minio_bucket", p -> p.keyword(k -> k))
                             .properties("minio_key", p -> p.keyword(k -> k))
+                            .properties("segment_start", p -> p.float_(f -> f))
+                            .properties("segment_end", p -> p.float_(f -> f))
                             .properties("created_at", p -> p
                                     .date(d -> d.format("strict_date_optional_time||epoch_millis")))));
             log.info("ES index created with IK analyzer: {}", MEDIA_ASSETS_INDEX);
@@ -67,32 +80,48 @@ public class MediaAssetEsService {
     }
 
     public void indexImageAsset(MediaAsset asset) {
-        if (esClient == null || asset == null || asset.getId() == null
-                || !"image".equalsIgnoreCase(asset.getAssetType())) {
+        indexAsset(asset);
+    }
+
+    public void indexAsset(MediaAsset asset) {
+        indexAssetSegment(asset, null, null, null, buildCaptionText(asset));
+    }
+
+    public void indexAssetSegment(MediaAsset asset, String segmentId,
+                                  Float segmentStart, Float segmentEnd,
+                                  String captionText) {
+        if (esClient == null || asset == null || asset.getId() == null) {
             return;
         }
         try {
             Map<String, Object> doc = new LinkedHashMap<>();
+            doc.put("asset_id", asset.getId().toString());
+            doc.put("segment_id", segmentId);
             doc.put("source_asset_id", asset.getSourceAssetId());
             doc.put("asset_type", asset.getAssetType());
+            doc.put("media_type", asset.getAssetType());
             doc.put("content_id", asset.getContentId() != null ? asset.getContentId().toString() : null);
             doc.put("source_url", asset.getSourceUrl());
             doc.put("storage_uri", asset.getStorageUri());
             doc.put("mime_type", asset.getMimeType());
             doc.put("ocr_text", asset.getOcrText());
+            doc.put("asr_text", asset.getAsrText());
+            doc.put("caption_text", captionText);
             doc.put("minio_bucket", asset.getMinioBucket());
             doc.put("minio_key", asset.getMinioKey());
             doc.put("width", asset.getWidth());
             doc.put("height", asset.getHeight());
+            doc.put("segment_start", segmentStart);
+            doc.put("segment_end", segmentEnd);
             doc.put("created_at", asset.getCreatedAt() != null ? asset.getCreatedAt().toString() : null);
 
             esClient.index(i -> i
                     .index(MEDIA_ASSETS_INDEX)
-                    .id(asset.getId().toString())
+                    .id(documentId(asset, segmentId))
                     .document(doc));
-            log.debug("Indexed image asset to ES, assetId={}", asset.getId());
+            log.debug("Indexed media asset to ES, assetId={}", asset.getId());
         } catch (IOException e) {
-            log.warn("Failed to index image asset to ES, assetId={}", asset.getId(), e);
+            log.warn("Failed to index media asset to ES, assetId={}", asset.getId(), e);
         }
     }
 
@@ -106,13 +135,26 @@ public class MediaAssetEsService {
                             .index(MEDIA_ASSETS_INDEX)
                             .size(size)
                             .query(q -> q.bool(b -> b
-                                    .filter(f -> f.term(t -> t.field("asset_type").value("image")))
-                                    .must(m -> m.match(mm -> mm
-                                            .field("ocr_text")
-                                            .query(keyword))))),
+                                    .filter(f -> f.bool(bb -> bb
+                                            .should(sh -> sh.term(t -> t.field("media_type").value("image")))
+                                            .should(sh -> sh.term(t -> t.field("media_type").value("video")))
+                                            .should(sh -> sh.term(t -> t.field("asset_type").value("image")))
+                                            .should(sh -> sh.term(t -> t.field("asset_type").value("video")))
+                                            .minimumShouldMatch("1")))
+                                    .must(m -> m.multiMatch(mm -> mm
+                                            .query(keyword)
+                                            .fields("ocr_text", "asr_text", "caption_text")))))
+                            .source(src -> src.filter(f -> f.includes("asset_id", "segment_id",
+                                    "segment_start", "segment_end", "caption_text"))),
                     Map.class);
             return response.hits().hits().stream()
-                    .map(hit -> new EsImageAssetSearchResult(hit.id(), hit.score()))
+                    .map(hit -> {
+                        Map source = hit.source();
+                        Object assetId = source == null ? null : source.get("asset_id");
+                        return new EsImageAssetSearchResult(
+                                assetId == null ? hit.id() : assetId.toString(),
+                                hit.score());
+                    })
                     .toList();
         } catch (ElasticsearchException e) {
             if (isIndexNotFound(e)) {
@@ -130,6 +172,34 @@ public class MediaAssetEsService {
 
     private boolean hasText(String value) {
         return value != null && !value.trim().isEmpty();
+    }
+
+    private String documentId(MediaAsset asset, String segmentId) {
+        if (!hasText(segmentId)) {
+            return asset.getId().toString();
+        }
+        return asset.getId() + "_" + segmentId;
+    }
+
+    @SuppressWarnings("deprecation")
+    private String buildCaptionText(MediaAsset asset) {
+        if (asset == null) {
+            return null;
+        }
+        StringBuilder text = new StringBuilder();
+        appendCaptionPart(text, asset.getSceneLabel());
+        appendCaptionPart(text, asset.getObjectAnnotations());
+        return text.isEmpty() ? null : text.toString();
+    }
+
+    private void appendCaptionPart(StringBuilder text, String value) {
+        if (!hasText(value)) {
+            return;
+        }
+        if (!text.isEmpty()) {
+            text.append('\n');
+        }
+        text.append(value.trim());
     }
 
     public record EsImageAssetSearchResult(String assetId, Double score) {

@@ -1053,6 +1053,7 @@ public class SearchService {
         EntityCandidateSearchResponse.Candidate candidate =
                 new EntityCandidateSearchResponse.Candidate(nodeId, name, entityType, scored.score());
         candidate.setKeywordScore(scored.keywordScore());
+        candidate.setKeywordField(scored.keywordField());
         candidate.setSemanticScore(scored.semanticScore());
         candidate.setSemanticField(scored.semanticField());
         candidate.setFusionScore(scored.fusionScore());
@@ -1135,6 +1136,7 @@ public class SearchService {
                 scopedId,
                 (double) result.fusionScore(),
                 result.keywordScore() == null ? null : result.keywordScore().doubleValue(),
+                result.keywordField(),
                 result.semanticScore() == null ? null : result.semanticScore().doubleValue(),
                 result.semanticField(),
                 (double) result.fusionScore(),
@@ -1182,11 +1184,12 @@ public class SearchService {
         return null;
     }
 
-    private record ScoredScopedId(String scopedId, double score, Double keywordScore, Double semanticScore,
+    private record ScoredScopedId(String scopedId, double score, Double keywordScore, String keywordField,
+                                  Double semanticScore,
                                   String semanticField,
                                   Double fusionScore, List<String> matchedChannels) {
         private ScoredScopedId(String scopedId, double score) {
-            this(scopedId, score, null, null, null, null, List.of());
+            this(scopedId, score, null, null, null, null, null, List.of());
         }
     }
 
