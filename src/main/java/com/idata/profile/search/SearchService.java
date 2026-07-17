@@ -128,50 +128,40 @@ public class SearchService {
         boolean hasImage = request != null && hasText(request.getImageUrl()) && request.isEnableMilvus();
         String targetModality = normalizeTargetModality(request != null ? request.getTargetModalities() : null);
         Double semanticMinScore = request == null ? null : request.getSemanticMinScore();
-        if ("image".equals(targetModality)) {
-            boolean keywordEnabled = isEnabled(request, "es");
-            boolean semanticEnabled = isEnabled(request, "milvus");
-            if (hasImage) {
-                if (!semanticEnabled) {
-                    SearchResult result = buildResult(List.of(), 0, "hybrid-image", startedAt);
-                    result.setImageItems(List.of());
-                    return result;
-                }
-                return searchHybridImagesByImage(request.getImageUrl(), topK, safePage, safeSize, startedAt);
-            }
-            if (hasText(queryText)) {
-                if (!keywordEnabled && !semanticEnabled) {
-                    SearchResult result = buildResult(List.of(), 0, "hybrid-image", startedAt);
-                    result.setImageItems(List.of());
-                    return result;
-                }
-                return searchHybridImagesByText(queryText, topK, safePage, safeSize,
-                        semanticMinScore, keywordEnabled, semanticEnabled, startedAt);
-            }
-            SearchResult result = buildResult(List.of(), 0, "hybrid-image", startedAt);
-            result.setImageItems(List.of());
-            return result;
-        }
 
-        CompletableFuture<List<MediaContentEsService.EsSearchResult>> esFuture = isEnabled(request, "es")
+        return searchHybridContents(request, queryText, platform, language, targetModality,
+                hasImage, topK, safePage, safeSize, semanticMinScore, startedAt);
+    }
+
+    private SearchResult searchHybridContents(HybridSearchRequest request, String queryText,
+                                              String platform, String language, String targetModality,
+                                              boolean hasImage, int topK, int page, int size,
+                                              Double semanticMinScore, long startedAt) {
+        boolean includeText = !"image".equals(targetModality);
+        boolean includeMedia = !"text".equals(targetModality);
+        CompletableFuture<List<MediaContentEsService.EsSearchResult>> esFuture = includeText && isEnabled(request, "es")
                 ? safeRoute("es", () -> esService.searchByKeywordWithHighlight(queryText, platform, language, topK))
                 : CompletableFuture.completedFuture(List.of());
-        CompletableFuture<List<MilvusVectorService.ScoredEntityId>> milvusFuture = isEnabled(request, "milvus")
+        CompletableFuture<List<MilvusVectorService.ScoredEntityId>> milvusFuture = includeText && isEnabled(request, "milvus")
                 ? safeRoute("milvus", () -> searchSemanticIds(queryText, platform, language, topK, semanticMinScore))
                 : CompletableFuture.completedFuture(List.of());
-        CompletableFuture<List<String>> neo4jFuture = request != null && request.isEnableNeo4j()
+        CompletableFuture<List<String>> neo4jFuture = includeText && request != null && request.isEnableNeo4j()
                 ? safeRoute("neo4j", () -> searchNeo4jContentIds(queryText, platform, language, topK))
                 : CompletableFuture.completedFuture(List.of());
-        CompletableFuture<List<String>> imageFuture = hasImage
-                ? safeRoute("image", () -> vectorizeAndSearchByImage(
-                request.getImageUrl(), request.getTargetModalities(), topK))
-                : CompletableFuture.completedFuture(List.of());
-        CompletableFuture<List<SearchResult.ImageItem>> imageItemsFuture =
-                hasImage && "all".equals(targetModality)
-                        ? safeRoute("image-items", () -> searchImageItemsByImage(request.getImageUrl(), topK))
+        CompletableFuture<List<MediaAssetEsService.EsImageAssetSearchResult>> mediaKeywordFuture =
+                includeMedia && isEnabled(request, "es") && hasText(queryText)
+                        ? safeRoute("media-es", () -> mediaAssetEsService.searchImagesByKeyword(queryText.trim(), topK))
                         : CompletableFuture.completedFuture(List.of());
+        CompletableFuture<List<MilvusVectorService.MediaAssetVectorSearchResult>> mediaSemanticFuture =
+                includeMedia && isEnabled(request, "milvus") && hasText(queryText)
+                        ? safeRoute("media-milvus", () -> searchMediaAssetTextVectors(queryText, topK, semanticMinScore))
+                        : CompletableFuture.completedFuture(List.of());
+        CompletableFuture<List<MilvusVectorService.MediaAssetVectorSearchResult>> imageFuture = includeMedia && hasImage
+                ? safeRoute("image", () -> searchMediaAssetVisualVectors(request.getImageUrl(), topK))
+                : CompletableFuture.completedFuture(List.of());
 
-        CompletableFuture.allOf(esFuture, milvusFuture, neo4jFuture, imageFuture, imageItemsFuture).join();
+        CompletableFuture.allOf(esFuture, milvusFuture, neo4jFuture,
+                mediaKeywordFuture, mediaSemanticFuture, imageFuture).join();
 
         List<MediaContentEsService.EsSearchResult> esResults = esFuture.join();
         List<String> esIds = esResults.stream()
@@ -182,11 +172,22 @@ public class SearchService {
                 .map(MilvusVectorService.ScoredEntityId::entityId)
                 .toList();
 
-        Map<String, Double> fusedScores = fuseByRrf(List.of(
-                esIds, milvusIds, neo4jFuture.join(), imageFuture.join()));
-        List<String> fusedIds = new ArrayList<>(fusedScores.keySet());
-        List<String> pageIds = pageSlice(fusedIds, safePage, safeSize);
+        List<SearchResult.ContentHit> contentHits = buildContentHits(
+                esResults,
+                milvusResults,
+                neo4jFuture.join(),
+                mediaKeywordFuture.join(),
+                mergeMediaVectorResults(mediaSemanticFuture.join(), imageFuture.join(), topK),
+                topK);
+        List<String> fusedIds = contentHits.stream()
+                .map(SearchResult.ContentHit::getContentId)
+                .toList();
+        List<String> pageIds = pageSlice(fusedIds, page, size);
         List<MediaContent> items = fetchContentsInOrder(pageIds);
+        Map<String, MediaContent> contentsById = items.stream()
+                .collect(Collectors.toMap(c -> c.getId().toString(), c -> c, (left, right) -> left));
+        List<SearchResult.ContentHit> pageHits = pageSlice(contentHits, page, size);
+        pageHits.forEach(hit -> hit.setPost(contentsById.get(hit.getContentId())));
 
         Map<String, Map<String, List<String>>> highlights = esResults.stream()
                 .collect(Collectors.toMap(
@@ -194,58 +195,357 @@ public class SearchService {
                         MediaContentEsService.EsSearchResult::getHighlights,
                         (left, right) -> left,
                         LinkedHashMap::new));
-        Map<String, Double> scores = esResults.stream()
-                .filter(r -> r.getScore() != null)
-                .collect(Collectors.toMap(
-                        MediaContentEsService.EsSearchResult::getContentId,
-                        MediaContentEsService.EsSearchResult::getScore,
-                        (left, right) -> left,
-                        LinkedHashMap::new));
-        Map<String, Double> similarityScores = milvusResults.stream()
-                .collect(Collectors.toMap(
-                        MilvusVectorService.ScoredEntityId::entityId,
-                        s -> (double) s.score(),
-                        (left, right) -> left,
-                        LinkedHashMap::new));
 
-        SearchResult result = buildResult(items, fusedIds.size(), "hybrid", startedAt);
+        SearchResult result = buildResult(null, fusedIds.size(), "hybrid", startedAt);
         result.setHighlights(highlights);
-        result.setScores(scores);
-        result.setSimilarityScores(similarityScores);
-        result.setFusionScores(fusedScores);
-        List<SearchResult.ImageItem> imageItems = imageItemsFuture.join();
-        if (!imageItems.isEmpty()) {
-            result.setImageItems(pageSlice(imageItems, safePage, safeSize));
+        result.setContentHits(pageHits);
+        return result;
+    }
+
+    private List<SearchResult.ContentHit> buildContentHits(
+            List<MediaContentEsService.EsSearchResult> textKeywordResults,
+            List<MilvusVectorService.ScoredEntityId> textSemanticResults,
+            List<String> graphContentIds,
+            List<MediaAssetEsService.EsImageAssetSearchResult> mediaKeywordResults,
+            List<MilvusVectorService.MediaAssetVectorSearchResult> mediaSemanticResults,
+            int topK) {
+        Map<String, ContentAccumulator> accumulators = new LinkedHashMap<>();
+
+        addTextChannel(accumulators, "ES_POST_KEYWORD", textKeywordResults.stream()
+                .map(result -> new TextHitSeed(result.getContentId(), result.getScore(), null))
+                .toList());
+        addTextChannel(accumulators, "MILVUS_POST_SEMANTIC", textSemanticResults.stream()
+                .map(result -> new TextHitSeed(result.entityId(), (double) result.score(), null))
+                .toList());
+        addTextChannel(accumulators, "NEO4J_GRAPH", graphContentIds.stream()
+                .map(id -> new TextHitSeed(id, null, null))
+                .toList());
+
+        List<MediaHitSeed> mediaKeywordSeeds = mediaKeywordResults.stream()
+                .map(result -> new MediaHitSeed(
+                        result.assetId(),
+                        result.segmentId(),
+                        result.contentId(),
+                        result.mediaType(),
+                        null,
+                        result.segmentStart(),
+                        result.segmentEnd(),
+                        result.score(),
+                        "ocr_text/asr_text/caption_text"))
+                .toList();
+        List<MediaHitSeed> mediaSemanticSeeds = mediaSemanticResults.stream()
+                .map(result -> new MediaHitSeed(
+                        result.assetId(),
+                        result.segmentId(),
+                        result.contentId(),
+                        result.mediaType(),
+                        result.mimeType(),
+                        result.segmentStart(),
+                        result.segmentEnd(),
+                        (double) result.score(),
+                        result.vectorField()))
+                .toList();
+
+        Map<UUID, MediaAsset> assetsById = fetchAssetsById(List.of(mediaKeywordSeeds, mediaSemanticSeeds));
+        addMediaChannel(accumulators, "ES_MEDIA_KEYWORD", mediaKeywordSeeds, assetsById);
+        addMediaChannel(accumulators, "MILVUS_MEDIA_SEMANTIC", mediaSemanticSeeds, assetsById);
+
+        return accumulators.values().stream()
+                .map(ContentAccumulator::toContentHit)
+                .sorted(Comparator.comparingDouble(SearchResult.ContentHit::getRrfScore).reversed())
+                .limit(topK)
+                .toList();
+    }
+
+    private void addTextChannel(Map<String, ContentAccumulator> accumulators, String channel,
+                                List<TextHitSeed> hits) {
+        LinkedHashSet<String> seenContentIds = new LinkedHashSet<>();
+        int uniqueRank = 0;
+        int rawRank = 0;
+        for (TextHitSeed hit : hits) {
+            rawRank++;
+            if (hit == null || !hasText(hit.contentId())) {
+                continue;
+            }
+            boolean contributes = seenContentIds.add(hit.contentId());
+            double rrfContribution = 0D;
+            if (contributes) {
+                uniqueRank++;
+                rrfContribution = rrfContribution(uniqueRank);
+                accumulator(accumulators, hit.contentId()).textContribution += rrfContribution;
+            }
+            SearchResult.Evidence evidence = evidence(channel, "TEXT", rawRank,
+                    rrfContribution, hit.rawScore(), hit.hitField(), hit.contentId(), null, hit.contentId());
+            accumulator(accumulators, hit.contentId()).evidences.add(evidence);
         }
-        return result;
     }
 
-    private SearchResult searchHybridImagesByText(String queryText, int topK, int page, int size,
-                                                  Double semanticMinScore, boolean keywordEnabled,
-                                                  boolean semanticEnabled, long startedAt) {
-        float[] embedding = semanticEnabled ? textEmbedding(queryText) : null;
-        List<SearchResult.ImageItem> semanticItems = embedding == null
-                ? List.of()
-                : searchImageSemanticAssets(embedding, topK, semanticMinScore);
-        List<SearchResult.ImageItem> keywordItems = keywordEnabled
-                ? searchImageKeywordAssets(queryText, topK)
-                : List.of();
-        List<SearchResult.ImageItem> imageItems = fuseImageItems(keywordItems, semanticItems, topK);
-        SearchResult result = buildResult(List.of(), imageItems.size(), "hybrid-image", startedAt);
-        result.setImageItems(pageSlice(imageItems, page, size));
-        return result;
+    private void addMediaChannel(Map<String, ContentAccumulator> accumulators, String channel,
+                                 List<MediaHitSeed> hits, Map<UUID, MediaAsset> assetsById) {
+        LinkedHashSet<String> seenContentIds = new LinkedHashSet<>();
+        int uniqueRank = 0;
+        int rawRank = 0;
+        for (MediaHitSeed hit : hits) {
+            rawRank++;
+            if (hit == null || !hasText(hit.assetId())) {
+                continue;
+            }
+            UUID assetUuid = parseUuid(normalizeImageAssetId(hit.assetId()));
+            MediaAsset asset = assetUuid == null ? null : assetsById.get(assetUuid);
+            String contentId = firstText(hit.contentId(),
+                    asset != null && asset.getContentId() != null ? asset.getContentId().toString() : null);
+            if (!hasText(contentId)) {
+                continue;
+            }
+
+            boolean contributes = seenContentIds.add(contentId);
+            double rrfContribution = 0D;
+            if (contributes) {
+                uniqueRank++;
+                rrfContribution = rrfContribution(uniqueRank);
+                accumulator(accumulators, contentId).mediaContribution += rrfContribution;
+            }
+            String entityId = mediaEntityId(hit, asset);
+            SearchResult.Evidence evidence = evidence(channel, "MEDIA", rawRank,
+                    rrfContribution, hit.rawScore(), hit.hitField(), contentId, hit.assetId(), entityId);
+            ContentAccumulator accumulator = accumulator(accumulators, contentId);
+            accumulator.evidences.add(evidence);
+            SearchResult.AssetHit assetHit = toAssetHit(hit, asset, contentId, entityId, rrfContribution);
+            if (assetHit != null) {
+                accumulator.assets.merge(assetHit.getEntityId(), assetHit, (left, right) -> {
+                    double leftScore = scoreValue(left.getRrfContribution());
+                    double rightScore = scoreValue(right.getRrfContribution());
+                    left.setRrfContribution(leftScore + rightScore);
+                    return left;
+                });
+            }
+        }
     }
 
-    private SearchResult searchHybridImagesByImage(String imageUrl, int topK, int page, int size, long startedAt) {
-        List<SearchResult.ImageItem> imageItems = searchImageItemsByImage(imageUrl, topK);
-        SearchResult result = buildResult(List.of(), imageItems.size(), "hybrid-image", startedAt);
-        result.setImageItems(pageSlice(imageItems, page, size));
-        return result;
+    private List<MilvusVectorService.MediaAssetVectorSearchResult> searchMediaAssetTextVectors(
+            String queryText, int topK, Double semanticMinScore) {
+        float[] embedding = textEmbedding(queryText);
+        if (embedding == null) {
+            return List.of();
+        }
+        float minScore = normalizeSemanticMinScore(semanticMinScore);
+        return milvusService.searchMediaAssetTextEmbeddingsDetailed(embedding, topK).stream()
+                .filter(result -> result.score() >= minScore)
+                .toList();
     }
 
-    private List<SearchResult.ImageItem> searchImageItemsByImage(String imageUrl, int topK) {
+    private List<MilvusVectorService.MediaAssetVectorSearchResult> searchMediaAssetVisualVectors(
+            String imageUrl, int topK) {
         float[] embedding = imageEmbedding(imageUrl);
-        return embedding == null ? List.of() : searchImageVisualAssets(embedding, topK);
+        if (embedding == null) {
+            return List.of();
+        }
+        return milvusService.searchMediaAssetVisualEmbeddingsDetailed(embedding, topK);
+    }
+
+    private List<MilvusVectorService.MediaAssetVectorSearchResult> mergeMediaVectorResults(
+            List<MilvusVectorService.MediaAssetVectorSearchResult> textResults,
+            List<MilvusVectorService.MediaAssetVectorSearchResult> imageResults,
+            int topK) {
+        Map<String, MilvusVectorService.MediaAssetVectorSearchResult> best = new LinkedHashMap<>();
+        for (MilvusVectorService.MediaAssetVectorSearchResult result : concat(textResults, imageResults)) {
+            if (result == null || !hasText(result.assetId())) {
+                continue;
+            }
+            String key = result.assetId() + ":" + firstText(result.segmentId(), "asset");
+            best.merge(key, result, (left, right) -> right.score() > left.score() ? right : left);
+        }
+        return best.values().stream()
+                .sorted(Comparator.comparingDouble(MilvusVectorService.MediaAssetVectorSearchResult::score).reversed())
+                .limit(topK)
+                .toList();
+    }
+
+    private Map<UUID, MediaAsset> fetchAssetsById(List<List<MediaHitSeed>> seedLists) {
+        List<UUID> assetIds = seedLists.stream()
+                .flatMap(Collection::stream)
+                .map(MediaHitSeed::assetId)
+                .map(this::normalizeImageAssetId)
+                .map(this::parseUuid)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (assetIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<UUID, MediaAsset> assetsById = new LinkedHashMap<>();
+        for (MediaAsset asset : mediaAssetMapper.selectByIds(assetIds)) {
+            if (asset != null && asset.getId() != null) {
+                assetsById.put(asset.getId(), asset);
+            }
+        }
+        return assetsById;
+    }
+
+    private <T> List<T> concat(List<T> left, List<T> right) {
+        List<T> merged = new ArrayList<>();
+        if (left != null) {
+            merged.addAll(left);
+        }
+        if (right != null) {
+            merged.addAll(right);
+        }
+        return merged;
+    }
+
+    private ContentAccumulator accumulator(Map<String, ContentAccumulator> accumulators, String contentId) {
+        return accumulators.computeIfAbsent(contentId, ContentAccumulator::new);
+    }
+
+    private double rrfContribution(int rank) {
+        return 1D / (RRF_K + rank);
+    }
+
+    private SearchResult.Evidence evidence(String channel, String category, int rank,
+                                           double rrfContribution, Double rawScore, String hitField,
+                                           String contentId, String assetId, String entityId) {
+        SearchResult.Evidence evidence = new SearchResult.Evidence();
+        evidence.setChannel(channel);
+        evidence.setCategory(category);
+        evidence.setRank(rank);
+        evidence.setRrfContribution(rrfContribution);
+        evidence.setRawScore(rawScore);
+        evidence.setHitField(hitField);
+        evidence.setContentId(contentId);
+        evidence.setAssetId(assetId);
+        evidence.setEntityId(entityId);
+        return evidence;
+    }
+
+    private SearchResult.AssetHit toAssetHit(MediaHitSeed hit, MediaAsset asset,
+                                             String contentId, String entityId, double rrfContribution) {
+        SearchResult.AssetHit item = new SearchResult.AssetHit();
+        item.setEntityId(entityId);
+        item.setAssetId(normalizeImageAssetId(hit.assetId()));
+        item.setContentId(contentId);
+        item.setMediaType(firstText(hit.mediaType(), asset != null ? asset.getAssetType() : null));
+        item.setSourceUrl(asset != null ? asset.getSourceUrl() : null);
+        item.setStorageUri(asset != null ? asset.getStorageUri() : null);
+        item.setMinioBucket(asset != null ? asset.getMinioBucket() : null);
+        item.setMinioKey(asset != null ? asset.getMinioKey() : null);
+        item.setMimeType(firstText(hit.mimeType(), asset != null ? asset.getMimeType() : null));
+        item.setWidth(asset != null ? asset.getWidth() : null);
+        item.setHeight(asset != null ? asset.getHeight() : null);
+        item.setSegmentStartMs(secondsToMillis(hit.segmentStart()));
+        item.setSegmentEndMs(secondsToMillis(hit.segmentEnd()));
+        item.setPreviewTimeMs(previewTimeMs(item.getSegmentStartMs(), item.getSegmentEndMs()));
+        item.setPreviewUrl(firstText(asset != null ? asset.getThumbnailUri() : null,
+                asset != null ? asset.getSourceUrl() : null,
+                asset != null ? asset.getStorageUri() : null));
+        item.setRrfContribution(rrfContribution);
+        return item;
+    }
+
+    private String mediaEntityId(MediaHitSeed hit, MediaAsset asset) {
+        String assetId = normalizeImageAssetId(hit.assetId());
+        String mediaType = firstText(hit.mediaType(), asset != null ? asset.getAssetType() : null, "media");
+        String segmentId = firstText(hit.segmentId(), "asset");
+        return mediaType + ":" + assetId + ":" + segmentId;
+    }
+
+    private Long secondsToMillis(Float seconds) {
+        return seconds == null ? null : Math.round(seconds * 1000D);
+    }
+
+    private Long previewTimeMs(Long startMs, Long endMs) {
+        if (startMs == null && endMs == null) {
+            return null;
+        }
+        if (startMs == null) {
+            return endMs;
+        }
+        if (endMs == null || endMs <= startMs) {
+            return startMs;
+        }
+        return startMs + ((endMs - startMs) / 2);
+    }
+
+    private record TextHitSeed(String contentId, Double rawScore, String hitField) {
+    }
+
+    private record MediaHitSeed(String assetId, String segmentId, String contentId,
+                                String mediaType, String mimeType,
+                                Float segmentStart, Float segmentEnd,
+                                Double rawScore, String hitField) {
+    }
+
+    private static class ContentAccumulator {
+        private final String contentId;
+        private double textContribution;
+        private double mediaContribution;
+        private final List<SearchResult.Evidence> evidences = new ArrayList<>();
+        private final Map<String, SearchResult.AssetHit> assets = new LinkedHashMap<>();
+
+        private ContentAccumulator(String contentId) {
+            this.contentId = contentId;
+        }
+
+        private SearchResult.ContentHit toContentHit() {
+            double total = textContribution + mediaContribution;
+            double textRatio = total <= 0D ? 0D : textContribution / total;
+            double mediaRatio = total <= 0D ? 0D : mediaContribution / total;
+
+            SearchResult.ContentHit hit = new SearchResult.ContentHit();
+            hit.setContentId(contentId);
+            hit.setRrfScore(total);
+            SearchResult.Contribution contribution = new SearchResult.Contribution();
+            contribution.setText(contributionSide(textContribution, textRatio));
+            contribution.setMedia(contributionSide(mediaContribution, mediaRatio));
+            hit.setContribution(contribution);
+            hit.setMatchedAssets(assets.values().stream()
+                    .sorted(Comparator.comparingDouble(
+                            asset -> -scoreValue(asset.getRrfContribution())))
+                    .toList());
+            hit.setPrimaryAsset(hit.getMatchedAssets().isEmpty() ? null : hit.getMatchedAssets().getFirst());
+            hit.setDominantHitType(dominantHitType(hit.getPrimaryAsset(), textRatio, mediaRatio));
+            hit.setDisplaySuggestion(displaySuggestion(hit.getPrimaryAsset(), textRatio, mediaRatio));
+            hit.setEvidences(evidences);
+            return hit;
+        }
+
+        private static SearchResult.ContributionSide contributionSide(double score, double ratio) {
+            SearchResult.ContributionSide side = new SearchResult.ContributionSide();
+            side.setRrfScore(score);
+            side.setRatio(ratio);
+            return side;
+        }
+
+        private static String dominantHitType(SearchResult.AssetHit primaryAsset,
+                                              double textRatio, double mediaRatio) {
+            if (primaryAsset == null) {
+                return "TEXT";
+            }
+            if (mediaRatio >= 0.55D) {
+                return "MEDIA_ASSET";
+            }
+            if (textRatio >= 0.55D) {
+                return "TEXT";
+            }
+            return "MIXED";
+        }
+
+        private static String displaySuggestion(SearchResult.AssetHit primaryAsset,
+                                                double textRatio, double mediaRatio) {
+            if (primaryAsset == null) {
+                return "TEXT_FIRST";
+            }
+            if (mediaRatio >= 0.55D) {
+                return "MEDIA_FIRST";
+            }
+            if (textRatio >= 0.55D) {
+                return "TEXT_FIRST";
+            }
+            return "MIXED";
+        }
+
+        private static double scoreValue(Double value) {
+            return value == null ? 0D : value;
+        }
     }
 
     public List<SocialAccount> searchAccounts(String queryText, String platform, String accountType, int topK) {
@@ -535,20 +835,15 @@ public class SearchService {
         int safeSize = normalizePageSize(size);
         int safeTopK = normalizeRecallSize(topK, safePage, safeSize);
         String targetModality = normalizeTargetModality(targetModalities);
-        if ("image".equals(targetModality)) {
-            return searchHybridImagesByImage(imageUrl, safeTopK, safePage, safeSize, startedAt);
-        }
-        List<String> ids = vectorizeAndSearchByImage(
-                imageUrl, targetModality, safeTopK);
-        List<String> pageIds = pageSlice(ids, safePage, safeSize);
-        List<MediaContent> items = fetchContentsInOrder(pageIds);
-        SearchResult result = buildResult(items, ids.size(), "image", startedAt);
-        if ("all".equals(targetModality)) {
-            List<SearchResult.ImageItem> imageItems = searchImageItemsByImage(imageUrl, safeTopK);
-            if (!imageItems.isEmpty()) {
-                result.setImageItems(pageSlice(imageItems, safePage, safeSize));
-            }
-        }
+        HybridSearchRequest request = new HybridSearchRequest();
+        request.setImageUrl(imageUrl);
+        request.setTargetModalities(targetModality);
+        request.setEnableEs(false);
+        request.setEnableMilvus(true);
+        request.setEnableNeo4j(false);
+        SearchResult result = searchHybridContents(request, null, null, null, targetModality,
+                hasText(imageUrl), safeTopK, safePage, safeSize, null, startedAt);
+        result.setSearchType("image");
         return result;
     }
 
@@ -672,149 +967,6 @@ public class SearchService {
         }
         return contentScores.entrySet().stream()
                 .map(entry -> new MilvusVectorService.ScoredEntityId(entry.getKey(), entry.getValue()))
-                .toList();
-    }
-
-    private List<SearchResult.ImageItem> searchImageSemanticAssets(float[] embedding, int topK,
-                                                                   Double semanticMinScore) {
-        float minScore = semanticMinScore == null ? 0F : normalizeSemanticMinScore(semanticMinScore);
-        List<MilvusVectorService.ScoredEntityId> assetScores =
-                milvusService.searchMediaAssetTextEmbeddingsWithScore(embedding, topK).stream()
-                        .filter(result -> result.score() >= minScore)
-                        .toList();
-        Map<String, Double> scoresByAssetId = assetScores.stream()
-                .collect(Collectors.toMap(
-                        item -> normalizeImageAssetId(item.entityId()),
-                        item -> (double) item.score(),
-                        Math::max,
-                        LinkedHashMap::new));
-        List<UUID> assetIds = assetScores.stream()
-                .map(item -> normalizeImageAssetId(item.entityId()))
-                .map(this::parseUuid)
-                .filter(Objects::nonNull)
-                .distinct()
-                .toList();
-        return buildImageItems(assetIds, scoresByAssetId);
-    }
-
-    private List<SearchResult.ImageItem> searchImageVisualAssets(float[] embedding, int topK) {
-        List<MilvusVectorService.ScoredEntityId> assetScores =
-                milvusService.searchMediaAssetImageEmbeddingsWithScore(embedding, topK);
-        Map<String, Double> scoresByAssetId = assetScores.stream()
-                .collect(Collectors.toMap(
-                        item -> normalizeImageAssetId(item.entityId()),
-                        item -> (double) item.score(),
-                        Math::max,
-                        LinkedHashMap::new));
-        List<UUID> assetIds = assetScores.stream()
-                .map(item -> normalizeImageAssetId(item.entityId()))
-                .map(this::parseUuid)
-                .filter(Objects::nonNull)
-                .distinct()
-                .toList();
-        return buildImageItems(assetIds, scoresByAssetId);
-    }
-
-    private List<SearchResult.ImageItem> searchImageKeywordAssets(String queryText, int topK) {
-        if (!hasText(queryText) || topK <= 0) {
-            return List.of();
-        }
-        List<MediaAssetEsService.EsImageAssetSearchResult> assets =
-                mediaAssetEsService.searchImagesByKeyword(queryText.trim(), topK);
-        Map<String, Double> scoresByAssetId = assets.stream()
-                .collect(Collectors.toMap(
-                        MediaAssetEsService.EsImageAssetSearchResult::assetId,
-                        MediaAssetEsService.EsImageAssetSearchResult::score,
-                        Math::max,
-                        LinkedHashMap::new));
-        List<UUID> assetIds = assets.stream()
-                .map(MediaAssetEsService.EsImageAssetSearchResult::assetId)
-                .map(this::parseUuid)
-                .filter(Objects::nonNull)
-                .distinct()
-                .toList();
-        return buildImageItems(assetIds, scoresByAssetId);
-    }
-
-    private List<SearchResult.ImageItem> buildImageItems(List<UUID> assetIds, Map<String, Double> scoresByAssetId) {
-        if (assetIds.isEmpty()) {
-            return List.of();
-        }
-
-        Map<UUID, MediaAsset> assetsById = new LinkedHashMap<>();
-        for (MediaAsset asset : mediaAssetMapper.selectByIds(assetIds)) {
-            if (asset != null && "image".equalsIgnoreCase(asset.getAssetType())
-                    && asset.getContentId() != null) {
-                assetsById.put(asset.getId(), asset);
-            }
-        }
-        if (assetsById.isEmpty()) {
-            return List.of();
-        }
-
-        List<UUID> contentIds = assetsById.values().stream()
-                .map(MediaAsset::getContentId)
-                .filter(Objects::nonNull)
-                .distinct()
-                .toList();
-        Map<String, MediaContent> contentsById = contentIds.isEmpty()
-                ? Map.of()
-                : mediaContentMapper.selectBatchIds(contentIds).stream()
-                .collect(Collectors.toMap(c -> c.getId().toString(), c -> c, (left, right) -> left));
-
-        List<SearchResult.ImageItem> items = new ArrayList<>();
-        for (UUID assetId : assetIds) {
-            MediaAsset asset = assetsById.get(assetId);
-            MediaContent content = asset != null && asset.getContentId() != null
-                    ? contentsById.get(asset.getContentId().toString())
-                    : null;
-            if (asset == null || content == null) {
-                continue;
-            }
-            SearchResult.ImageItem item = new SearchResult.ImageItem();
-            item.setAssetId(asset.getId().toString());
-            item.setContentId(content.getId().toString());
-            item.setSourceUrl(asset.getSourceUrl());
-            item.setStorageUri(asset.getStorageUri());
-            item.setMinioBucket(asset.getMinioBucket());
-            item.setMinioKey(asset.getMinioKey());
-            item.setMimeType(asset.getMimeType());
-            item.setWidth(asset.getWidth());
-            item.setHeight(asset.getHeight());
-            item.setSimilarityScore(scoresByAssetId.get(asset.getId().toString()));
-            item.setPlatform(content.getPlatform());
-            item.setLanguage(content.getLanguage());
-            item.setContentType(content.getContentType());
-            item.setContentTitle(content.getTitle());
-            item.setContentBodyText(content.getBodyText());
-            item.setPublishedAt(content.getPublishedAt() != null ? content.getPublishedAt().toString() : null);
-            items.add(item);
-        }
-        return items;
-    }
-
-    private List<SearchResult.ImageItem> fuseImageItems(List<SearchResult.ImageItem> keywordItems,
-                                                        List<SearchResult.ImageItem> semanticItems,
-                                                        int topK) {
-        List<String> keywordIds = keywordItems.stream()
-                .map(SearchResult.ImageItem::getAssetId)
-                .toList();
-        List<String> semanticIds = semanticItems.stream()
-                .map(SearchResult.ImageItem::getAssetId)
-                .toList();
-        Map<String, SearchResult.ImageItem> byId = new LinkedHashMap<>();
-        keywordItems.forEach(item -> byId.put(item.getAssetId(), item));
-        semanticItems.forEach(item -> byId.merge(item.getAssetId(), item, (keywordItem, semanticItem) -> {
-            keywordItem.setSimilarityScore(semanticItem.getSimilarityScore());
-            return keywordItem;
-        }));
-        List<String> fusedIds = new ArrayList<>(fuseByRrf(List.of(keywordIds, semanticIds)).keySet());
-        if (fusedIds.size() > topK) {
-            fusedIds = fusedIds.subList(0, topK);
-        }
-        return fusedIds.stream()
-                .map(byId::get)
-                .filter(Objects::nonNull)
                 .toList();
     }
 

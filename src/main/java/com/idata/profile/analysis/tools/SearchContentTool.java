@@ -83,7 +83,13 @@ public class SearchContentTool implements Function<SearchContentTool.Request, Se
 
             SearchResult result = searchService.searchHybrid(searchRequest);
             Response response = new Response(
-                    result.getItems() == null ? List.of() : result.getItems().stream().map(this::toSummary).toList(),
+                    result.getContentHits() == null
+                            ? List.of()
+                            : result.getContentHits().stream()
+                            .map(SearchResult.ContentHit::getPost)
+                            .filter(java.util.Objects::nonNull)
+                            .map(this::toSummary)
+                            .toList(),
                     result.getTotal(),
                     result.getDurationMs()
             );

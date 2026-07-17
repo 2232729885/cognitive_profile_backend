@@ -138,21 +138,36 @@ public class MediaAssetEsService {
                                     .filter(f -> f.bool(bb -> bb
                                             .should(sh -> sh.term(t -> t.field("media_type").value("image")))
                                             .should(sh -> sh.term(t -> t.field("media_type").value("video")))
+                                            .should(sh -> sh.term(t -> t.field("media_type").value("audio")))
                                             .should(sh -> sh.term(t -> t.field("asset_type").value("image")))
                                             .should(sh -> sh.term(t -> t.field("asset_type").value("video")))
+                                            .should(sh -> sh.term(t -> t.field("asset_type").value("audio")))
                                             .minimumShouldMatch("1")))
                                     .must(m -> m.multiMatch(mm -> mm
                                             .query(keyword)
                                             .fields("ocr_text", "asr_text", "caption_text")))))
                             .source(src -> src.filter(f -> f.includes("asset_id", "segment_id",
+                                    "source_asset_id", "media_type", "asset_type", "content_id",
+                                    "source_url", "storage_uri", "mime_type", "minio_bucket", "minio_key",
                                     "segment_start", "segment_end", "caption_text"))),
                     Map.class);
             return response.hits().hits().stream()
                     .map(hit -> {
                         Map source = hit.source();
                         Object assetId = source == null ? null : source.get("asset_id");
+                        Object segmentId = source == null ? null : source.get("segment_id");
+                        Object contentId = source == null ? null : source.get("content_id");
+                        Object mediaType = source == null ? null : firstNonNull(
+                                source.get("media_type"), source.get("asset_type"));
+                        Object segmentStart = source == null ? null : source.get("segment_start");
+                        Object segmentEnd = source == null ? null : source.get("segment_end");
                         return new EsImageAssetSearchResult(
                                 assetId == null ? hit.id() : assetId.toString(),
+                                segmentId == null ? null : segmentId.toString(),
+                                contentId == null ? null : contentId.toString(),
+                                mediaType == null ? null : mediaType.toString(),
+                                toFloat(segmentStart),
+                                toFloat(segmentEnd),
                                 hit.score());
                     })
                     .toList();
@@ -202,6 +217,26 @@ public class MediaAssetEsService {
         text.append(value.trim());
     }
 
-    public record EsImageAssetSearchResult(String assetId, Double score) {
+    private Object firstNonNull(Object first, Object second) {
+        return first != null ? first : second;
+    }
+
+    private Float toFloat(Object value) {
+        if (value instanceof Number number) {
+            return number.floatValue();
+        }
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Float.parseFloat(value.toString());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    public record EsImageAssetSearchResult(String assetId, String segmentId, String contentId,
+                                           String mediaType, Float segmentStart, Float segmentEnd,
+                                           Double score) {
     }
 }

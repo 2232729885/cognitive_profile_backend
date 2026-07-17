@@ -1,5 +1,6 @@
 package com.idata.profile.search;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.idata.profile.entity.content.MediaContent;
 import lombok.Data;
 
@@ -7,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 
 @Data
+@JsonInclude(JsonInclude.Include.NON_NULL)
 public class SearchResult {
     private List<MediaContent> items;
     private int total;
@@ -33,15 +35,43 @@ public class SearchResult {
     private Map<String, Double> fusionScores;
 
     /**
-     * 图片检索结果。智能融合选择 targetModalities=image 时，召回单位是 media_assets 图片资产，
-     * 点击图片再进入所属 MediaContent。
+     * 内容融合检索结果。召回单位最终按 MediaContent 聚合；每条结果保留文本/媒体两类 RRF 贡献、
+     * 展示建议和命中证据，方便前端决定优先展示贴文正文还是命中的媒体资源。
      */
-    private List<ImageItem> imageItems;
+    private List<ContentHit> contentHits;
 
     @Data
-    public static class ImageItem {
+    public static class ContentHit {
+        private String contentId;
+        private Double rrfScore;
+        private String dominantHitType;
+        private String displaySuggestion;
+        private Contribution contribution;
+        private AssetHit primaryAsset;
+        private List<AssetHit> matchedAssets;
+        private List<Evidence> evidences;
+        private MediaContent post;
+    }
+
+    @Data
+    public static class Contribution {
+        private ContributionSide text;
+        private ContributionSide media;
+    }
+
+    @Data
+    public static class ContributionSide {
+        private Double rrfScore;
+        private Double ratio;
+    }
+
+    @Data
+    public static class AssetHit {
+        private String entityId;
         private String assetId;
         private String contentId;
+        private String mediaType;
+        private String previewUrl;
         private String sourceUrl;
         private String storageUri;
         private String minioBucket;
@@ -49,12 +79,22 @@ public class SearchResult {
         private String mimeType;
         private Integer width;
         private Integer height;
-        private Double similarityScore;
-        private String platform;
-        private String language;
-        private String contentType;
-        private String contentTitle;
-        private String contentBodyText;
-        private String publishedAt;
+        private Long segmentStartMs;
+        private Long segmentEndMs;
+        private Long previewTimeMs;
+        private Double rrfContribution;
+    }
+
+    @Data
+    public static class Evidence {
+        private String channel;
+        private String category;
+        private Integer rank;
+        private Double rrfContribution;
+        private Double rawScore;
+        private String hitField;
+        private String contentId;
+        private String assetId;
+        private String entityId;
     }
 }

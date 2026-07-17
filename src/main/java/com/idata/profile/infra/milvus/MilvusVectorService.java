@@ -81,6 +81,12 @@ public class MilvusVectorService {
     public record ScoredEntityId(String entityId, float score) {
     }
 
+    public record MediaAssetVectorSearchResult(String assetId, String segmentId, String contentId,
+                                               String mediaType, String mimeType,
+                                               Float segmentStart, Float segmentEnd,
+                                               float score, String vectorField) {
+    }
+
     public record EntityHybridPocResult(String entityId, String entityType, String canonicalName, float fusionScore,
                                         Float keywordScore, String keywordField,
                                         Float semanticScore, String semanticField) {
@@ -376,6 +382,20 @@ public class MilvusVectorService {
         List<ScoredEntityId> captionResults = searchEmbeddingsWithScore(
                 MEDIA_ASSET_COLLECTION, ASSET_CAPTION_VECTOR_FIELD, queryEmbedding, topK, null, "asset_id");
         return mergeByMaxScore(List.of(visualResults, ocrResults, asrResults, captionResults), topK);
+    }
+
+    public List<MediaAssetVectorSearchResult> searchMediaAssetTextEmbeddingsDetailed(float[] queryEmbedding,
+                                                                                     int topK) {
+        return mergeMediaAssetVectorResults(List.of(
+                searchMediaAssetFieldDetailed(ASSET_VISUAL_VECTOR_FIELD, queryEmbedding, topK),
+                searchMediaAssetFieldDetailed(ASSET_OCR_VECTOR_FIELD, queryEmbedding, topK),
+                searchMediaAssetFieldDetailed(ASSET_ASR_VECTOR_FIELD, queryEmbedding, topK),
+                searchMediaAssetFieldDetailed(ASSET_CAPTION_VECTOR_FIELD, queryEmbedding, topK)), topK);
+    }
+
+    public List<MediaAssetVectorSearchResult> searchMediaAssetVisualEmbeddingsDetailed(float[] queryEmbedding,
+                                                                                       int topK) {
+        return searchMediaAssetFieldDetailed(ASSET_VISUAL_VECTOR_FIELD, queryEmbedding, topK);
     }
 
     public List<ScoredEntityId> searchEntityEmbeddings(float[] queryEmbedding, int topK,
@@ -902,6 +922,88 @@ public class MilvusVectorService {
         }
     }
 
+    private List<MediaAssetVectorSearchResult> searchMediaAssetFieldDetailed(String vectorField,
+                                                                             float[] queryEmbedding,
+                                                                             int topK) {
+        if (milvusClient == null || topK <= 0) {
+            return List.of();
+        }
+        validateEmbedding(queryEmbedding);
+
+        try {
+            if (!collectionExists(MEDIA_ASSET_COLLECTION)) {
+                return List.of();
+            }
+
+            SearchResp response = milvusClient.search(SearchReq.builder()
+                    .collectionName(MEDIA_ASSET_COLLECTION)
+                    .annsField(vectorField)
+                    .metricType(IndexParam.MetricType.COSINE)
+                    .topK(topK)
+                    .data(List.of(new FloatVec(queryEmbedding)))
+                    .outputFields(List.of("asset_id", "segment_id", "content_id", "media_type", "mime_type",
+                            "segment_start", "segment_end"))
+                    .build());
+            return extractMediaAssetVectorResults(response, vectorField);
+        } catch (RuntimeException e) {
+            log.warn("Milvus media asset vector search failed, field={}, topK={}", vectorField, topK, e);
+            return List.of();
+        }
+    }
+
+    private List<MediaAssetVectorSearchResult> extractMediaAssetVectorResults(SearchResp response,
+                                                                              String vectorField) {
+        if (response == null || response.getSearchResults() == null || response.getSearchResults().isEmpty()) {
+            return List.of();
+        }
+
+        List<MediaAssetVectorSearchResult> results = new ArrayList<>();
+        for (List<SearchResp.SearchResult> group : response.getSearchResults()) {
+            if (group == null) {
+                continue;
+            }
+            for (SearchResp.SearchResult result : group) {
+                if (result == null || result.getEntity() == null) {
+                    continue;
+                }
+                Map<String, Object> entity = result.getEntity();
+                String assetId = stringValue(entity.get("asset_id"));
+                if (!hasText(assetId)) {
+                    continue;
+                }
+                results.add(new MediaAssetVectorSearchResult(
+                        assetId,
+                        stringValue(entity.get("segment_id")),
+                        stringValue(entity.get("content_id")),
+                        stringValue(entity.get("media_type")),
+                        stringValue(entity.get("mime_type")),
+                        floatValue(entity.get("segment_start")),
+                        floatValue(entity.get("segment_end")),
+                        result.getScore(),
+                        vectorField));
+            }
+        }
+        return results;
+    }
+
+    private List<MediaAssetVectorSearchResult> mergeMediaAssetVectorResults(
+            List<List<MediaAssetVectorSearchResult>> resultLists, int topK) {
+        Map<String, MediaAssetVectorSearchResult> best = new LinkedHashMap<>();
+        for (List<MediaAssetVectorSearchResult> results : resultLists) {
+            for (MediaAssetVectorSearchResult result : results) {
+                if (!hasText(result.assetId()) || result.score() <= MIN_VECTOR_SCORE) {
+                    continue;
+                }
+                String key = result.assetId() + ":" + firstText(result.segmentId(), "asset");
+                best.merge(key, result, (left, right) -> right.score() > left.score() ? right : left);
+            }
+        }
+        return best.values().stream()
+                .sorted(Comparator.comparingDouble(MediaAssetVectorSearchResult::score).reversed())
+                .limit(topK)
+                .toList();
+    }
+
     private List<ScoredEntityId> extractSearchFieldWithScore(SearchResp response, String fieldName) {
         if (response == null || response.getSearchResults() == null || response.getSearchResults().isEmpty()) {
             return List.of();
@@ -1041,6 +1143,36 @@ public class MilvusVectorService {
 
     public String newVectorId() {
         return UUID.randomUUID().toString();
+    }
+
+    private String stringValue(Object value) {
+        return value == null ? null : value.toString();
+    }
+
+    private String firstText(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (hasText(value)) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private Float floatValue(Object value) {
+        if (value instanceof Number number) {
+            return number.floatValue();
+        }
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Float.parseFloat(value.toString());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private boolean hasText(String value) {
