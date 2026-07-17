@@ -17,7 +17,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.OffsetDateTime;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -51,8 +50,6 @@ public class T4IndexingStep {
         String summaryText = t1View.summaryText();
         String bodyEmbeddingText = buildContentBodyEmbeddingText(mc, t1View);
         String contentDescriptionText = combineText(summaryText, bodyEmbeddingText);
-        List<String> contentAliases = contentAliases(mc);
-        String contentAliasText = contentAliases.isEmpty() ? null : String.join("\n", contentAliases);
         float[] titleEmbedding = generateEmbedding(mc.getTitle());
         float[] summaryEmbedding = generateEmbedding(summaryText);
         float[] bodyEmbedding = generateEmbedding(bodyEmbeddingText);
@@ -74,7 +71,7 @@ public class T4IndexingStep {
                     mc.getId().toString(),
                     "MediaContent",
                     firstText(mc.getTitle(), mc.getPlatformContentId(), mc.getUrl()),
-                    contentAliasText,
+                    null,
                     mc.getPlatformContentId(),
                     mc.getPlatform(),
                     contentDescriptionText,
@@ -87,7 +84,7 @@ public class T4IndexingStep {
         entityEsService.indexEntity(
                 mc.getId().toString(),
                 firstText(mc.getTitle(), mc.getPlatformContentId(), mc.getUrl()),
-                contentAliases,
+                List.of(),
                 "MediaContent",
                 0D,
                 contentEntityFields(mc));
@@ -200,30 +197,6 @@ public class T4IndexingStep {
         document.put("entities_hint", t1View.entitiesHintJson());
         document.put("updated_at", mc.getUpdatedAt() != null ? mc.getUpdatedAt().toString() : null);
         return document;
-    }
-
-    private List<String> contentAliases(MediaContent mc) {
-        List<String> aliases = new ArrayList<>();
-        addAlias(aliases, mc.getPlatformContentId());
-        addAlias(aliases, mc.getUrl());
-        addAliases(aliases, mc.getHashtags());
-        addAliases(aliases, mc.getMentions());
-        addAlias(aliases, mc.getNewsSourceName());
-        addAlias(aliases, mc.getNewsDomain());
-        return aliases;
-    }
-
-    private void addAlias(List<String> aliases, String value) {
-        if (hasText(value) && aliases.stream().noneMatch(existing -> existing.equalsIgnoreCase(value.trim()))) {
-            aliases.add(value.trim());
-        }
-    }
-
-    private void addAliases(List<String> aliases, String[] values) {
-        if (values == null) {
-            return;
-        }
-        Arrays.stream(values).forEach(value -> addAlias(aliases, value));
     }
 
     private Map<String, Object> contentEntityFields(MediaContent mc) {

@@ -25,6 +25,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -43,6 +44,9 @@ public class SearchService {
     private static final int RRF_K = 60;
     private static final long HYBRID_ROUTE_TIMEOUT_SECONDS = 8L;
     private static final float DEFAULT_CONTENT_SEMANTIC_MIN_SCORE = 0.45F;
+    private static final Set<String> ENTITY_QUERY_STOP_WORDS = Set.of(
+            "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in",
+            "is", "of", "on", "or", "that", "the", "this", "to", "with");
     private static final List<String> STANDARD_ENTITY_TYPES = List.of("Person", "Organization", "Event", "Location");
 
     private final EmbeddingService embeddingService;
@@ -950,10 +954,10 @@ public class SearchService {
         milvusService.searchEntityHybridPocDetailed(keyword, embedding, recallK, typeFilters).forEach(result -> {
             String domain = domainForEntityType(result.entityType());
             if (domain != null) {
-                addHybridScored(scored, domain, result);
+                addHybridScored(scored, domain, result, keyword);
             }
         });
-        return hydrateEntityCandidates(scored, topK, normalizeEntityHybridSemanticMinScore(semanticMinScore));
+        return hydrateEntityCandidates(scored, topK, normalizeEntityHybridSemanticMinScore(semanticMinScore), keyword);
     }
 
     private List<EntityCandidateSearchResponse.Candidate> hydrateEntityCandidates(
@@ -963,10 +967,18 @@ public class SearchService {
 
     private List<EntityCandidateSearchResponse.Candidate> hydrateEntityCandidates(
             List<ScoredScopedId> scored, int topK, Double hybridSemanticMinScore) {
+        return hydrateEntityCandidates(scored, topK, hybridSemanticMinScore, null);
+    }
+
+    private List<EntityCandidateSearchResponse.Candidate> hydrateEntityCandidates(
+            List<ScoredScopedId> scored, int topK, Double hybridSemanticMinScore, String queryText) {
         if (scored == null || scored.isEmpty()) {
             return List.of();
         }
-        List<ScoredScopedId> ranked = dedupeAndRank(scored, topK);
+        int hydrateLimit = hybridSemanticMinScore != null || hasText(queryText)
+                ? Math.max(topK * 5, topK)
+                : topK;
+        List<ScoredScopedId> ranked = dedupeAndRank(scored, hydrateLimit);
 
         List<String> entityIds = ranked.stream()
                 .map(ScoredScopedId::scopedId)
@@ -1019,9 +1031,13 @@ public class SearchService {
                     item = mediaContentResult(content);
                 }
             }
-            EntityCandidateSearchResponse.Candidate candidate = toEntityCandidate(item, scoredId, hybridSemanticMinScore);
+            EntityCandidateSearchResponse.Candidate candidate =
+                    toEntityCandidate(item, scoredId, hybridSemanticMinScore, queryText);
             if (candidate != null) {
                 candidates.add(candidate);
+                if (candidates.size() >= topK) {
+                    break;
+                }
             }
         }
         return candidates;
@@ -1033,6 +1049,11 @@ public class SearchService {
 
     private EntityCandidateSearchResponse.Candidate toEntityCandidate(
             Map<String, Object> item, ScoredScopedId scored, Double hybridSemanticMinScore) {
+        return toEntityCandidate(item, scored, hybridSemanticMinScore, null);
+    }
+
+    private EntityCandidateSearchResponse.Candidate toEntityCandidate(
+            Map<String, Object> item, ScoredScopedId scored, Double hybridSemanticMinScore, String queryText) {
         if (item == null) {
             return null;
         }
@@ -1052,15 +1073,14 @@ public class SearchService {
             return null;
         }
         EntityCandidateSearchResponse.Candidate candidate =
-                new EntityCandidateSearchResponse.Candidate(nodeId, name, entityType,
-                        scored.fusionScore() == null ? scored.score() : scored.fusionScore());
+                new EntityCandidateSearchResponse.Candidate(nodeId, name, entityType, scored.score());
         candidate.setKeywordScore(scored.keywordScore());
         candidate.setKeywordField(scored.keywordField());
         candidate.setSemanticScore(scored.semanticScore());
         candidate.setSemanticField(scored.semanticField());
         candidate.setFusionScore(scored.fusionScore());
         candidate.setMatchedChannels(scored.matchedChannels());
-        if (!shouldKeepHybridCandidate(candidate, hybridSemanticMinScore)) {
+        if (!shouldKeepHybridCandidate(candidate, hybridSemanticMinScore, queryText)) {
             return null;
         }
         return candidate;
@@ -1068,6 +1088,11 @@ public class SearchService {
 
     private boolean shouldKeepHybridCandidate(EntityCandidateSearchResponse.Candidate candidate,
                                               Double hybridSemanticMinScore) {
+        return shouldKeepHybridCandidate(candidate, hybridSemanticMinScore, null);
+    }
+
+    private boolean shouldKeepHybridCandidate(EntityCandidateSearchResponse.Candidate candidate,
+                                              Double hybridSemanticMinScore, String queryText) {
         if (candidate.getFusionScore() == null) {
             return true;
         }
@@ -1081,8 +1106,47 @@ public class SearchService {
                 && scoreValue(candidate.getSemanticScore()) < normalizedMinScore) {
             return false;
         }
+        boolean keywordOnly = channels.contains("keyword") && !semanticMatched;
+        if (keywordOnly && !matchesSignificantQueryToken(candidate.getName(), queryText)) {
+            return false;
+        }
         return !"MediaContent".equalsIgnoreCase(candidate.getEntityType())
                 || !looksLikeOpaqueContentName(candidate.getName());
+    }
+
+    private boolean matchesSignificantQueryToken(String candidateName, String queryText) {
+        List<String> tokens = significantAsciiTokens(queryText);
+        if (tokens.isEmpty()) {
+            return true;
+        }
+        String normalizedName = normalizeAsciiText(candidateName);
+        return tokens.stream().anyMatch(token -> normalizedName.contains(token));
+    }
+
+    private List<String> significantAsciiTokens(String text) {
+        if (!hasText(text)) {
+            return List.of();
+        }
+        String normalized = normalizeAsciiText(text);
+        if (!hasText(normalized)) {
+            return List.of();
+        }
+        return java.util.Arrays.stream(normalized.split(" "))
+                .filter(this::hasText)
+                .filter(token -> token.length() > 1)
+                .filter(token -> !ENTITY_QUERY_STOP_WORDS.contains(token))
+                .distinct()
+                .toList();
+    }
+
+    private String normalizeAsciiText(String text) {
+        if (!hasText(text)) {
+            return "";
+        }
+        return text.toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", " ")
+                .trim()
+                .replaceAll("\\s+", " ");
     }
 
     private boolean looksLikeOpaqueContentName(String name) {
@@ -1122,13 +1186,15 @@ public class SearchService {
     }
 
     private void addHybridScored(List<ScoredScopedId> scored, String domain,
-                                 MilvusVectorService.EntityHybridPocResult result) {
+                                 MilvusVectorService.EntityHybridPocResult result, String queryText) {
         String scopedId = scopedId(domain, result.entityId());
         if (!hasText(scopedId)) {
             return;
         }
+        boolean meaningfulKeywordMatch = result.keywordScore() != null
+                && significantKeywordMatch(result.canonicalName(), queryText);
         List<String> channels = new ArrayList<>();
-        if (result.keywordScore() != null) {
+        if (meaningfulKeywordMatch) {
             channels.add("keyword");
         }
         if (result.semanticScore() != null) {
@@ -1136,24 +1202,33 @@ public class SearchService {
         }
         scored.add(new ScoredScopedId(
                 scopedId,
-                entityHybridRankScore(result),
-                result.keywordScore() == null ? null : result.keywordScore().doubleValue(),
-                result.keywordField(),
-                result.semanticScore() == null ? null : result.semanticScore().doubleValue(),
+                entityHybridRankScore(result, meaningfulKeywordMatch),
+                meaningfulKeywordMatch ? result.keywordScore().doubleValue() : null,
+                meaningfulKeywordMatch ? result.keywordField() : null,
+                result.semanticScore() == null ? null : normalizeCosineScore(result.semanticScore()),
                 result.semanticField(),
                 (double) result.fusionScore(),
                 channels));
     }
 
-    private double entityHybridRankScore(MilvusVectorService.EntityHybridPocResult result) {
+    private double entityHybridRankScore(MilvusVectorService.EntityHybridPocResult result,
+                                         boolean meaningfulKeywordMatch) {
         double score = result.fusionScore();
-        if (result.keywordScore() != null) {
+        if (meaningfulKeywordMatch && result.keywordScore() != null) {
             score += Math.log1p(Math.max(0F, result.keywordScore())) * keywordFieldWeight(result.keywordField());
         }
         if (result.semanticScore() != null) {
-            score += Math.max(0F, result.semanticScore()) * semanticFieldWeight(result.semanticField());
+            score += normalizeCosineScore(result.semanticScore()) * semanticFieldWeight(result.semanticField());
         }
         return score;
+    }
+
+    private boolean significantKeywordMatch(String candidateName, String queryText) {
+        return !hasText(queryText) || matchesSignificantQueryToken(candidateName, queryText);
+    }
+
+    private double normalizeCosineScore(float score) {
+        return Math.max(0D, Math.min(1D, score));
     }
 
     private double keywordFieldWeight(String field) {

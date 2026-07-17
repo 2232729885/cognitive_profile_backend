@@ -63,7 +63,7 @@ public class EntityCandidateSearchResponse {
         @JsonProperty("entity_type")
         private String entityType;
         /**
-         * Backward-compatible primary score. For hybrid retrieval this is the RRF fusion score.
+         * Backward-compatible primary score. For hybrid retrieval this is the backend final rank score.
          */
         private Double score;
         @JsonProperty("keyword_score")

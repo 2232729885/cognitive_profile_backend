@@ -39,6 +39,12 @@ public class EmbeddingService {
     @Value("${llm.embedding.timeout-seconds:60}")
     private int timeoutSeconds;
 
+    @Value("${llm.embedding.max-retries:2}")
+    private int maxRetries;
+
+    @Value("${llm.embedding.retry-backoff-ms:500}")
+    private long retryBackoffMs;
+
     private Semaphore textSemaphore;
     private Semaphore imageSemaphore;
 
@@ -101,6 +107,19 @@ public class EmbeddingService {
     }
 
     private float[] generateEmbedding(Map<String, Object> requestBody, String inputType, String source) {
+        int attempts = Math.max(1, maxRetries + 1);
+        for (int attempt = 1; attempt <= attempts; attempt++) {
+            float[] embedding = doGenerateEmbedding(requestBody, inputType, source, attempt, attempts);
+            if (embedding != null || attempt == attempts) {
+                return embedding;
+            }
+            sleepBeforeRetry();
+        }
+        return null;
+    }
+
+    private float[] doGenerateEmbedding(Map<String, Object> requestBody, String inputType,
+                                        String source, int attempt, int attempts) {
         try {
             EmbeddingApiResponse apiResponse = restClient().post()
                     .uri(normalizeBaseUrl(embeddingBaseUrl) + "/embeddings")
@@ -123,12 +142,24 @@ public class EmbeddingService {
             return embedding;
         } catch (Exception e) {
             if (hasText(source)) {
-                log.warn("[EmbeddingService] {} embedding failed, source={}, reason={}",
-                        inputType, source, rootMessage(e));
+                log.warn("[EmbeddingService] {} embedding failed, attempt={}/{}, source={}, reason={}",
+                        inputType, attempt, attempts, source, rootMessage(e));
             } else {
-                log.warn("[EmbeddingService] {} embedding failed, reason={}", inputType, rootMessage(e));
+                log.warn("[EmbeddingService] {} embedding failed, attempt={}/{}, reason={}",
+                        inputType, attempt, attempts, rootMessage(e));
             }
             return null;
+        }
+    }
+
+    private void sleepBeforeRetry() {
+        if (retryBackoffMs <= 0) {
+            return;
+        }
+        try {
+            Thread.sleep(retryBackoffMs);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 

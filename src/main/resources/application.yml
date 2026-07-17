@@ -103,6 +103,8 @@ llm:
     text-concurrency: 1
     image-concurrency: 1
     timeout-seconds: 60
+    max-retries: 2
+    retry-backoff-ms: 500
   reranker:
     base-url: http://172.16.40.232:18014/v1
     api-key: idata@123456

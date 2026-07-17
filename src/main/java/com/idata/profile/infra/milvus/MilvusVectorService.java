@@ -81,7 +81,7 @@ public class MilvusVectorService {
     public record ScoredEntityId(String entityId, float score) {
     }
 
-    public record EntityHybridPocResult(String entityId, String entityType, float fusionScore,
+    public record EntityHybridPocResult(String entityId, String entityType, String canonicalName, float fusionScore,
                                         Float keywordScore, String keywordField,
                                         Float semanticScore, String semanticField) {
     }
@@ -211,21 +211,21 @@ public class MilvusVectorService {
 
     public String upsertEntityEmbedding(String entityId, String entityType, String canonicalName,
                                         String aliases, String sourceId, String platform,
-                                        float[] nameEmbedding, float[] aliasEmbedding,
+                                        float[] canonicalNameEmbedding, float[] aliasesEmbedding,
                                         float[] descriptionEmbedding) {
         return upsertEntityEmbedding(entityId, entityType, canonicalName, aliases, sourceId, platform,
-                null, nameEmbedding, aliasEmbedding, descriptionEmbedding);
+                null, canonicalNameEmbedding, aliasesEmbedding, descriptionEmbedding);
     }
 
     public String upsertEntityEmbedding(String entityId, String entityType, String canonicalName,
                                         String aliases, String sourceId, String platform,
                                         String descriptionText,
-                                        float[] nameEmbedding, float[] aliasEmbedding,
+                                        float[] canonicalNameEmbedding, float[] aliasesEmbedding,
                                         float[] descriptionEmbedding) {
-        validateOptionalEmbedding(nameEmbedding);
-        validateOptionalEmbedding(aliasEmbedding);
+        validateOptionalEmbedding(canonicalNameEmbedding);
+        validateOptionalEmbedding(aliasesEmbedding);
         validateOptionalEmbedding(descriptionEmbedding);
-        if (nameEmbedding == null && aliasEmbedding == null && descriptionEmbedding == null) {
+        if (canonicalNameEmbedding == null && aliasesEmbedding == null && descriptionEmbedding == null) {
             return null;
         }
         if (!hasText(entityId)) {
@@ -241,8 +241,10 @@ public class MilvusVectorService {
         addText(row, "aliases", aliases, ALIASES_MAX_LENGTH);
         addText(row, "source_id", sourceId, ID_MAX_LENGTH);
         addText(row, "platform", platform, PLATFORM_MAX_LENGTH);
-        addVector(row, ENTITY_CANONICAL_NAME_VECTOR_FIELD, nameEmbedding);
-        addVector(row, ENTITY_ALIASES_VECTOR_FIELD, aliasEmbedding);
+        logMissingEntityEmbedding(entityId, entityType, canonicalName, aliases, descriptionText,
+                canonicalNameEmbedding, aliasesEmbedding, descriptionEmbedding);
+        addVector(row, ENTITY_CANONICAL_NAME_VECTOR_FIELD, canonicalNameEmbedding);
+        addVector(row, ENTITY_ALIASES_VECTOR_FIELD, aliasesEmbedding);
         addVector(row, ENTITY_DESCRIPTION_VECTOR_FIELD, descriptionEmbedding);
         try {
             insert(ENTITY_COLLECTION, row);
@@ -253,6 +255,26 @@ public class MilvusVectorService {
             return null;
         }
         return vectorId;
+    }
+
+    private void logMissingEntityEmbedding(String entityId, String entityType, String canonicalName,
+                                           String aliases, String descriptionText,
+                                           float[] canonicalNameEmbedding, float[] aliasesEmbedding,
+                                           float[] descriptionEmbedding) {
+        List<String> missingFields = new ArrayList<>();
+        if (hasText(canonicalName) && canonicalNameEmbedding == null) {
+            missingFields.add(ENTITY_CANONICAL_NAME_VECTOR_FIELD);
+        }
+        if (hasText(aliases) && aliasesEmbedding == null) {
+            missingFields.add(ENTITY_ALIASES_VECTOR_FIELD);
+        }
+        if (hasText(descriptionText) && descriptionEmbedding == null) {
+            missingFields.add(ENTITY_DESCRIPTION_VECTOR_FIELD);
+        }
+        if (!missingFields.isEmpty()) {
+            log.warn("Entity embedding field missing, entityId={}, entityType={}, missingFields={}",
+                    entityId, normalizeEntityType(entityType), missingFields);
+        }
     }
 
     private void upsertEntityHybridPocEmbedding(JsonObject baseRow, String canonicalName,
@@ -413,9 +435,9 @@ public class MilvusVectorService {
                     .searchRequests(requests)
                     .ranker(RRFRanker.builder().k(60).build())
                     .limit(topK)
-                    .outFields(List.of("entity_id", "entity_type"))
+                    .outFields(List.of("entity_id", "entity_type", "canonical_name"))
                     .build());
-            return extractEntityHybridPocResults(response, keywordScores, semanticScores);
+            return extractEntityHybridPocResults(response, keywordScores, semanticScores, queryEmbedding);
         } catch (RuntimeException e) {
             log.warn("Milvus entity hybrid POC search failed, entityTypes={}, topK={}", entityTypes, topK, e);
             return List.of();
@@ -467,7 +489,7 @@ public class MilvusVectorService {
 
     private List<EntityHybridPocResult> extractEntityHybridPocResults(
             SearchResp response, Map<String, ScoredEntityField> keywordScores,
-            Map<String, ScoredEntityField> semanticScores) {
+            Map<String, ScoredEntityField> semanticScores, float[] queryEmbedding) {
         if (response == null || response.getSearchResults() == null || response.getSearchResults().isEmpty()) {
             return List.of();
         }
@@ -487,11 +509,16 @@ public class MilvusVectorService {
                 }
                 String id = entityId.toString();
                 Object entityType = result.getEntity().get("entity_type");
+                Object canonicalName = result.getEntity().get("canonical_name");
                 ScoredEntityField keywordScore = keywordScores.get(id);
                 ScoredEntityField semanticScore = semanticScores.get(id);
+                if (semanticScore == null) {
+                    semanticScore = searchEntityHybridPocDenseScoreForEntity(id, queryEmbedding);
+                }
                 results.add(new EntityHybridPocResult(
                         id,
                         entityType == null ? null : entityType.toString(),
+                        canonicalName == null ? null : canonicalName.toString(),
                         result.getScore(),
                         keywordScore == null ? null : keywordScore.score(),
                         keywordScore == null ? null : keywordScore.fieldName(),
@@ -500,6 +527,20 @@ public class MilvusVectorService {
             }
         }
         return results;
+    }
+
+    private ScoredEntityField searchEntityHybridPocDenseScoreForEntity(String entityId, float[] queryEmbedding) {
+        if (!hasText(entityId) || queryEmbedding == null) {
+            return null;
+        }
+        String filter = "entity_id == \"" + escapeFilterValue(entityId) + "\"";
+        return mergeByMaxFieldScore(List.of(
+                searchEntityHybridPocDenseWithField(ENTITY_CANONICAL_NAME_VECTOR_FIELD, queryEmbedding, 1, filter),
+                searchEntityHybridPocDenseWithField(ENTITY_ALIASES_VECTOR_FIELD, queryEmbedding, 1, filter),
+                searchEntityHybridPocDenseWithField(ENTITY_DESCRIPTION_VECTOR_FIELD, queryEmbedding, 1, filter)), 1)
+                .stream()
+                .findFirst()
+                .orElse(null);
     }
 
     private AnnSearchReq entityDenseSearchReq(String vectorField, float[] queryEmbedding, int topK, String filter) {
