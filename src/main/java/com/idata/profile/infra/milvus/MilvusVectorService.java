@@ -53,17 +53,15 @@ public class MilvusVectorService {
     private static final String ASSET_OCR_VECTOR_FIELD = "ocr_embedding";
     private static final String ASSET_ASR_VECTOR_FIELD = "asr_embedding";
     private static final String ASSET_CAPTION_VECTOR_FIELD = "caption_embedding";
-    private static final String ENTITY_NAME_VECTOR_FIELD = "name_embedding";
-    private static final String ENTITY_ALIAS_VECTOR_FIELD = "alias_embedding";
+    private static final String ENTITY_CANONICAL_NAME_VECTOR_FIELD = "canonical_name_embedding";
+    private static final String ENTITY_ALIASES_VECTOR_FIELD = "aliases_embedding";
     private static final String ENTITY_DESCRIPTION_VECTOR_FIELD = "description_embedding";
-    private static final String ENTITY_NAME_TEXT_FIELD = "name";
-    private static final String ENTITY_ALIAS_TEXT_FIELD = "alias";
+    private static final String ENTITY_CANONICAL_NAME_TEXT_FIELD = "canonical_name";
+    private static final String ENTITY_ALIASES_TEXT_FIELD = "aliases";
     private static final String ENTITY_DESCRIPTION_TEXT_FIELD = "description";
-    private static final String ENTITY_SOURCE_ID_TEXT_FIELD = "source_id_keyword";
-    private static final String ENTITY_NAME_SPARSE_FIELD = "name_sparse";
-    private static final String ENTITY_ALIAS_SPARSE_FIELD = "alias_sparse";
+    private static final String ENTITY_CANONICAL_NAME_SPARSE_FIELD = "canonical_name_sparse";
+    private static final String ENTITY_ALIASES_SPARSE_FIELD = "aliases_sparse";
     private static final String ENTITY_DESCRIPTION_SPARSE_FIELD = "description_sparse";
-    private static final String ENTITY_SOURCE_ID_SPARSE_FIELD = "source_id_sparse";
     private static final Gson GSON = new Gson();
     private static final float[] ZERO_EMBEDDING = new float[EMBEDDING_DIMENSION];
     private static final float MIN_VECTOR_SCORE = 0.000001F;
@@ -243,8 +241,8 @@ public class MilvusVectorService {
         addText(row, "aliases", aliases, ALIASES_MAX_LENGTH);
         addText(row, "source_id", sourceId, ID_MAX_LENGTH);
         addText(row, "platform", platform, PLATFORM_MAX_LENGTH);
-        addVector(row, ENTITY_NAME_VECTOR_FIELD, nameEmbedding);
-        addVector(row, ENTITY_ALIAS_VECTOR_FIELD, aliasEmbedding);
+        addVector(row, ENTITY_CANONICAL_NAME_VECTOR_FIELD, nameEmbedding);
+        addVector(row, ENTITY_ALIASES_VECTOR_FIELD, aliasEmbedding);
         addVector(row, ENTITY_DESCRIPTION_VECTOR_FIELD, descriptionEmbedding);
         try {
             insert(ENTITY_COLLECTION, row);
@@ -267,10 +265,9 @@ public class MilvusVectorService {
                 return;
             }
             JsonObject row = baseRow.deepCopy();
-            addRequiredText(row, ENTITY_NAME_TEXT_FIELD, canonicalName, CANONICAL_NAME_MAX_LENGTH);
-            addRequiredText(row, ENTITY_ALIAS_TEXT_FIELD, aliases, ALIASES_MAX_LENGTH);
+            addRequiredText(row, ENTITY_CANONICAL_NAME_TEXT_FIELD, canonicalName, CANONICAL_NAME_MAX_LENGTH);
+            addRequiredText(row, ENTITY_ALIASES_TEXT_FIELD, aliases, ALIASES_MAX_LENGTH);
             addRequiredText(row, ENTITY_DESCRIPTION_TEXT_FIELD, descriptionText, DESCRIPTION_MAX_LENGTH);
-            addRequiredText(row, ENTITY_SOURCE_ID_TEXT_FIELD, jsonString(row, "source_id"), ID_MAX_LENGTH);
             insert(ENTITY_HYBRID_POC_COLLECTION, row);
         } catch (RuntimeException e) {
             log.warn("Failed to upsert entity hybrid POC embedding, entityId={}",
@@ -365,9 +362,9 @@ public class MilvusVectorService {
                 ? "entity_type == \"" + escapeFilterValue(normalizeEntityType(entityType)) + "\""
                 : null;
         List<ScoredEntityId> nameResults = searchEmbeddingsWithScore(
-                ENTITY_COLLECTION, ENTITY_NAME_VECTOR_FIELD, queryEmbedding, topK, filter, "entity_id");
+                ENTITY_COLLECTION, ENTITY_CANONICAL_NAME_VECTOR_FIELD, queryEmbedding, topK, filter, "entity_id");
         List<ScoredEntityId> aliasResults = searchEmbeddingsWithScore(
-                ENTITY_COLLECTION, ENTITY_ALIAS_VECTOR_FIELD, queryEmbedding, topK, filter, "entity_id");
+                ENTITY_COLLECTION, ENTITY_ALIASES_VECTOR_FIELD, queryEmbedding, topK, filter, "entity_id");
         List<ScoredEntityId> descriptionResults = searchEmbeddingsWithScore(
                 ENTITY_COLLECTION, ENTITY_DESCRIPTION_VECTOR_FIELD, queryEmbedding, topK, filter, "entity_id");
         return mergeByMaxScore(List.of(nameResults, aliasResults, descriptionResults), topK);
@@ -393,24 +390,22 @@ public class MilvusVectorService {
                 return List.of();
             }
             List<ScoredEntityField> keywordResults = mergeByMaxFieldScore(List.of(
-                    searchEntityHybridPocKeyword(ENTITY_NAME_SPARSE_FIELD, keyword, topK, filter),
-                    searchEntityHybridPocKeyword(ENTITY_ALIAS_SPARSE_FIELD, keyword, topK, filter),
-                    searchEntityHybridPocKeyword(ENTITY_DESCRIPTION_SPARSE_FIELD, keyword, topK, filter),
-                    searchEntityHybridPocKeyword(ENTITY_SOURCE_ID_SPARSE_FIELD, keyword, topK, filter)), topK);
+                    searchEntityHybridPocKeyword(ENTITY_CANONICAL_NAME_SPARSE_FIELD, keyword, topK, filter),
+                    searchEntityHybridPocKeyword(ENTITY_ALIASES_SPARSE_FIELD, keyword, topK, filter),
+                    searchEntityHybridPocKeyword(ENTITY_DESCRIPTION_SPARSE_FIELD, keyword, topK, filter)), topK);
             List<ScoredEntityField> semanticResults = mergeByMaxFieldScore(List.of(
-                    searchEntityHybridPocDenseWithField(ENTITY_NAME_VECTOR_FIELD, queryEmbedding, topK, filter),
-                    searchEntityHybridPocDenseWithField(ENTITY_ALIAS_VECTOR_FIELD, queryEmbedding, topK, filter),
+                    searchEntityHybridPocDenseWithField(ENTITY_CANONICAL_NAME_VECTOR_FIELD, queryEmbedding, topK, filter),
+                    searchEntityHybridPocDenseWithField(ENTITY_ALIASES_VECTOR_FIELD, queryEmbedding, topK, filter),
                     searchEntityHybridPocDenseWithField(ENTITY_DESCRIPTION_VECTOR_FIELD, queryEmbedding, topK, filter)), topK);
             Map<String, ScoredEntityField> keywordScores = fieldScoreMap(keywordResults);
             Map<String, ScoredEntityField> semanticScores = fieldScoreMap(semanticResults);
 
             List<AnnSearchReq> requests = new ArrayList<>();
-            requests.add(entityKeywordSearchReq(ENTITY_NAME_SPARSE_FIELD, keyword, topK, filter));
-            requests.add(entityKeywordSearchReq(ENTITY_ALIAS_SPARSE_FIELD, keyword, topK, filter));
+            requests.add(entityKeywordSearchReq(ENTITY_CANONICAL_NAME_SPARSE_FIELD, keyword, topK, filter));
+            requests.add(entityKeywordSearchReq(ENTITY_ALIASES_SPARSE_FIELD, keyword, topK, filter));
             requests.add(entityKeywordSearchReq(ENTITY_DESCRIPTION_SPARSE_FIELD, keyword, topK, filter));
-            requests.add(entityKeywordSearchReq(ENTITY_SOURCE_ID_SPARSE_FIELD, keyword, topK, filter));
-            requests.add(entityDenseSearchReq(ENTITY_NAME_VECTOR_FIELD, queryEmbedding, topK, filter));
-            requests.add(entityDenseSearchReq(ENTITY_ALIAS_VECTOR_FIELD, queryEmbedding, topK, filter));
+            requests.add(entityDenseSearchReq(ENTITY_CANONICAL_NAME_VECTOR_FIELD, queryEmbedding, topK, filter));
+            requests.add(entityDenseSearchReq(ENTITY_ALIASES_VECTOR_FIELD, queryEmbedding, topK, filter));
             requests.add(entityDenseSearchReq(ENTITY_DESCRIPTION_VECTOR_FIELD, queryEmbedding, topK, filter));
 
             SearchResp response = milvusClient.hybridSearch(HybridSearchReq.builder()
@@ -611,12 +606,12 @@ public class MilvusVectorService {
                 .addField(varcharField("aliases", 2048, true, false))
                 .addField(varcharField("source_id", 128, true, false))
                 .addField(varcharField("platform", 64, true, false))
-                .addField(vectorField(ENTITY_NAME_VECTOR_FIELD))
-                .addField(vectorField(ENTITY_ALIAS_VECTOR_FIELD))
+                .addField(vectorField(ENTITY_CANONICAL_NAME_VECTOR_FIELD))
+                .addField(vectorField(ENTITY_ALIASES_VECTOR_FIELD))
                 .addField(vectorField(ENTITY_DESCRIPTION_VECTOR_FIELD));
         createCollection(ENTITY_COLLECTION, schema, List.of(
-                vectorIndex(ENTITY_NAME_VECTOR_FIELD),
-                vectorIndex(ENTITY_ALIAS_VECTOR_FIELD),
+                vectorIndex(ENTITY_CANONICAL_NAME_VECTOR_FIELD),
+                vectorIndex(ENTITY_ALIASES_VECTOR_FIELD),
                 vectorIndex(ENTITY_DESCRIPTION_VECTOR_FIELD)));
     }
 
@@ -630,52 +625,41 @@ public class MilvusVectorService {
                 .addField(varcharField("id", 192, false, true))
                 .addField(varcharField("entity_id", 128, false, false))
                 .addField(varcharField("entity_type", 64, false, false))
-                .addField(varcharField("canonical_name", 512, true, false))
-                .addField(varcharField("aliases", 2048, true, false))
                 .addField(varcharField("source_id", 128, true, false))
                 .addField(varcharField("platform", 64, true, false))
-                .addField(analyzedTextField(ENTITY_NAME_TEXT_FIELD, 512))
-                .addField(analyzedTextField(ENTITY_ALIAS_TEXT_FIELD, 2048))
+                .addField(analyzedTextField(ENTITY_CANONICAL_NAME_TEXT_FIELD, 512))
+                .addField(analyzedTextField(ENTITY_ALIASES_TEXT_FIELD, 2048))
                 .addField(analyzedTextField(ENTITY_DESCRIPTION_TEXT_FIELD, 4096))
-                .addField(analyzedTextField(ENTITY_SOURCE_ID_TEXT_FIELD, 128))
-                .addField(sparseVectorField(ENTITY_NAME_SPARSE_FIELD))
-                .addField(sparseVectorField(ENTITY_ALIAS_SPARSE_FIELD))
+                .addField(sparseVectorField(ENTITY_CANONICAL_NAME_SPARSE_FIELD))
+                .addField(sparseVectorField(ENTITY_ALIASES_SPARSE_FIELD))
                 .addField(sparseVectorField(ENTITY_DESCRIPTION_SPARSE_FIELD))
-                .addField(sparseVectorField(ENTITY_SOURCE_ID_SPARSE_FIELD))
-                .addField(vectorField(ENTITY_NAME_VECTOR_FIELD))
-                .addField(vectorField(ENTITY_ALIAS_VECTOR_FIELD))
+                .addField(vectorField(ENTITY_CANONICAL_NAME_VECTOR_FIELD))
+                .addField(vectorField(ENTITY_ALIASES_VECTOR_FIELD))
                 .addField(vectorField(ENTITY_DESCRIPTION_VECTOR_FIELD))
                 .addFunction(CreateCollectionReq.Function.builder()
-                        .name("entity_name_bm25")
+                        .name("entity_canonical_name_bm25")
                         .functionType(FunctionType.BM25)
-                        .inputFieldNames(List.of(ENTITY_NAME_TEXT_FIELD))
-                        .outputFieldNames(List.of(ENTITY_NAME_SPARSE_FIELD))
+                        .inputFieldNames(List.of(ENTITY_CANONICAL_NAME_TEXT_FIELD))
+                        .outputFieldNames(List.of(ENTITY_CANONICAL_NAME_SPARSE_FIELD))
                         .build())
                 .addFunction(CreateCollectionReq.Function.builder()
-                        .name("entity_alias_bm25")
+                        .name("entity_aliases_bm25")
                         .functionType(FunctionType.BM25)
-                        .inputFieldNames(List.of(ENTITY_ALIAS_TEXT_FIELD))
-                        .outputFieldNames(List.of(ENTITY_ALIAS_SPARSE_FIELD))
+                        .inputFieldNames(List.of(ENTITY_ALIASES_TEXT_FIELD))
+                        .outputFieldNames(List.of(ENTITY_ALIASES_SPARSE_FIELD))
                         .build())
                 .addFunction(CreateCollectionReq.Function.builder()
                         .name("entity_description_bm25")
                         .functionType(FunctionType.BM25)
                         .inputFieldNames(List.of(ENTITY_DESCRIPTION_TEXT_FIELD))
                         .outputFieldNames(List.of(ENTITY_DESCRIPTION_SPARSE_FIELD))
-                        .build())
-                .addFunction(CreateCollectionReq.Function.builder()
-                        .name("entity_source_id_bm25")
-                        .functionType(FunctionType.BM25)
-                        .inputFieldNames(List.of(ENTITY_SOURCE_ID_TEXT_FIELD))
-                        .outputFieldNames(List.of(ENTITY_SOURCE_ID_SPARSE_FIELD))
                         .build());
         createCollection(ENTITY_HYBRID_POC_COLLECTION, schema, List.of(
-                sparseBm25Index(ENTITY_NAME_SPARSE_FIELD),
-                sparseBm25Index(ENTITY_ALIAS_SPARSE_FIELD),
+                sparseBm25Index(ENTITY_CANONICAL_NAME_SPARSE_FIELD),
+                sparseBm25Index(ENTITY_ALIASES_SPARSE_FIELD),
                 sparseBm25Index(ENTITY_DESCRIPTION_SPARSE_FIELD),
-                sparseBm25Index(ENTITY_SOURCE_ID_SPARSE_FIELD),
-                vectorIndex(ENTITY_NAME_VECTOR_FIELD),
-                vectorIndex(ENTITY_ALIAS_VECTOR_FIELD),
+                vectorIndex(ENTITY_CANONICAL_NAME_VECTOR_FIELD),
+                vectorIndex(ENTITY_ALIASES_VECTOR_FIELD),
                 vectorIndex(ENTITY_DESCRIPTION_VECTOR_FIELD)));
     }
 

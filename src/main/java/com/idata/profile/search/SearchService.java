@@ -946,7 +946,8 @@ public class SearchService {
         }
 
         List<ScoredScopedId> scored = new ArrayList<>();
-        milvusService.searchEntityHybridPocDetailed(keyword, embedding, topK, typeFilters).forEach(result -> {
+        int recallK = Math.max(topK * 5, 50);
+        milvusService.searchEntityHybridPocDetailed(keyword, embedding, recallK, typeFilters).forEach(result -> {
             String domain = domainForEntityType(result.entityType());
             if (domain != null) {
                 addHybridScored(scored, domain, result);
@@ -1051,7 +1052,8 @@ public class SearchService {
             return null;
         }
         EntityCandidateSearchResponse.Candidate candidate =
-                new EntityCandidateSearchResponse.Candidate(nodeId, name, entityType, scored.score());
+                new EntityCandidateSearchResponse.Candidate(nodeId, name, entityType,
+                        scored.fusionScore() == null ? scored.score() : scored.fusionScore());
         candidate.setKeywordScore(scored.keywordScore());
         candidate.setKeywordField(scored.keywordField());
         candidate.setSemanticScore(scored.semanticScore());
@@ -1134,13 +1136,48 @@ public class SearchService {
         }
         scored.add(new ScoredScopedId(
                 scopedId,
-                (double) result.fusionScore(),
+                entityHybridRankScore(result),
                 result.keywordScore() == null ? null : result.keywordScore().doubleValue(),
                 result.keywordField(),
                 result.semanticScore() == null ? null : result.semanticScore().doubleValue(),
                 result.semanticField(),
                 (double) result.fusionScore(),
                 channels));
+    }
+
+    private double entityHybridRankScore(MilvusVectorService.EntityHybridPocResult result) {
+        double score = result.fusionScore();
+        if (result.keywordScore() != null) {
+            score += Math.log1p(Math.max(0F, result.keywordScore())) * keywordFieldWeight(result.keywordField());
+        }
+        if (result.semanticScore() != null) {
+            score += Math.max(0F, result.semanticScore()) * semanticFieldWeight(result.semanticField());
+        }
+        return score;
+    }
+
+    private double keywordFieldWeight(String field) {
+        if (!hasText(field)) {
+            return 0D;
+        }
+        return switch (field) {
+            case "canonical_name_sparse" -> 10D;
+            case "aliases_sparse" -> 8D;
+            case "description_sparse" -> 1D;
+            default -> 1D;
+        };
+    }
+
+    private double semanticFieldWeight(String field) {
+        if (!hasText(field)) {
+            return 0D;
+        }
+        return switch (field) {
+            case "canonical_name_embedding" -> 4D;
+            case "aliases_embedding" -> 3D;
+            case "description_embedding" -> 1D;
+            default -> 1D;
+        };
     }
 
     private double scoreValue(Object score) {
