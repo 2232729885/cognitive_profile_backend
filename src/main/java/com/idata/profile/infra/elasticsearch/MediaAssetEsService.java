@@ -132,6 +132,10 @@ public class MediaAssetEsService {
     }
 
     public List<EsImageAssetSearchResult> searchImagesByKeyword(String keyword, int size) {
+        return searchMediaByKeyword(keyword, size, "image");
+    }
+
+    public List<EsImageAssetSearchResult> searchMediaByKeyword(String keyword, int size, String mediaType) {
         if (esClient == null || !hasText(keyword) || size <= 0) {
             return List.of();
         }
@@ -139,36 +143,44 @@ public class MediaAssetEsService {
         try {
             String normalizedKeyword = keyword.trim();
             String effectiveKeyword = effectiveKeyword(normalizedKeyword);
+            String normalizedMediaType = normalizeMediaType(mediaType);
             SearchResponse<Map> response = esClient.search(s -> s
                             .index(MEDIA_ASSETS_INDEX)
                             .size(size)
-                            .query(q -> q.bool(b -> b
-                                    .filter(f -> f.bool(bb -> bb
-                                            .should(sh -> sh.term(t -> t.field("media_type").value("image")))
-                                            .should(sh -> sh.term(t -> t.field("media_type").value("video")))
-                                            .should(sh -> sh.term(t -> t.field("media_type").value("audio")))
-                                            .should(sh -> sh.term(t -> t.field("asset_type").value("image")))
-                                            .should(sh -> sh.term(t -> t.field("asset_type").value("video")))
-                                            .should(sh -> sh.term(t -> t.field("asset_type").value("audio")))
-                                            .minimumShouldMatch("1")))
-                                    .should(sh -> sh.matchPhrase(mp -> mp
-                                            .field("ocr_text")
-                                            .query(normalizedKeyword)
-                                            .boost(12F)))
-                                    .should(sh -> sh.matchPhrase(mp -> mp
-                                            .field("asr_text")
-                                            .query(normalizedKeyword)
-                                            .boost(10F)))
-                                    .should(sh -> sh.matchPhrase(mp -> mp
-                                            .field("caption_text")
-                                            .query(normalizedKeyword)
-                                            .boost(6F)))
-                                    .should(sh -> sh.multiMatch(mm -> mm
-                                            .query(effectiveKeyword)
-                                            .fields("ocr_text^4", "asr_text^3", "caption_text^2")
-                                            .minimumShouldMatch("70%")
-                                            .boost(3F)))
-                                    .minimumShouldMatch("1")))
+                            .query(q -> q.bool(b -> {
+                                b.filter(f -> f.bool(bb -> {
+                                    if (hasText(normalizedMediaType)) {
+                                        bb.should(sh -> sh.term(t -> t.field("media_type").value(normalizedMediaType)))
+                                                .should(sh -> sh.term(t -> t.field("asset_type").value(normalizedMediaType)));
+                                    } else {
+                                        bb.should(sh -> sh.term(t -> t.field("media_type").value("image")))
+                                                .should(sh -> sh.term(t -> t.field("media_type").value("video")))
+                                                .should(sh -> sh.term(t -> t.field("media_type").value("audio")))
+                                                .should(sh -> sh.term(t -> t.field("asset_type").value("image")))
+                                                .should(sh -> sh.term(t -> t.field("asset_type").value("video")))
+                                                .should(sh -> sh.term(t -> t.field("asset_type").value("audio")));
+                                    }
+                                    return bb.minimumShouldMatch("1");
+                                }));
+                                return b.should(sh -> sh.matchPhrase(mp -> mp
+                                                .field("ocr_text")
+                                                .query(normalizedKeyword)
+                                                .boost(12F)))
+                                        .should(sh -> sh.matchPhrase(mp -> mp
+                                                .field("asr_text")
+                                                .query(normalizedKeyword)
+                                                .boost(10F)))
+                                        .should(sh -> sh.matchPhrase(mp -> mp
+                                                .field("caption_text")
+                                                .query(normalizedKeyword)
+                                                .boost(6F)))
+                                        .should(sh -> sh.multiMatch(mm -> mm
+                                                .query(effectiveKeyword)
+                                                .fields("ocr_text^4", "asr_text^3", "caption_text^2")
+                                                .minimumShouldMatch("70%")
+                                                .boost(3F)))
+                                        .minimumShouldMatch("1");
+                            }))
                             .source(src -> src.filter(f -> f.includes("asset_id", "segment_id",
                                     "source_asset_id", "media_type", "asset_type", "content_id",
                                     "source_url", "storage_uri", "mime_type", "minio_bucket", "minio_key",
@@ -180,7 +192,7 @@ public class MediaAssetEsService {
                         Object assetId = source == null ? null : source.get("asset_id");
                         Object segmentId = source == null ? null : source.get("segment_id");
                         Object contentId = source == null ? null : source.get("content_id");
-                        Object mediaType = source == null ? null : firstNonNull(
+                        Object mediaTypeValue = source == null ? null : firstNonNull(
                                 source.get("media_type"), source.get("asset_type"));
                         Object segmentStart = source == null ? null : source.get("segment_start");
                         Object segmentEnd = source == null ? null : source.get("segment_end");
@@ -188,7 +200,7 @@ public class MediaAssetEsService {
                                 assetId == null ? hit.id() : assetId.toString(),
                                 segmentId == null ? null : segmentId.toString(),
                                 contentId == null ? null : contentId.toString(),
-                                mediaType == null ? null : mediaType.toString(),
+                                mediaTypeValue == null ? null : mediaTypeValue.toString(),
                                 toFloat(segmentStart),
                                 toFloat(segmentEnd),
                                 hit.score());
@@ -202,6 +214,17 @@ public class MediaAssetEsService {
         } catch (IOException e) {
             throw new IllegalStateException("Failed to search image assets by keyword: " + keyword, e);
         }
+    }
+
+    private String normalizeMediaType(String mediaType) {
+        if (!hasText(mediaType)) {
+            return null;
+        }
+        String normalized = mediaType.trim().toLowerCase();
+        return switch (normalized) {
+            case "image", "video", "audio" -> normalized;
+            default -> null;
+        };
     }
 
     private boolean isIndexNotFound(ElasticsearchException e) {

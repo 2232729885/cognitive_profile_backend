@@ -46,6 +46,10 @@ public class SearchService {
     private static final float DEFAULT_CONTENT_SEMANTIC_MIN_SCORE = 0.45F;
     private static final float DEFAULT_MEDIA_TEXT_SEMANTIC_MIN_SCORE = 0.58F;
     private static final float DEFAULT_MEDIA_VISUAL_MIN_SCORE = 0.65F;
+    private static final float IDENTIFIER_CONTENT_SEMANTIC_MIN_SCORE = 0.72F;
+    private static final float IDENTIFIER_MEDIA_TEXT_SEMANTIC_MIN_SCORE = 0.72F;
+    private static final float MEDIA_ONLY_TEXT_SEMANTIC_MIN_SCORE = 0.72F;
+    private static final float MEDIA_TARGET_TEXT_SEMANTIC_MIN_SCORE = 0.80F;
     private static final double MEDIA_FIRST_RATIO = 0.60D;
     private static final double TEXT_FIRST_RATIO = 0.60D;
     private static final double STRONG_MEDIA_KEYWORD_SCORE = 8D;
@@ -136,17 +140,18 @@ public class SearchService {
         String language = request == null ? null : request.getLanguage();
         boolean hasImage = request != null && hasText(request.getImageUrl()) && request.isEnableMilvus();
         String targetModality = normalizeTargetModality(request != null ? request.getTargetModalities() : null);
+        int mediaTopK = mediaRecallSize(topK, targetModality);
         Double semanticMinScore = request == null ? null : request.getSemanticMinScore();
 
         return searchHybridContents(request, queryText, platform, language, targetModality,
-                hasImage, topK, safePage, safeSize, semanticMinScore, startedAt);
+                hasImage, topK, mediaTopK, safePage, safeSize, semanticMinScore, startedAt);
     }
 
     private SearchResult searchHybridContents(HybridSearchRequest request, String queryText,
                                               String platform, String language, String targetModality,
-                                              boolean hasImage, int topK, int page, int size,
+                                              boolean hasImage, int topK, int mediaTopK, int page, int size,
                                               Double semanticMinScore, long startedAt) {
-        boolean includeText = !"image".equals(targetModality);
+        boolean includeText = !isMediaOnlyTargetModality(targetModality);
         boolean includeMedia = !"text".equals(targetModality);
         CompletableFuture<List<MediaContentEsService.EsSearchResult>> esFuture = includeText && isEnabled(request, "es")
                 ? safeRoute("es", () -> esService.searchByKeywordWithHighlight(queryText, platform, language, topK))
@@ -159,14 +164,16 @@ public class SearchService {
                 : CompletableFuture.completedFuture(List.of());
         CompletableFuture<List<MediaAssetEsService.EsImageAssetSearchResult>> mediaKeywordFuture =
                 includeMedia && isEnabled(request, "es") && hasText(queryText)
-                        ? safeRoute("media-es", () -> mediaAssetEsService.searchImagesByKeyword(queryText.trim(), topK))
+                        ? safeRoute("media-es", () -> mediaAssetEsService.searchMediaByKeyword(
+                                queryText.trim(), mediaTopK, targetMediaType(targetModality)))
                         : CompletableFuture.completedFuture(List.of());
         CompletableFuture<List<MilvusVectorService.MediaAssetVectorSearchResult>> mediaSemanticFuture =
                 includeMedia && isEnabled(request, "milvus") && hasText(queryText)
-                        ? safeRoute("media-milvus", () -> searchMediaAssetTextVectors(queryText, topK, semanticMinScore))
+                        ? safeRoute("media-milvus", () -> searchMediaAssetTextVectors(
+                                queryText, mediaTopK, semanticMinScore, targetModality))
                         : CompletableFuture.completedFuture(List.of());
         CompletableFuture<List<MilvusVectorService.MediaAssetVectorSearchResult>> imageFuture = includeMedia && hasImage
-                ? safeRoute("image", () -> searchMediaAssetVisualVectors(request.getImageUrl(), topK))
+                ? safeRoute("image", () -> searchMediaAssetVisualVectors(request.getImageUrl(), mediaTopK, targetModality))
                 : CompletableFuture.completedFuture(List.of());
 
         CompletableFuture.allOf(esFuture, milvusFuture, neo4jFuture,
@@ -180,14 +187,18 @@ public class SearchService {
         List<String> milvusIds = milvusResults.stream()
                 .map(MilvusVectorService.ScoredEntityId::entityId)
                 .toList();
+        List<MediaAssetEsService.EsImageAssetSearchResult> mediaKeywordResults = mediaKeywordFuture.join();
+        List<MilvusVectorService.MediaAssetVectorSearchResult> mediaSemanticResults =
+                filterMediaSemanticResultsForTarget(mediaSemanticFuture.join(), targetModality, !mediaKeywordResults.isEmpty());
 
         List<SearchResult.ContentHit> contentHits = buildContentHits(
                 esResults,
                 milvusResults,
                 neo4jFuture.join(),
-                mediaKeywordFuture.join(),
-                mergeMediaVectorResults(mediaSemanticFuture.join(), imageFuture.join(), topK),
+                mediaKeywordResults,
+                mergeMediaVectorResults(mediaSemanticResults, imageFuture.join(), topK),
                 queryText,
+                includeText,
                 topK);
         List<String> fusedIds = contentHits.stream()
                 .map(SearchResult.ContentHit::getContentId)
@@ -219,6 +230,7 @@ public class SearchService {
             List<MediaAssetEsService.EsImageAssetSearchResult> mediaKeywordResults,
             List<MilvusVectorService.MediaAssetVectorSearchResult> mediaSemanticResults,
             String queryText,
+            boolean useTextMatchLevel,
             int topK) {
         Map<String, ContentAccumulator> accumulators = new LinkedHashMap<>();
 
@@ -260,9 +272,10 @@ public class SearchService {
         Map<UUID, MediaAsset> assetsById = fetchAssetsById(List.of(mediaKeywordSeeds, mediaSemanticSeeds));
         addMediaChannel(accumulators, "ES_MEDIA_KEYWORD", mediaKeywordSeeds, assetsById);
         addMediaChannel(accumulators, "MILVUS_MEDIA_SEMANTIC", mediaSemanticSeeds, assetsById);
-        applyTextMatchLevels(accumulators, queryText);
+        applyTextMatchLevels(accumulators, queryText, useTextMatchLevel);
 
         return accumulators.values().stream()
+                .filter(ContentAccumulator::isQualified)
                 .map(ContentAccumulator::toContentHit)
                 .sorted(Comparator
                         .comparingInt(SearchResult.ContentHit::getMatchLevelRank).reversed()
@@ -290,7 +303,10 @@ public class SearchService {
             }
             SearchResult.Evidence evidence = evidence(channel, "TEXT", rawRank,
                     rrfContribution, hit.rawScore(), hit.hitField(), hit.contentId(), null, hit.contentId());
-            accumulator(accumulators, hit.contentId()).evidences.add(evidence);
+            ContentAccumulator accumulator = accumulator(accumulators, hit.contentId());
+            accumulator.textKeywordHit = accumulator.textKeywordHit || "ES_POST_KEYWORD".equals(channel);
+            accumulator.textSemanticHit = accumulator.textSemanticHit || "MILVUS_POST_SEMANTIC".equals(channel);
+            accumulator.evidences.add(evidence);
         }
     }
 
@@ -337,7 +353,8 @@ public class SearchService {
         }
     }
 
-    private void applyTextMatchLevels(Map<String, ContentAccumulator> accumulators, String queryText) {
+    private void applyTextMatchLevels(Map<String, ContentAccumulator> accumulators, String queryText,
+                                      boolean useTextMatchLevel) {
         if (accumulators.isEmpty() || !hasText(queryText)) {
             return;
         }
@@ -353,7 +370,10 @@ public class SearchService {
                         (left, right) -> left));
         for (ContentAccumulator accumulator : accumulators.values()) {
             MediaContent content = contentsById.get(accumulator.contentId);
-            accumulator.matchLevel = classifyTextMatch(queryText, content);
+            accumulator.hasSearchableText = hasText(contentText(content));
+            if (useTextMatchLevel && accumulator.textContribution > 0D) {
+                accumulator.matchLevel = classifyTextMatch(queryText, content);
+            }
         }
     }
 
@@ -381,6 +401,13 @@ public class SearchService {
             }
         }
         return MatchLevel.HYBRID_RELEVANT;
+    }
+
+    private String contentText(MediaContent content) {
+        if (content == null) {
+            return null;
+        }
+        return firstText(content.getTitle(), content.getBodyText());
     }
 
     private List<String> significantContentTokens(String text) {
@@ -422,24 +449,40 @@ public class SearchService {
     }
 
     private List<MilvusVectorService.MediaAssetVectorSearchResult> searchMediaAssetTextVectors(
-            String queryText, int topK, Double semanticMinScore) {
+            String queryText, int topK, Double semanticMinScore, String targetModality) {
         float[] embedding = textEmbedding(queryText);
         if (embedding == null) {
             return List.of();
         }
-        float minScore = Math.max(DEFAULT_MEDIA_TEXT_SEMANTIC_MIN_SCORE, normalizeSemanticMinScore(semanticMinScore));
         return milvusService.searchMediaAssetTextEmbeddingsDetailed(embedding, topK).stream()
-                .filter(result -> result.score() >= minScore)
+                .filter(result -> matchesTargetMediaType(result.mediaType(), targetModality))
+                .filter(result -> result.score() >= mediaSemanticMinScore(
+                        queryText, semanticMinScore, targetModality, result.vectorField()))
+                .toList();
+    }
+
+    private List<MilvusVectorService.MediaAssetVectorSearchResult> filterMediaSemanticResultsForTarget(
+            List<MilvusVectorService.MediaAssetVectorSearchResult> results,
+            String targetModality,
+            boolean hasMediaKeywordHits) {
+        if (!isMediaOnlyTargetModality(targetModality) || !hasMediaKeywordHits || results == null || results.isEmpty()) {
+            return results == null ? List.of() : results;
+        }
+        return results.stream()
+                .filter(result -> result != null
+                        && (isVisualVectorField(result.vectorField())
+                        || result.score() >= MEDIA_TARGET_TEXT_SEMANTIC_MIN_SCORE))
                 .toList();
     }
 
     private List<MilvusVectorService.MediaAssetVectorSearchResult> searchMediaAssetVisualVectors(
-            String imageUrl, int topK) {
+            String imageUrl, int topK, String targetModality) {
         float[] embedding = imageEmbedding(imageUrl);
         if (embedding == null) {
             return List.of();
         }
         return milvusService.searchMediaAssetVisualEmbeddingsDetailed(embedding, topK).stream()
+                .filter(result -> matchesTargetMediaType(result.mediaType(), targetModality))
                 .filter(result -> result.score() >= DEFAULT_MEDIA_VISUAL_MIN_SCORE)
                 .toList();
     }
@@ -593,6 +636,9 @@ public class SearchService {
         private double textContribution;
         private double mediaContribution;
         private boolean hasStrongMediaMatch;
+        private boolean hasSearchableText;
+        private boolean textKeywordHit;
+        private boolean textSemanticHit;
         private MatchLevel matchLevel = MatchLevel.HYBRID_RELEVANT;
         private final List<SearchResult.Evidence> evidences = new ArrayList<>();
         private final Map<String, SearchResult.AssetHit> assets = new LinkedHashMap<>();
@@ -666,6 +712,13 @@ public class SearchService {
 
         private static double scoreValue(Double value) {
             return value == null ? 0D : value;
+        }
+
+        private boolean isQualified() {
+            return mediaContribution > 0D
+                    || textKeywordHit
+                    || !textSemanticHit
+                    || hasSearchableText;
         }
     }
 
@@ -956,6 +1009,7 @@ public class SearchService {
         int safeSize = normalizePageSize(size);
         int safeTopK = normalizeRecallSize(topK, safePage, safeSize);
         String targetModality = normalizeTargetModality(targetModalities);
+        int mediaTopK = mediaRecallSize(safeTopK, targetModality);
         HybridSearchRequest request = new HybridSearchRequest();
         request.setImageUrl(imageUrl);
         request.setTargetModalities(targetModality);
@@ -963,7 +1017,7 @@ public class SearchService {
         request.setEnableMilvus(true);
         request.setEnableNeo4j(false);
         SearchResult result = searchHybridContents(request, null, null, null, targetModality,
-                hasText(imageUrl), safeTopK, safePage, safeSize, null, startedAt);
+                hasText(imageUrl), safeTopK, mediaTopK, safePage, safeSize, null, startedAt);
         result.setSearchType("image");
         return result;
     }
@@ -1588,7 +1642,7 @@ public class SearchService {
         if (embedding == null) {
             return List.of();
         }
-        float minScore = normalizeSemanticMinScore(semanticMinScore);
+        float minScore = contentSemanticMinScore(queryText, semanticMinScore);
         return milvusService.searchTextEmbeddingsWithScore(embedding, topK, platform, language).stream()
                 .filter(result -> result.score() >= minScore)
                 .toList();
@@ -1814,9 +1868,29 @@ public class SearchService {
         }
         String value = targetModalities.trim().toLowerCase();
         return switch (value) {
-            case "text", "image" -> value;
+            case "text", "image", "video", "audio" -> value;
             default -> "all";
         };
+    }
+
+    private boolean isMediaOnlyTargetModality(String targetModality) {
+        return "image".equals(targetModality) || "video".equals(targetModality) || "audio".equals(targetModality);
+    }
+
+    private String targetMediaType(String targetModality) {
+        return isMediaOnlyTargetModality(targetModality) ? targetModality : null;
+    }
+
+    private boolean matchesTargetMediaType(String mediaType, String targetModality) {
+        String targetMediaType = targetMediaType(targetModality);
+        return !hasText(targetMediaType) || targetMediaType.equalsIgnoreCase(firstText(mediaType, ""));
+    }
+
+    private int mediaRecallSize(int topK, String targetModality) {
+        if (!isMediaOnlyTargetModality(targetModality)) {
+            return topK;
+        }
+        return Math.min(MAX_RECALL_SIZE, Math.max(topK, topK * 3));
     }
 
     private float normalizeSemanticMinScore(Double semanticMinScore) {
@@ -1824,6 +1898,52 @@ public class SearchService {
             return DEFAULT_CONTENT_SEMANTIC_MIN_SCORE;
         }
         return (float) Math.max(0D, Math.min(1D, semanticMinScore));
+    }
+
+    private float contentSemanticMinScore(String queryText, Double semanticMinScore) {
+        float minScore = normalizeSemanticMinScore(semanticMinScore);
+        return isIdentifierLikeQuery(queryText)
+                ? Math.max(minScore, IDENTIFIER_CONTENT_SEMANTIC_MIN_SCORE)
+                : minScore;
+    }
+
+    private float mediaTextSemanticMinScore(String queryText, Double semanticMinScore) {
+        float minScore = Math.max(DEFAULT_MEDIA_TEXT_SEMANTIC_MIN_SCORE, normalizeSemanticMinScore(semanticMinScore));
+        return isIdentifierLikeQuery(queryText)
+                ? Math.max(minScore, IDENTIFIER_MEDIA_TEXT_SEMANTIC_MIN_SCORE)
+                : minScore;
+    }
+
+    private float mediaSemanticMinScore(String queryText, Double semanticMinScore,
+                                        String targetModality, String vectorField) {
+        if (isVisualVectorField(vectorField)) {
+            return Math.max(DEFAULT_MEDIA_VISUAL_MIN_SCORE, normalizeSemanticMinScore(semanticMinScore));
+        }
+        float minScore = mediaTextSemanticMinScore(queryText, semanticMinScore);
+        return isMediaOnlyTargetModality(targetModality)
+                ? Math.max(minScore, MEDIA_ONLY_TEXT_SEMANTIC_MIN_SCORE)
+                : minScore;
+    }
+
+    private boolean isVisualVectorField(String vectorField) {
+        return "visual_embedding".equals(vectorField);
+    }
+
+    private boolean isIdentifierLikeQuery(String queryText) {
+        if (!hasText(queryText)) {
+            return false;
+        }
+        String value = queryText.trim();
+        if (value.length() < 4 || value.length() > 32 || value.contains(" ")) {
+            return false;
+        }
+        if (!value.matches("[A-Za-z0-9_.-]+")) {
+            return false;
+        }
+        boolean hasLetter = value.matches(".*[A-Za-z].*");
+        boolean hasDigit = value.matches(".*\\d.*");
+        boolean hasIdentifierPunctuation = value.matches(".*[_.-].*");
+        return hasLetter && (hasDigit || hasIdentifierPunctuation);
     }
 
     private int normalizeSize(int size) {
