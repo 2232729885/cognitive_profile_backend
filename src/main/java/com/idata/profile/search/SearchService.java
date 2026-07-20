@@ -18,6 +18,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -50,6 +51,7 @@ public class SearchService {
     private static final float IDENTIFIER_MEDIA_TEXT_SEMANTIC_MIN_SCORE = 0.72F;
     private static final float MEDIA_ONLY_TEXT_SEMANTIC_MIN_SCORE = 0.72F;
     private static final float MEDIA_TARGET_TEXT_SEMANTIC_MIN_SCORE = 0.80F;
+    private static final float MEDIA_TEXT_SEMANTIC_FALLBACK_MIN_SCORE = 0.86F;
     private static final double MEDIA_FIRST_RATIO = 0.60D;
     private static final double TEXT_FIRST_RATIO = 0.60D;
     private static final double STRONG_MEDIA_KEYWORD_SCORE = 8D;
@@ -189,7 +191,10 @@ public class SearchService {
                 .toList();
         List<MediaAssetEsService.EsImageAssetSearchResult> mediaKeywordResults = mediaKeywordFuture.join();
         List<MilvusVectorService.MediaAssetVectorSearchResult> mediaSemanticResults =
-                filterMediaSemanticResultsForTarget(mediaSemanticFuture.join(), targetModality, !mediaKeywordResults.isEmpty());
+                filterMediaSemanticResultsForTarget(
+                        filterMediaTextSemanticBySourceText(mediaSemanticFuture.join(), queryText),
+                        targetModality,
+                        !mediaKeywordResults.isEmpty());
 
         List<SearchResult.ContentHit> contentHits = buildContentHits(
                 esResults,
@@ -473,6 +478,70 @@ public class SearchService {
                         && (isVisualVectorField(result.vectorField())
                         || result.score() >= MEDIA_TARGET_TEXT_SEMANTIC_MIN_SCORE))
                 .toList();
+    }
+
+    private List<MilvusVectorService.MediaAssetVectorSearchResult> filterMediaTextSemanticBySourceText(
+            List<MilvusVectorService.MediaAssetVectorSearchResult> results,
+            String queryText) {
+        if (results == null || results.isEmpty()) {
+            return List.of();
+        }
+        List<UUID> assetIds = results.stream()
+                .filter(result -> result != null && isStoredTextVectorField(result.vectorField()))
+                .map(MilvusVectorService.MediaAssetVectorSearchResult::assetId)
+                .map(this::normalizeImageAssetId)
+                .map(this::parseUuid)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        Map<UUID, MediaAsset> assetsById = new LinkedHashMap<>();
+        if (!assetIds.isEmpty()) {
+            for (MediaAsset asset : mediaAssetMapper.selectByIds(assetIds)) {
+                if (asset != null && asset.getId() != null) {
+                    assetsById.put(asset.getId(), asset);
+                }
+            }
+        }
+        return results.stream()
+                .filter(result -> isQualifiedMediaTextSemanticResult(result, queryText, assetsById))
+                .toList();
+    }
+
+    private boolean isQualifiedMediaTextSemanticResult(
+            MilvusVectorService.MediaAssetVectorSearchResult result,
+            String queryText,
+            Map<UUID, MediaAsset> assetsById) {
+        if (result == null) {
+            return false;
+        }
+        String vectorField = result.vectorField();
+        if (!isMediaTextVectorField(vectorField)) {
+            return true;
+        }
+        UUID assetId = parseUuid(normalizeImageAssetId(result.assetId()));
+        MediaAsset asset = assetId == null ? null : assetsById.get(assetId);
+        String sourceText = mediaSemanticSourceText(vectorField, asset);
+        if (!hasText(sourceText)) {
+            return result.score() >= MEDIA_TEXT_SEMANTIC_FALLBACK_MIN_SCORE;
+        }
+        if (!isUsefulSemanticSourceText(sourceText)) {
+            return false;
+        }
+        return hasCompatibleSemanticToken(queryText, sourceText)
+                || result.score() >= MEDIA_TEXT_SEMANTIC_FALLBACK_MIN_SCORE;
+    }
+
+    private String mediaSemanticSourceText(String vectorField, MediaAsset asset) {
+        if (asset == null) {
+            return null;
+        }
+        if ("ocr_embedding".equals(vectorField)) {
+            return asset.getOcrText();
+        }
+        if ("asr_embedding".equals(vectorField)) {
+            return asset.getAsrText();
+        }
+        return null;
     }
 
     private List<MilvusVectorService.MediaAssetVectorSearchResult> searchMediaAssetVisualVectors(
@@ -1927,6 +1996,94 @@ public class SearchService {
 
     private boolean isVisualVectorField(String vectorField) {
         return "visual_embedding".equals(vectorField);
+    }
+
+    private boolean isMediaTextVectorField(String vectorField) {
+        return "ocr_embedding".equals(vectorField)
+                || "asr_embedding".equals(vectorField)
+                || "caption_embedding".equals(vectorField);
+    }
+
+    private boolean isStoredTextVectorField(String vectorField) {
+        return "ocr_embedding".equals(vectorField) || "asr_embedding".equals(vectorField);
+    }
+
+    private boolean isUsefulSemanticSourceText(String text) {
+        if (!hasText(text)) {
+            return false;
+        }
+        long letters = text.codePoints().filter(Character::isLetter).count();
+        long digits = text.codePoints().filter(Character::isDigit).count();
+        return letters >= 3 && letters >= digits;
+    }
+
+    private boolean hasCompatibleSemanticToken(String queryText, String sourceText) {
+        List<String> queryTokens = semanticTextTokens(queryText);
+        List<String> sourceTokens = semanticTextTokens(sourceText);
+        if (queryTokens.isEmpty() || sourceTokens.isEmpty()) {
+            return false;
+        }
+        for (String queryToken : queryTokens) {
+            for (String sourceToken : sourceTokens) {
+                if (isCompatibleSemanticToken(queryToken, sourceToken)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private List<String> semanticTextTokens(String text) {
+        if (!hasText(text)) {
+            return List.of();
+        }
+        return Arrays.stream(text.toLowerCase(java.util.Locale.ROOT).split("[^\\p{L}\\p{Nd}]+"))
+                .filter(token -> token.length() >= 3)
+                .filter(token -> !CONTENT_QUERY_STOP_WORDS.contains(token))
+                .distinct()
+                .toList();
+    }
+
+    private boolean isCompatibleSemanticToken(String left, String right) {
+        if (left.equals(right)) {
+            return true;
+        }
+        if (left.length() >= 4 && right.length() >= 4
+                && (left.contains(right) || right.contains(left))) {
+            return true;
+        }
+        return left.length() >= 4 && right.length() >= 4 && editDistanceAtMostOne(left, right);
+    }
+
+    private boolean editDistanceAtMostOne(String left, String right) {
+        int leftLength = left.length();
+        int rightLength = right.length();
+        if (Math.abs(leftLength - rightLength) > 1) {
+            return false;
+        }
+        int i = 0;
+        int j = 0;
+        int edits = 0;
+        while (i < leftLength && j < rightLength) {
+            if (left.charAt(i) == right.charAt(j)) {
+                i++;
+                j++;
+                continue;
+            }
+            edits++;
+            if (edits > 1) {
+                return false;
+            }
+            if (leftLength > rightLength) {
+                i++;
+            } else if (rightLength > leftLength) {
+                j++;
+            } else {
+                i++;
+                j++;
+            }
+        }
+        return edits + (leftLength - i) + (rightLength - j) <= 1;
     }
 
     private boolean isIdentifierLikeQuery(String queryText) {
