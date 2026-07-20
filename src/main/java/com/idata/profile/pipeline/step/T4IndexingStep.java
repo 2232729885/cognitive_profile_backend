@@ -29,6 +29,7 @@ import java.util.Map;
 public class T4IndexingStep {
 
     private static final int MAX_EMBEDDING_TEXT_LENGTH = 6000;
+    private static final int CONTENT_NODE_NAME_MAX_LENGTH = 160;
 
     private final EmbeddingService embeddingService;
     private final MilvusVectorService milvusVectorService;
@@ -50,7 +51,9 @@ public class T4IndexingStep {
         String summaryText = t1View.summaryText();
         String bodyEmbeddingText = buildContentBodyEmbeddingText(mc, t1View);
         String contentDescriptionText = combineText(summaryText, bodyEmbeddingText);
+        String contentNodeName = buildContentNodeName(mc, summaryText);
         float[] titleEmbedding = generateEmbedding(mc.getTitle());
+        float[] contentNodeNameEmbedding = generateEmbedding(contentNodeName);
         float[] summaryEmbedding = generateEmbedding(summaryText);
         float[] bodyEmbedding = generateEmbedding(bodyEmbeddingText);
         boolean textEmbeddingSkipped = titleEmbedding == null && summaryEmbedding == null && bodyEmbedding == null;
@@ -70,12 +73,12 @@ public class T4IndexingStep {
             milvusVectorService.upsertEntityEmbedding(
                     mc.getId().toString(),
                     "MediaContent",
-                    firstText(mc.getTitle(), mc.getPlatformContentId(), mc.getUrl()),
+                    contentNodeName,
                     null,
                     mc.getPlatformContentId(),
                     mc.getPlatform(),
                     contentDescriptionText,
-                    titleEmbedding,
+                    firstEmbedding(titleEmbedding, contentNodeNameEmbedding),
                     null,
                     firstEmbedding(bodyEmbedding, summaryEmbedding));
         }
@@ -83,7 +86,7 @@ public class T4IndexingStep {
         mediaContentEsService.index(mc.getId().toString(), buildEsDocument(mc, t1View));
         entityEsService.indexEntity(
                 mc.getId().toString(),
-                firstText(mc.getTitle(), mc.getPlatformContentId(), mc.getUrl()),
+                contentNodeName,
                 List.of(),
                 "MediaContent",
                 0D,
@@ -207,6 +210,16 @@ public class T4IndexingStep {
         return fields;
     }
 
+    private String buildContentNodeName(MediaContent mc, String summaryText) {
+        if (mc == null) {
+            return null;
+        }
+        return firstText(
+                readableSnippet(mc.getTitle(), CONTENT_NODE_NAME_MAX_LENGTH),
+                readableSnippet(summaryText, CONTENT_NODE_NAME_MAX_LENGTH),
+                readableSnippet(mc.getBodyText(), CONTENT_NODE_NAME_MAX_LENGTH));
+    }
+
     private String buildT4Output(String vectorId, boolean textEmbeddingSkipped) {
         String vectorValue = vectorId != null ? "\"" + vectorId + "\"" : "null";
         return "{\"textVectorId\":" + vectorValue
@@ -246,6 +259,22 @@ public class T4IndexingStep {
             return text;
         }
         return text.substring(0, MAX_EMBEDDING_TEXT_LENGTH);
+    }
+
+    private String readableSnippet(String text, int maxLength) {
+        if (!hasText(text)) {
+            return null;
+        }
+        String normalized = text
+                .replaceAll("https?://\\S+", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        if (!hasText(normalized)) {
+            return null;
+        }
+        return normalized.length() <= maxLength
+                ? normalized
+                : normalized.substring(0, maxLength).trim();
     }
 
     private String firstText(String... values) {

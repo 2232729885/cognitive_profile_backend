@@ -56,6 +56,7 @@ public class SearchService {
     private static final double MEDIA_FIRST_RATIO = 0.60D;
     private static final double TEXT_FIRST_RATIO = 0.60D;
     private static final double STRONG_MEDIA_KEYWORD_SCORE = 8D;
+    private static final int CONTENT_RESULT_NAME_MAX_LENGTH = 160;
     private static final Set<String> ENTITY_QUERY_STOP_WORDS = Set.of(
             "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in",
             "is", "of", "on", "or", "that", "the", "this", "to", "with");
@@ -1248,7 +1249,7 @@ public class SearchService {
         item.put("platform", content.getPlatform());
         item.put("contentType", content.getContentType());
         item.put("title", content.getTitle());
-        item.put("canonicalName", hasText(content.getTitle()) ? content.getTitle() : content.getPlatformContentId());
+        item.put("canonicalName", contentDisplayName(content));
         item.put("bodyText", content.getBodyText());
         item.put("language", content.getLanguage());
         item.put("publishedAt", content.getPublishedAt());
@@ -1467,8 +1468,6 @@ public class SearchService {
                 item.get("displayName"),
                 item.get("handle"),
                 item.get("title"),
-                item.get("platformContentId"),
-                item.get("platform_content_id"),
                 item.get("name"),
                 nodeId);
         if (!hasText(nodeId) || !hasText(entityType) || !hasText(name)) {
@@ -1696,6 +1695,31 @@ public class SearchService {
             }
         }
         return null;
+    }
+
+    private String contentDisplayName(MediaContent content) {
+        if (content == null) {
+            return null;
+        }
+        return firstText(
+                readableContentSnippet(content.getTitle(), CONTENT_RESULT_NAME_MAX_LENGTH),
+                readableContentSnippet(content.getBodyText(), CONTENT_RESULT_NAME_MAX_LENGTH));
+    }
+
+    private String readableContentSnippet(String text, int maxLength) {
+        if (!hasText(text)) {
+            return null;
+        }
+        String normalized = text
+                .replaceAll("https?://\\S+", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        if (!hasText(normalized)) {
+            return null;
+        }
+        return normalized.length() <= maxLength
+                ? normalized
+                : normalized.substring(0, maxLength).trim();
     }
 
     private record ScoredScopedId(String scopedId, double score, Double keywordScore, String keywordField,

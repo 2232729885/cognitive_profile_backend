@@ -200,6 +200,9 @@ public class EntityEsService {
         if ("SocialAccount".equals(normalizedType)) {
             return List.of("canonical_name^4", "normalized_name^3", "source_id^2");
         }
+        if ("MediaContent".equals(normalizedType)) {
+            return List.of("canonical_name^3", "normalized_name^2", "aliases^2");
+        }
         return List.of("canonical_name^3", "normalized_name^2", "aliases^2", "source_id");
     }
 
