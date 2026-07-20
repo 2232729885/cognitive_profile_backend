@@ -404,6 +404,7 @@ CREATE TABLE IF NOT EXISTS media_assets (
     thumbnail_uri       TEXT,
     ocr_text            TEXT,
     asr_text            TEXT,
+    caption_text        TEXT,
     aigc_score          NUMERIC(4,3),
     object_annotations  TEXT,
     scene_label         VARCHAR(100),
@@ -431,6 +432,7 @@ COMMENT ON COLUMN media_assets.duration_seconds IS '视频/音频时长（秒）
 COMMENT ON COLUMN media_assets.thumbnail_uri IS '缩略图路径（data.thumbnail_uri）';
 COMMENT ON COLUMN media_assets.ocr_text      IS '图片/视频帧OCR文本（课题三可选提供）';
 COMMENT ON COLUMN media_assets.asr_text      IS '音视频语音转写文本（课题三可选提供，YouTube视频分析重要输入）';
+COMMENT ON COLUMN media_assets.caption_text  IS '视觉模型生成的媒体检索描述文本，用于ES caption_text和Milvus caption_embedding';
 COMMENT ON COLUMN media_assets.aigc_score    IS 'T1对图片/视频的AIGC可疑度评分 0.0-1.0';
 COMMENT ON COLUMN media_assets.object_annotations IS 'T1图像标注：物体检测结果JSON';
 COMMENT ON COLUMN media_assets.scene_label   IS 'T1图像标注：场景分类标签，如 outdoor/indoor/military/protest';
@@ -445,6 +447,8 @@ CREATE INDEX IF NOT EXISTS idx_ma_content ON media_assets(content_id) WHERE cont
 CREATE INDEX IF NOT EXISTS idx_ma_raw     ON media_assets(raw_record_id) WHERE raw_record_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_ma_type    ON media_assets(asset_type);
 
+ALTER TABLE media_assets ADD COLUMN IF NOT EXISTS
+    caption_text TEXT;
 ALTER TABLE media_assets ADD COLUMN IF NOT EXISTS
     object_annotations TEXT;
 ALTER TABLE media_assets ADD COLUMN IF NOT EXISTS

@@ -18,13 +18,13 @@ public interface MediaAssetMapper extends BaseMapper<MediaAsset> {
             INSERT INTO media_assets (
                 id, raw_record_id, content_id, source_asset_id, asset_type,
                 source_url, storage_uri, mime_type, sha256, file_size_bytes,
-                width, height, duration_seconds, thumbnail_uri, ocr_text, asr_text,
+                width, height, duration_seconds, thumbnail_uri, ocr_text, asr_text, caption_text,
                 aigc_score, minio_bucket, minio_key, embedding_id
             )
             VALUES (
                 #{asset.id}, #{asset.rawRecordId}, #{asset.contentId}, #{asset.sourceAssetId}, #{asset.assetType},
                 #{asset.sourceUrl}, #{asset.storageUri}, #{asset.mimeType}, #{asset.sha256}, #{asset.fileSizeBytes},
-                #{asset.width}, #{asset.height}, #{asset.durationSeconds}, #{asset.thumbnailUri}, #{asset.ocrText}, #{asset.asrText},
+                #{asset.width}, #{asset.height}, #{asset.durationSeconds}, #{asset.thumbnailUri}, #{asset.ocrText}, #{asset.asrText}, #{asset.captionText},
                 #{asset.aigcScore}, #{asset.minioBucket}, #{asset.minioKey}, #{asset.embeddingId}
             )
             ON CONFLICT (sha256) WHERE sha256 IS NOT NULL DO NOTHING
@@ -46,6 +46,12 @@ public interface MediaAssetMapper extends BaseMapper<MediaAsset> {
             "AND asset_type = 'image' AND content_id IS NOT NULL " +
             "ORDER BY created_at DESC LIMIT #{limit}")
     List<MediaAsset> selectImageAssetsWithOcrText(@Param("limit") int limit);
+
+    @Select("SELECT * FROM media_assets WHERE caption_text IS NULL " +
+            "AND asset_type = 'image' " +
+            "AND (source_url IS NOT NULL OR (minio_bucket IS NOT NULL AND minio_key IS NOT NULL)) " +
+            "ORDER BY created_at DESC LIMIT #{limit}")
+    List<MediaAsset> selectPendingCaption(@Param("limit") int limit);
 
     /** 查找有资产待T1标注、且资产已关联内容的内容ID列表（去重，用于ImageEmbeddingJob按内容重新标注） */
     @Select("SELECT DISTINCT content_id FROM media_assets " +

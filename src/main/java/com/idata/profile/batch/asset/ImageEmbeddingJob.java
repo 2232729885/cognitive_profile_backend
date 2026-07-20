@@ -47,6 +47,10 @@ public class ImageEmbeddingJob {
         if (ocrSuccessCount > 0) {
             log.info("Image OCR scheduled job processed {} assets", ocrSuccessCount);
         }
+        int captionSuccessCount = imageEmbeddingService.processPendingCaption(BATCH_LIMIT);
+        if (captionSuccessCount > 0) {
+            log.info("Image caption scheduled job processed {} assets", captionSuccessCount);
+        }
         int esBackfillCount = imageEmbeddingService.backfillImageAssetEsIndex(BATCH_LIMIT);
         if (esBackfillCount > 0) {
             log.info("Image asset ES index backfilled {} assets", esBackfillCount);

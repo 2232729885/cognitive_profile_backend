@@ -90,7 +90,8 @@ public class MediaAssetEsService {
     }
 
     public void indexAsset(MediaAsset asset) {
-        indexAssetSegment(asset, null, null, null, buildCaptionText(asset));
+        indexAssetSegment(asset, null, null, null,
+                firstText(asset != null ? asset.getCaptionText() : null, buildCaptionText(asset)));
     }
 
     public void indexAssetSegment(MediaAsset asset, String segmentId,
@@ -285,6 +286,18 @@ public class MediaAssetEsService {
 
     private Object firstNonNull(Object first, Object second) {
         return first != null ? first : second;
+    }
+
+    private String firstText(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (hasText(value)) {
+                return value.trim();
+            }
+        }
+        return null;
     }
 
     private Float toFloat(Object value) {

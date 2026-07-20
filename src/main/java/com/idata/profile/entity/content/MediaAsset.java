@@ -35,6 +35,7 @@ public class MediaAsset {
     @Deprecated
     private String ocrText;
     private String asrText;
+    private String captionText;
     /** @deprecated 自T1多模态改造起不再写入，仅保留历史数据，完整标注结果见 MediaContent.t1Annotation。 */
     @Deprecated
     private BigDecimal aigcScore;

@@ -87,6 +87,17 @@ public class ImageEmbeddingService {
         return assets.size();
     }
 
+    public int processPendingCaption(int limit) {
+        List<MediaAsset> pending = mediaAssetMapper.selectPendingCaption(limit);
+        int successCount = 0;
+        for (MediaAsset asset : pending) {
+            if (processMissingCaption(asset)) {
+                successCount++;
+            }
+        }
+        return successCount;
+    }
+
     public boolean processById(UUID assetId) {
         MediaAsset asset = mediaAssetMapper.selectById(assetId);
         if (asset == null) {
@@ -142,9 +153,11 @@ public class ImageEmbeddingService {
                 }
             }
 
-            String captionText = isImage(asset)
-                    ? firstText(mediaCaptionService.describeImageUrl(mediaSource), buildCaptionText(asset))
-                    : buildCaptionText(asset);
+            String captionText = resolveCaptionText(asset, mediaSource);
+            if (hasText(captionText) && !captionText.equals(asset.getCaptionText())) {
+                asset.setCaptionText(captionText);
+                changed = true;
+            }
             float[] visualEmbedding = isImage(asset) ? embeddingService.generateImageEmbedding(mediaSource) : null;
             float[] ocrEmbedding = null;
             if (hasText(asset.getOcrText())) {
@@ -199,6 +212,69 @@ public class ImageEmbeddingService {
                     asset.getId(), asset.getAssetType(), safeImageUrl(asset),
                     asset.getSourceUrl(), asset.getStorageUri(), e);
             return false;
+        }
+    }
+
+    private boolean processMissingCaption(MediaAsset asset) {
+        if (asset == null || asset.getId() == null || hasText(asset.getCaptionText()) || !isImage(asset)) {
+            return false;
+        }
+        try {
+            String mediaSource = resolveMediaSource(asset);
+            if (!hasText(mediaSource)) {
+                return false;
+            }
+            String captionText = resolveCaptionText(asset, mediaSource);
+            if (!hasText(captionText)) {
+                return false;
+            }
+
+            asset.setCaptionText(captionText);
+            MediaContent content = resolveLinkedContent(asset);
+            if (asset.getContentId() == null && content != null && content.getId() != null) {
+                asset.setContentId(content.getId());
+            }
+            mediaAssetMapper.updateById(asset);
+            mediaAssetEsService.indexAsset(asset);
+            backfillCaptionEmbedding(asset, content, mediaSource, captionText);
+            log.info("Image caption backfilled, assetId={}, textLength={}",
+                    asset.getId(), captionText.length());
+            return true;
+        } catch (Exception e) {
+            log.warn("Image caption backfill failed, assetId={}", asset.getId(), e);
+            return false;
+        }
+    }
+
+    private void backfillCaptionEmbedding(MediaAsset asset, MediaContent content,
+                                          String mediaSource, String captionText) {
+        try {
+            String contentId = asset.getContentId() != null ? asset.getContentId().toString() : null;
+            String platform = content != null ? content.getPlatform() : null;
+            float[] visualEmbedding = embeddingService.generateImageEmbedding(mediaSource);
+            float[] ocrEmbedding = hasText(asset.getOcrText())
+                    ? embeddingService.generateTextEmbedding(asset.getOcrText())
+                    : null;
+            float[] captionEmbedding = embeddingService.generateTextEmbedding(captionText);
+            String vectorId = milvusVectorService.upsertMediaAssetEmbedding(
+                    asset.getId().toString(),
+                    asset.getSourceAssetId(),
+                    contentId,
+                    platform,
+                    asset.getAssetType(),
+                    asset.getMimeType(),
+                    null,
+                    null,
+                    visualEmbedding,
+                    ocrEmbedding,
+                    null,
+                    captionEmbedding);
+            if (hasText(vectorId) && !vectorId.equals(asset.getEmbeddingId())) {
+                asset.setEmbeddingId(vectorId);
+                mediaAssetMapper.updateById(asset);
+            }
+        } catch (Exception e) {
+            log.warn("Image caption embedding backfill failed, assetId={}", asset.getId(), e);
         }
     }
 
@@ -297,6 +373,18 @@ public class ImageEmbeddingService {
     private boolean isAudioOrVideo(MediaAsset asset) {
         return asset != null && ("video".equalsIgnoreCase(asset.getAssetType())
                 || "audio".equalsIgnoreCase(asset.getAssetType()));
+    }
+
+    private String resolveCaptionText(MediaAsset asset, String mediaSource) {
+        String storedCaption = asset != null ? asset.getCaptionText() : null;
+        if (hasText(storedCaption)) {
+            return storedCaption.trim();
+        }
+        String legacyCaption = buildCaptionText(asset);
+        if (isImage(asset)) {
+            return firstText(mediaCaptionService.describeImageUrl(mediaSource), legacyCaption);
+        }
+        return legacyCaption;
     }
 
     @SuppressWarnings("deprecation")
