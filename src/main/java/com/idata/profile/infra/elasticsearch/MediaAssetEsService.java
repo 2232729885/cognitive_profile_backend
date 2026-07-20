@@ -9,9 +9,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Slf4j
 @Service
@@ -19,6 +21,10 @@ import java.util.Map;
 public class MediaAssetEsService {
 
     private static final String MEDIA_ASSETS_INDEX = "media_assets_index";
+    private static final Set<String> ENGLISH_STOP_WORDS = Set.of(
+            "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in",
+            "is", "it", "its", "of", "on", "or", "that", "the", "than", "this", "to",
+            "was", "were", "with", "another", "somehow");
 
     private final ElasticsearchClient esClient;
 
@@ -131,6 +137,8 @@ public class MediaAssetEsService {
         }
 
         try {
+            String normalizedKeyword = keyword.trim();
+            String effectiveKeyword = effectiveKeyword(normalizedKeyword);
             SearchResponse<Map> response = esClient.search(s -> s
                             .index(MEDIA_ASSETS_INDEX)
                             .size(size)
@@ -143,9 +151,24 @@ public class MediaAssetEsService {
                                             .should(sh -> sh.term(t -> t.field("asset_type").value("video")))
                                             .should(sh -> sh.term(t -> t.field("asset_type").value("audio")))
                                             .minimumShouldMatch("1")))
-                                    .must(m -> m.multiMatch(mm -> mm
-                                            .query(keyword)
-                                            .fields("ocr_text", "asr_text", "caption_text")))))
+                                    .should(sh -> sh.matchPhrase(mp -> mp
+                                            .field("ocr_text")
+                                            .query(normalizedKeyword)
+                                            .boost(12F)))
+                                    .should(sh -> sh.matchPhrase(mp -> mp
+                                            .field("asr_text")
+                                            .query(normalizedKeyword)
+                                            .boost(10F)))
+                                    .should(sh -> sh.matchPhrase(mp -> mp
+                                            .field("caption_text")
+                                            .query(normalizedKeyword)
+                                            .boost(6F)))
+                                    .should(sh -> sh.multiMatch(mm -> mm
+                                            .query(effectiveKeyword)
+                                            .fields("ocr_text^4", "asr_text^3", "caption_text^2")
+                                            .minimumShouldMatch("70%")
+                                            .boost(3F)))
+                                    .minimumShouldMatch("1")))
                             .source(src -> src.filter(f -> f.includes("asset_id", "segment_id",
                                     "source_asset_id", "media_type", "asset_type", "content_id",
                                     "source_url", "storage_uri", "mime_type", "minio_bucket", "minio_key",
@@ -187,6 +210,26 @@ public class MediaAssetEsService {
 
     private boolean hasText(String value) {
         return value != null && !value.trim().isEmpty();
+    }
+
+    private String effectiveKeyword(String keyword) {
+        if (!hasText(keyword)) {
+            return keyword;
+        }
+        String normalized = keyword.toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", " ")
+                .trim()
+                .replaceAll("\\s+", " ");
+        if (!hasText(normalized)) {
+            return keyword;
+        }
+        List<String> tokens = Arrays.stream(normalized.split(" "))
+                .filter(this::hasText)
+                .filter(token -> token.length() > 1)
+                .filter(token -> !ENGLISH_STOP_WORDS.contains(token))
+                .distinct()
+                .toList();
+        return tokens.size() >= 2 ? String.join(" ", tokens) : keyword;
     }
 
     private String documentId(MediaAsset asset, String segmentId) {

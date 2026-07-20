@@ -12,8 +12,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Slf4j
 @Service
@@ -21,6 +23,10 @@ import java.util.Map;
 public class MediaContentEsService {
 
     private static final String MEDIA_CONTENTS_INDEX = "media_contents_index";
+    private static final Set<String> ENGLISH_STOP_WORDS = Set.of(
+            "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in",
+            "is", "it", "its", "of", "on", "or", "that", "the", "than", "this", "to",
+            "was", "were", "with", "another", "somehow");
 
     private final ElasticsearchClient esClient;
 
@@ -106,13 +112,35 @@ public class MediaContentEsService {
         }
 
         try {
+            String normalizedKeyword = keyword.trim();
+            String effectiveKeyword = effectiveKeyword(normalizedKeyword);
             SearchResponse<Map> response = esClient.search(s -> s
                             .index(MEDIA_CONTENTS_INDEX)
                             .size(size)
                             .query(q -> q.bool(b -> {
-                                b.must(m -> m.multiMatch(mm -> mm
-                                        .query(keyword)
-                                        .fields("body_text", "title")));
+                                b.should(sh -> sh.matchPhrase(mp -> mp
+                                        .field("title")
+                                        .query(normalizedKeyword)
+                                        .boost(14F)));
+                                b.should(sh -> sh.matchPhrase(mp -> mp
+                                        .field("body_text")
+                                        .query(normalizedKeyword)
+                                        .boost(12F)));
+                                b.should(sh -> sh.matchPhrase(mp -> mp
+                                        .field("summary")
+                                        .query(normalizedKeyword)
+                                        .boost(10F)));
+                                b.should(sh -> sh.multiMatch(mm -> mm
+                                        .query(effectiveKeyword)
+                                        .fields("title^5", "body_text^3", "summary^2")
+                                        .minimumShouldMatch("70%")
+                                        .boost(4F)));
+                                b.should(sh -> sh.multiMatch(mm -> mm
+                                        .query(effectiveKeyword)
+                                        .fields("title^3", "body_text", "summary")
+                                        .minimumShouldMatch("40%")
+                                        .boost(1F)));
+                                b.minimumShouldMatch("1");
                                 if (hasText(platform)) {
                                     b.filter(f -> f.term(t -> t.field("platform").value(platform)));
                                 }
@@ -181,6 +209,26 @@ public class MediaContentEsService {
 
     private boolean hasText(String value) {
         return value != null && !value.trim().isEmpty();
+    }
+
+    private String effectiveKeyword(String keyword) {
+        if (!hasText(keyword)) {
+            return keyword;
+        }
+        String normalized = keyword.toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", " ")
+                .trim()
+                .replaceAll("\\s+", " ");
+        if (!hasText(normalized)) {
+            return keyword;
+        }
+        List<String> tokens = Arrays.stream(normalized.split(" "))
+                .filter(this::hasText)
+                .filter(token -> token.length() > 1)
+                .filter(token -> !ENGLISH_STOP_WORDS.contains(token))
+                .distinct()
+                .toList();
+        return tokens.size() >= 2 ? String.join(" ", tokens) : keyword;
     }
 
     @Data

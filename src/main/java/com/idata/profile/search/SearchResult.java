@@ -44,6 +44,9 @@ public class SearchResult {
     public static class ContentHit {
         private String contentId;
         private Double rrfScore;
+        private Double rankScore;
+        private String matchLevel;
+        private Integer matchLevelRank;
         private String dominantHitType;
         private String displaySuggestion;
         private Contribution contribution;

@@ -44,9 +44,18 @@ public class SearchService {
     private static final int RRF_K = 60;
     private static final long HYBRID_ROUTE_TIMEOUT_SECONDS = 8L;
     private static final float DEFAULT_CONTENT_SEMANTIC_MIN_SCORE = 0.45F;
+    private static final float DEFAULT_MEDIA_TEXT_SEMANTIC_MIN_SCORE = 0.58F;
+    private static final float DEFAULT_MEDIA_VISUAL_MIN_SCORE = 0.65F;
+    private static final double MEDIA_FIRST_RATIO = 0.60D;
+    private static final double TEXT_FIRST_RATIO = 0.60D;
+    private static final double STRONG_MEDIA_KEYWORD_SCORE = 8D;
     private static final Set<String> ENTITY_QUERY_STOP_WORDS = Set.of(
             "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in",
             "is", "of", "on", "or", "that", "the", "this", "to", "with");
+    private static final Set<String> CONTENT_QUERY_STOP_WORDS = Set.of(
+            "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in",
+            "is", "it", "its", "of", "on", "or", "that", "the", "than", "this", "to",
+            "was", "were", "with", "another", "somehow");
     private static final List<String> STANDARD_ENTITY_TYPES = List.of("Person", "Organization", "Event", "Location");
 
     private final EmbeddingService embeddingService;
@@ -178,6 +187,7 @@ public class SearchService {
                 neo4jFuture.join(),
                 mediaKeywordFuture.join(),
                 mergeMediaVectorResults(mediaSemanticFuture.join(), imageFuture.join(), topK),
+                queryText,
                 topK);
         List<String> fusedIds = contentHits.stream()
                 .map(SearchResult.ContentHit::getContentId)
@@ -208,6 +218,7 @@ public class SearchService {
             List<String> graphContentIds,
             List<MediaAssetEsService.EsImageAssetSearchResult> mediaKeywordResults,
             List<MilvusVectorService.MediaAssetVectorSearchResult> mediaSemanticResults,
+            String queryText,
             int topK) {
         Map<String, ContentAccumulator> accumulators = new LinkedHashMap<>();
 
@@ -249,10 +260,13 @@ public class SearchService {
         Map<UUID, MediaAsset> assetsById = fetchAssetsById(List.of(mediaKeywordSeeds, mediaSemanticSeeds));
         addMediaChannel(accumulators, "ES_MEDIA_KEYWORD", mediaKeywordSeeds, assetsById);
         addMediaChannel(accumulators, "MILVUS_MEDIA_SEMANTIC", mediaSemanticSeeds, assetsById);
+        applyTextMatchLevels(accumulators, queryText);
 
         return accumulators.values().stream()
                 .map(ContentAccumulator::toContentHit)
-                .sorted(Comparator.comparingDouble(SearchResult.ContentHit::getRrfScore).reversed())
+                .sorted(Comparator
+                        .comparingInt(SearchResult.ContentHit::getMatchLevelRank).reversed()
+                        .thenComparing(SearchResult.ContentHit::getRankScore, Comparator.reverseOrder()))
                 .limit(topK)
                 .toList();
     }
@@ -312,6 +326,7 @@ public class SearchService {
             accumulator.evidences.add(evidence);
             SearchResult.AssetHit assetHit = toAssetHit(hit, asset, contentId, entityId, rrfContribution);
             if (assetHit != null) {
+                accumulator.hasStrongMediaMatch = accumulator.hasStrongMediaMatch || isStrongMediaHit(channel, hit);
                 accumulator.assets.merge(assetHit.getEntityId(), assetHit, (left, right) -> {
                     double leftScore = scoreValue(left.getRrfContribution());
                     double rightScore = scoreValue(right.getRrfContribution());
@@ -322,13 +337,97 @@ public class SearchService {
         }
     }
 
+    private void applyTextMatchLevels(Map<String, ContentAccumulator> accumulators, String queryText) {
+        if (accumulators.isEmpty() || !hasText(queryText)) {
+            return;
+        }
+        List<UUID> contentIds = accumulators.keySet().stream()
+                .map(this::parseUuid)
+                .filter(Objects::nonNull)
+                .toList();
+        if (contentIds.isEmpty()) {
+            return;
+        }
+        Map<String, MediaContent> contentsById = mediaContentMapper.selectBatchIds(contentIds).stream()
+                .collect(Collectors.toMap(content -> content.getId().toString(), content -> content,
+                        (left, right) -> left));
+        for (ContentAccumulator accumulator : accumulators.values()) {
+            MediaContent content = contentsById.get(accumulator.contentId);
+            accumulator.matchLevel = classifyTextMatch(queryText, content);
+        }
+    }
+
+    private MatchLevel classifyTextMatch(String queryText, MediaContent content) {
+        if (content == null || !hasText(queryText)) {
+            return MatchLevel.HYBRID_RELEVANT;
+        }
+        String query = normalizeComparableText(queryText);
+        String title = normalizeComparableText(content.getTitle());
+        String body = normalizeComparableText(content.getBodyText());
+        String haystack = normalizeComparableText(firstText(content.getTitle(), "") + " " + firstText(content.getBodyText(), ""));
+        if (hasText(query) && (title.contains(query) || body.contains(query) || haystack.contains(query))) {
+            return MatchLevel.EXACT_PHRASE;
+        }
+
+        List<String> tokens = significantContentTokens(queryText);
+        if (tokens.size() >= 2 && hasText(haystack)) {
+            long matched = tokens.stream().filter(haystack::contains).count();
+            double coverage = matched / (double) tokens.size();
+            if (coverage >= 0.70D) {
+                return MatchLevel.HIGH_TEXT_MATCH;
+            }
+            if (coverage >= 0.40D) {
+                return MatchLevel.TEXT_MATCH;
+            }
+        }
+        return MatchLevel.HYBRID_RELEVANT;
+    }
+
+    private List<String> significantContentTokens(String text) {
+        if (!hasText(text)) {
+            return List.of();
+        }
+        String normalized = normalizeAsciiText(text);
+        if (!hasText(normalized)) {
+            return List.of();
+        }
+        return java.util.Arrays.stream(normalized.split(" "))
+                .filter(this::hasText)
+                .filter(token -> token.length() > 1)
+                .filter(token -> !CONTENT_QUERY_STOP_WORDS.contains(token))
+                .distinct()
+                .toList();
+    }
+
+    private String normalizeComparableText(String text) {
+        if (!hasText(text)) {
+            return "";
+        }
+        return text.toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("\\s+", " ")
+                .trim();
+    }
+
+    private boolean isStrongMediaHit(String channel, MediaHitSeed hit) {
+        if ("ES_MEDIA_KEYWORD".equals(channel)) {
+            return scoreValue(hit.rawScore()) >= STRONG_MEDIA_KEYWORD_SCORE;
+        }
+        if ("MILVUS_MEDIA_SEMANTIC".equals(channel)) {
+            double minScore = "visual_embedding".equals(hit.hitField())
+                    ? DEFAULT_MEDIA_VISUAL_MIN_SCORE
+                    : DEFAULT_MEDIA_TEXT_SEMANTIC_MIN_SCORE;
+            return scoreValue(hit.rawScore()) >= minScore;
+        }
+        return false;
+    }
+
     private List<MilvusVectorService.MediaAssetVectorSearchResult> searchMediaAssetTextVectors(
             String queryText, int topK, Double semanticMinScore) {
         float[] embedding = textEmbedding(queryText);
         if (embedding == null) {
             return List.of();
         }
-        float minScore = normalizeSemanticMinScore(semanticMinScore);
+        float minScore = Math.max(DEFAULT_MEDIA_TEXT_SEMANTIC_MIN_SCORE, normalizeSemanticMinScore(semanticMinScore));
         return milvusService.searchMediaAssetTextEmbeddingsDetailed(embedding, topK).stream()
                 .filter(result -> result.score() >= minScore)
                 .toList();
@@ -340,7 +439,9 @@ public class SearchService {
         if (embedding == null) {
             return List.of();
         }
-        return milvusService.searchMediaAssetVisualEmbeddingsDetailed(embedding, topK);
+        return milvusService.searchMediaAssetVisualEmbeddingsDetailed(embedding, topK).stream()
+                .filter(result -> result.score() >= DEFAULT_MEDIA_VISUAL_MIN_SCORE)
+                .toList();
     }
 
     private List<MilvusVectorService.MediaAssetVectorSearchResult> mergeMediaVectorResults(
@@ -474,10 +575,25 @@ public class SearchService {
                                 Double rawScore, String hitField) {
     }
 
+    private enum MatchLevel {
+        HYBRID_RELEVANT(0),
+        TEXT_MATCH(1),
+        HIGH_TEXT_MATCH(2),
+        EXACT_PHRASE(3);
+
+        private final int rank;
+
+        MatchLevel(int rank) {
+            this.rank = rank;
+        }
+    }
+
     private static class ContentAccumulator {
         private final String contentId;
         private double textContribution;
         private double mediaContribution;
+        private boolean hasStrongMediaMatch;
+        private MatchLevel matchLevel = MatchLevel.HYBRID_RELEVANT;
         private final List<SearchResult.Evidence> evidences = new ArrayList<>();
         private final Map<String, SearchResult.AssetHit> assets = new LinkedHashMap<>();
 
@@ -493,6 +609,9 @@ public class SearchService {
             SearchResult.ContentHit hit = new SearchResult.ContentHit();
             hit.setContentId(contentId);
             hit.setRrfScore(total);
+            hit.setRankScore(total);
+            hit.setMatchLevel(matchLevel.name());
+            hit.setMatchLevelRank(matchLevel.rank);
             SearchResult.Contribution contribution = new SearchResult.Contribution();
             contribution.setText(contributionSide(textContribution, textRatio));
             contribution.setMedia(contributionSide(mediaContribution, mediaRatio));
@@ -502,8 +621,8 @@ public class SearchService {
                             asset -> -scoreValue(asset.getRrfContribution())))
                     .toList());
             hit.setPrimaryAsset(hit.getMatchedAssets().isEmpty() ? null : hit.getMatchedAssets().getFirst());
-            hit.setDominantHitType(dominantHitType(hit.getPrimaryAsset(), textRatio, mediaRatio));
-            hit.setDisplaySuggestion(displaySuggestion(hit.getPrimaryAsset(), textRatio, mediaRatio));
+            hit.setDominantHitType(dominantHitType(hit.getPrimaryAsset(), textRatio, mediaRatio, hasStrongMediaMatch));
+            hit.setDisplaySuggestion(displaySuggestion(hit.getPrimaryAsset(), textRatio, mediaRatio, hasStrongMediaMatch));
             hit.setEvidences(evidences);
             return hit;
         }
@@ -516,28 +635,30 @@ public class SearchService {
         }
 
         private static String dominantHitType(SearchResult.AssetHit primaryAsset,
-                                              double textRatio, double mediaRatio) {
+                                              double textRatio, double mediaRatio,
+                                              boolean hasStrongMediaMatch) {
             if (primaryAsset == null) {
                 return "TEXT";
             }
-            if (mediaRatio >= 0.55D) {
+            if (mediaRatio >= MEDIA_FIRST_RATIO && hasStrongMediaMatch) {
                 return "MEDIA_ASSET";
             }
-            if (textRatio >= 0.55D) {
+            if (textRatio >= TEXT_FIRST_RATIO) {
                 return "TEXT";
             }
             return "MIXED";
         }
 
         private static String displaySuggestion(SearchResult.AssetHit primaryAsset,
-                                                double textRatio, double mediaRatio) {
+                                                double textRatio, double mediaRatio,
+                                                boolean hasStrongMediaMatch) {
             if (primaryAsset == null) {
                 return "TEXT_FIRST";
             }
-            if (mediaRatio >= 0.55D) {
+            if (mediaRatio >= MEDIA_FIRST_RATIO && hasStrongMediaMatch) {
                 return "MEDIA_FIRST";
             }
-            if (textRatio >= 0.55D) {
+            if (textRatio >= TEXT_FIRST_RATIO) {
                 return "TEXT_FIRST";
             }
             return "MIXED";
