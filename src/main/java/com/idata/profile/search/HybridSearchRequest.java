@@ -16,4 +16,5 @@ public class HybridSearchRequest {
     private String imageUrl;
     private String targetModalities = "all";
     private Double semanticMinScore;
+    private Double visualMinScore;
 }

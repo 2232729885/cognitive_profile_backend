@@ -79,7 +79,7 @@ public class SearchController {
         }
         return Result.ok(searchService.searchByImage(
                 request.getImageUrl(), request.getTargetModalities(), request.getTopK(),
-                request.getPage(), request.getSize()));
+                request.getPage(), request.getSize(), request.getVisualMinScore()));
     }
 
     @PostMapping("/image/base64")
@@ -94,7 +94,7 @@ public class SearchController {
             String imageUrl = buildMinioUrl(objectPath);
             return Result.ok(searchService.searchByImage(
                     imageUrl, request.getTargetModalities(), request.getTopK(),
-                    request.getPage(), request.getSize()));
+                    request.getPage(), request.getSize(), request.getVisualMinScore()));
         } catch (IllegalArgumentException e) {
             return Result.fail("INVALID_FORMAT", "图片base64格式不合法");
         }
@@ -105,7 +105,8 @@ public class SearchController {
                                                       @RequestParam(defaultValue = "all") String targetModalities,
                                                       @RequestParam(required = false) Integer topK,
                                                       @RequestParam(defaultValue = "0") int page,
-                                                      @RequestParam(defaultValue = "10") int size) throws IOException {
+                                                      @RequestParam(defaultValue = "10") int size,
+                                                      @RequestParam(required = false) Double visualMinScore) throws IOException {
         if (file == null || file.isEmpty()) {
             return Result.fail("INVALID_FILE", "上传文件不能为空");
         }
@@ -116,7 +117,7 @@ public class SearchController {
         String key = "search-temp/" + UUID.randomUUID() + "." + extensionOf(file.getOriginalFilename(), file.getContentType());
         String objectPath = minioStorageService.upload("media-assets", key, file.getBytes(), file.getContentType());
         String imageUrl = buildMinioUrl(objectPath);
-        return Result.ok(searchService.searchByImage(imageUrl, targetModalities, topK, page, size));
+        return Result.ok(searchService.searchByImage(imageUrl, targetModalities, topK, page, size, visualMinScore));
     }
 
     @GetMapping("/graph/overview")
@@ -208,6 +209,7 @@ public class SearchController {
         private Integer topK;
         private int page = 0;
         private int size = 10;
+        private Double visualMinScore;
     }
 
     @Data
@@ -217,6 +219,7 @@ public class SearchController {
         private Integer topK;
         private int page = 0;
         private int size = 10;
+        private Double visualMinScore;
     }
 
     private ParsedBase64Image parseBase64Image(String value) {

@@ -47,6 +47,7 @@ public class SearchService {
     private static final float DEFAULT_CONTENT_SEMANTIC_MIN_SCORE = 0.45F;
     private static final float DEFAULT_MEDIA_TEXT_SEMANTIC_MIN_SCORE = 0.58F;
     private static final float DEFAULT_MEDIA_VISUAL_MIN_SCORE = 0.65F;
+    private static final float IMAGE_QUERY_VISUAL_MIN_SCORE = 0.90F;
     private static final float IDENTIFIER_CONTENT_SEMANTIC_MIN_SCORE = 0.72F;
     private static final float IDENTIFIER_MEDIA_TEXT_SEMANTIC_MIN_SCORE = 0.72F;
     private static final float MEDIA_ONLY_TEXT_SEMANTIC_MIN_SCORE = 0.72F;
@@ -144,15 +145,16 @@ public class SearchService {
         String targetModality = normalizeTargetModality(request != null ? request.getTargetModalities() : null);
         int mediaTopK = mediaRecallSize(topK, targetModality);
         Double semanticMinScore = request == null ? null : request.getSemanticMinScore();
+        Double visualMinScore = request == null ? null : request.getVisualMinScore();
 
         return searchHybridContents(request, queryText, platform, language, targetModality,
-                hasImage, topK, mediaTopK, safePage, safeSize, semanticMinScore, startedAt);
+                hasImage, topK, mediaTopK, safePage, safeSize, semanticMinScore, visualMinScore, startedAt);
     }
 
     private SearchResult searchHybridContents(HybridSearchRequest request, String queryText,
                                               String platform, String language, String targetModality,
                                               boolean hasImage, int topK, int mediaTopK, int page, int size,
-                                              Double semanticMinScore, long startedAt) {
+                                              Double semanticMinScore, Double visualMinScore, long startedAt) {
         boolean includeText = !isMediaOnlyTargetModality(targetModality);
         boolean includeMedia = !"text".equals(targetModality);
         CompletableFuture<List<MediaContentEsService.EsSearchResult>> esFuture = includeText && isEnabled(request, "es")
@@ -175,7 +177,8 @@ public class SearchService {
                                 queryText, mediaTopK, semanticMinScore, targetModality))
                         : CompletableFuture.completedFuture(List.of());
         CompletableFuture<List<MilvusVectorService.MediaAssetVectorSearchResult>> imageFuture = includeMedia && hasImage
-                ? safeRoute("image", () -> searchMediaAssetVisualVectors(request.getImageUrl(), mediaTopK, targetModality))
+                ? safeRoute("image", () -> searchMediaAssetVisualVectors(
+                        request.getImageUrl(), mediaTopK, targetModality, visualMinScore))
                 : CompletableFuture.completedFuture(List.of());
 
         CompletableFuture.allOf(esFuture, milvusFuture, neo4jFuture,
@@ -545,14 +548,15 @@ public class SearchService {
     }
 
     private List<MilvusVectorService.MediaAssetVectorSearchResult> searchMediaAssetVisualVectors(
-            String imageUrl, int topK, String targetModality) {
+            String imageUrl, int topK, String targetModality, Double visualMinScore) {
         float[] embedding = imageEmbedding(imageUrl);
         if (embedding == null) {
             return List.of();
         }
+        float minScore = imageQueryVisualMinScore(visualMinScore);
         return milvusService.searchMediaAssetVisualEmbeddingsDetailed(embedding, topK).stream()
                 .filter(result -> matchesTargetMediaType(result.mediaType(), targetModality))
-                .filter(result -> result.score() >= DEFAULT_MEDIA_VISUAL_MIN_SCORE)
+                .filter(result -> result.score() >= minScore)
                 .toList();
     }
 
@@ -1072,7 +1076,8 @@ public class SearchService {
         return result;
     }
 
-    public SearchResult searchByImage(String imageUrl, String targetModalities, Integer topK, int page, int size) {
+    public SearchResult searchByImage(String imageUrl, String targetModalities, Integer topK,
+                                      int page, int size, Double visualMinScore) {
         long startedAt = System.currentTimeMillis();
         int safePage = normalizePage(page);
         int safeSize = normalizePageSize(size);
@@ -1082,11 +1087,12 @@ public class SearchService {
         HybridSearchRequest request = new HybridSearchRequest();
         request.setImageUrl(imageUrl);
         request.setTargetModalities(targetModality);
+        request.setVisualMinScore(visualMinScore);
         request.setEnableEs(false);
         request.setEnableMilvus(true);
         request.setEnableNeo4j(false);
         SearchResult result = searchHybridContents(request, null, null, null, targetModality,
-                hasText(imageUrl), safeTopK, mediaTopK, safePage, safeSize, null, startedAt);
+                hasText(imageUrl), safeTopK, mediaTopK, safePage, safeSize, null, visualMinScore, startedAt);
         result.setSearchType("image");
         return result;
     }
@@ -1960,6 +1966,13 @@ public class SearchService {
             return topK;
         }
         return Math.min(MAX_RECALL_SIZE, Math.max(topK, topK * 3));
+    }
+
+    private float imageQueryVisualMinScore(Double visualMinScore) {
+        if (visualMinScore == null || !Double.isFinite(visualMinScore)) {
+            return IMAGE_QUERY_VISUAL_MIN_SCORE;
+        }
+        return (float) Math.max(0D, Math.min(1D, visualMinScore));
     }
 
     private float normalizeSemanticMinScore(Double semanticMinScore) {
