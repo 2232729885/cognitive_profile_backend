@@ -42,8 +42,9 @@ public interface MediaAssetMapper extends BaseMapper<MediaAsset> {
             "AND asset_type = 'image' LIMIT #{limit}")
     List<MediaAsset> selectPendingOcr(@Param("limit") int limit);
 
-    @Select("SELECT * FROM media_assets WHERE ocr_text IS NOT NULL " +
-            "AND asset_type = 'image' AND content_id IS NOT NULL " +
+    @Select("SELECT * FROM media_assets WHERE " +
+            "(ocr_text IS NOT NULL OR asr_text IS NOT NULL OR caption_text IS NOT NULL) " +
+            "AND asset_type IN ('image','video','audio') AND content_id IS NOT NULL " +
             "ORDER BY created_at DESC LIMIT #{limit}")
     List<MediaAsset> selectImageAssetsWithOcrText(@Param("limit") int limit);
 

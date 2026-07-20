@@ -263,7 +263,7 @@ public class SearchService {
                         result.segmentStart(),
                         result.segmentEnd(),
                         result.score(),
-                        "ocr_text/asr_text/caption_text"))
+                        result.hitField()))
                 .toList();
         List<MediaHitSeed> mediaSemanticSeeds = mediaSemanticResults.stream()
                 .map(result -> new MediaHitSeed(

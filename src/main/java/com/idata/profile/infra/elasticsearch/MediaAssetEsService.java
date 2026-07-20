@@ -166,26 +166,34 @@ public class MediaAssetEsService {
                                 return b.should(sh -> sh.matchPhrase(mp -> mp
                                                 .field("ocr_text")
                                                 .query(normalizedKeyword)
-                                                .boost(12F)))
+                                                .boost(12F)
+                                                .queryName("ocr_text")))
                                         .should(sh -> sh.matchPhrase(mp -> mp
                                                 .field("asr_text")
                                                 .query(normalizedKeyword)
-                                                .boost(10F)))
+                                                .boost(10F)
+                                                .queryName("asr_text")))
                                         .should(sh -> sh.matchPhrase(mp -> mp
                                                 .field("caption_text")
                                                 .query(normalizedKeyword)
-                                                .boost(6F)))
+                                                .boost(6F)
+                                                .queryName("caption_text")))
                                         .should(sh -> sh.multiMatch(mm -> mm
                                                 .query(effectiveKeyword)
                                                 .fields("ocr_text^4", "asr_text^3", "caption_text^2")
                                                 .minimumShouldMatch("70%")
-                                                .boost(3F)))
+                                                .boost(3F)
+                                                .queryName("media_text")))
                                         .minimumShouldMatch("1");
                             }))
                             .source(src -> src.filter(f -> f.includes("asset_id", "segment_id",
                                     "source_asset_id", "media_type", "asset_type", "content_id",
                                     "source_url", "storage_uri", "mime_type", "minio_bucket", "minio_key",
-                                    "segment_start", "segment_end", "caption_text"))),
+                                    "segment_start", "segment_end", "caption_text")))
+                            .highlight(h -> h
+                                    .fields("ocr_text", hf -> hf)
+                                    .fields("asr_text", hf -> hf)
+                                    .fields("caption_text", hf -> hf)),
                     Map.class);
             return response.hits().hits().stream()
                     .map(hit -> {
@@ -204,6 +212,7 @@ public class MediaAssetEsService {
                                 mediaTypeValue == null ? null : mediaTypeValue.toString(),
                                 toFloat(segmentStart),
                                 toFloat(segmentEnd),
+                                resolveHitField(hit.matchedQueries(), hit.highlight(), source),
                                 hit.score());
                     })
                     .toList();
@@ -230,6 +239,44 @@ public class MediaAssetEsService {
 
     private boolean isIndexNotFound(ElasticsearchException e) {
         return e != null && e.error() != null && "index_not_found_exception".equals(e.error().type());
+    }
+
+    private String resolveHitField(List<String> matchedQueries,
+                                   Map<String, List<String>> highlights,
+                                   Map source) {
+        if (highlights != null && !highlights.isEmpty()) {
+            if (highlights.containsKey("ocr_text")) {
+                return "ocr_text";
+            }
+            if (highlights.containsKey("asr_text")) {
+                return "asr_text";
+            }
+            if (highlights.containsKey("caption_text")) {
+                return "caption_text";
+            }
+        }
+        if (matchedQueries != null) {
+            if (matchedQueries.contains("ocr_text")) {
+                return "ocr_text";
+            }
+            if (matchedQueries.contains("asr_text")) {
+                return "asr_text";
+            }
+            if (matchedQueries.contains("caption_text")) {
+                return "caption_text";
+            }
+        }
+        if (source != null && hasText(toString(source.get("caption_text")))) {
+            return "caption_text";
+        }
+        if (source != null && hasText(toString(source.get("asr_text")))) {
+            return "asr_text";
+        }
+        return "ocr_text";
+    }
+
+    private String toString(Object value) {
+        return value == null ? null : value.toString();
     }
 
     private boolean hasText(String value) {
@@ -316,6 +363,6 @@ public class MediaAssetEsService {
 
     public record EsImageAssetSearchResult(String assetId, String segmentId, String contentId,
                                            String mediaType, Float segmentStart, Float segmentEnd,
-                                           Double score) {
+                                           String hitField, Double score) {
     }
 }
