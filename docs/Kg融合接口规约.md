@@ -66,7 +66,7 @@ T1 annotate_account（判断账号类别）
 {
   "title": "文章标题，社交内容通常为空",
   "text": "美国中央司令部在霍尔木兹海峡附近展开军事演习，伊朗方面发表声明表示抗议。",
-  "annotation": "T1标注结果里 basicObjective.entitiesHint 部分，供参考，可能为null",
+  "t1Annotation": "T1 annotate_content 的完整业务响应体，包含 aigcDetection/annotations/evidenceClues，供参考，可能为null",
   "context": {
     "contentId": "内容ID",
     "platform": "x",

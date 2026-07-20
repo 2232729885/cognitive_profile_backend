@@ -4,6 +4,9 @@ import com.idata.profile.entity.system.SubAgentRegistry;
 import com.idata.profile.mapper.system.SubAgentRegistryMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
@@ -32,6 +35,7 @@ import java.time.Duration;
 public class AgentProxyClient {
 
     private static final int STRUCTURED_LLM_AGENT_MIN_TIMEOUT_SECONDS = 1200;
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final SubAgentRegistryMapper subAgentRegistryMapper;
     private final ObjectProvider<AgentProxyClient> selfProvider;
@@ -75,13 +79,57 @@ public class AgentProxyClient {
         log.debug("调用Agent: code={}, action={}, urlType={}, url={}",
                 agentCode, action, agent.getActiveUrlType(), baseUrl);
 
-        return restClient(timeoutSeconds(agentCode, agent.getTimeoutSeconds())).post()
+        String rawResponse = restClient(timeoutSeconds(agentCode, agent.getTimeoutSeconds())).post()
                 .uri(baseUrl + "/" + action)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON)
                 .body(request)
                 .retrieve()
-                .body(responseType);
+                .body(String.class);
+        return parseAgentResponse(agentCode, action, rawResponse, responseType);
+    }
+
+    private <T> T parseAgentResponse(String agentCode, String action, String rawResponse, Class<T> responseType) {
+        if (rawResponse == null || rawResponse.isBlank()) {
+            return null;
+        }
+        if (String.class.equals(responseType)) {
+            return responseType.cast(rawResponse);
+        }
+
+        try {
+            JsonNode root = OBJECT_MAPPER.readTree(rawResponse);
+            JsonNode codeNode = root != null ? root.path("code") : null;
+            if (codeNode == null || codeNode.isMissingNode()) {
+                return OBJECT_MAPPER.readValue(rawResponse, responseType);
+            }
+
+            int code = codeNode.asInt();
+            String msg = text(root, "msg");
+            if (code != 0) {
+                throw new IllegalStateException(String.format(
+                        "Agent business failure: agentCode=%s, action=%s, code=%s, msg=%s",
+                        agentCode, action, code, msg));
+            }
+
+            JsonNode dataNode = root.path("data");
+            if (dataNode.isMissingNode() || dataNode.isNull()) {
+                return null;
+            }
+            return OBJECT_MAPPER.readValue(dataNode.toString(), responseType);
+        } catch (JacksonException e) {
+            throw new IllegalStateException(String.format(
+                    "Agent response parse failed: agentCode=%s, action=%s, responseType=%s",
+                    agentCode, action, responseType.getSimpleName()), e);
+        }
+    }
+
+    private String text(JsonNode node, String fieldName) {
+        if (node == null) {
+            return null;
+        }
+        JsonNode value = node.path(fieldName);
+        return value.isMissingNode() || value.isNull() ? null : value.asText(null);
     }
 
     private RestClient restClient(int timeoutSeconds) {

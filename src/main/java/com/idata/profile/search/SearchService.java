@@ -459,14 +459,21 @@ public class SearchService {
 
     private List<MilvusVectorService.MediaAssetVectorSearchResult> searchMediaAssetTextVectors(
             String queryText, int topK, Double semanticMinScore, String targetModality) {
-        float[] embedding = textEmbedding(queryText);
-        if (embedding == null) {
-            return List.of();
+        Map<String, MilvusVectorService.MediaAssetVectorSearchResult> best = new LinkedHashMap<>();
+        for (String variant : semanticQueryVariants(queryText)) {
+            float[] embedding = textEmbedding(variant);
+            if (embedding == null) {
+                continue;
+            }
+            milvusService.searchMediaAssetTextEmbeddingsDetailed(embedding, topK).stream()
+                    .filter(result -> matchesTargetMediaType(result.mediaType(), targetModality))
+                    .filter(result -> result.score() >= mediaSemanticMinScore(
+                            queryText, semanticMinScore, targetModality, result.vectorField()))
+                    .forEach(result -> mergeMediaVectorResult(best, result));
         }
-        return milvusService.searchMediaAssetTextEmbeddingsDetailed(embedding, topK).stream()
-                .filter(result -> matchesTargetMediaType(result.mediaType(), targetModality))
-                .filter(result -> result.score() >= mediaSemanticMinScore(
-                        queryText, semanticMinScore, targetModality, result.vectorField()))
+        return best.values().stream()
+                .sorted(Comparator.comparingDouble(MilvusVectorService.MediaAssetVectorSearchResult::score).reversed())
+                .limit(topK)
                 .toList();
     }
 
@@ -491,7 +498,7 @@ public class SearchService {
             return List.of();
         }
         List<UUID> assetIds = results.stream()
-                .filter(result -> result != null && isStoredTextVectorField(result.vectorField()))
+                .filter(result -> result != null && isMediaTextVectorField(result.vectorField()))
                 .map(MilvusVectorService.MediaAssetVectorSearchResult::assetId)
                 .map(this::normalizeImageAssetId)
                 .map(this::parseUuid)
@@ -531,6 +538,9 @@ public class SearchService {
         if (!isUsefulSemanticSourceText(sourceText)) {
             return false;
         }
+        if (isNaturalLanguageQuery(queryText) || isLikelyCrossLanguage(queryText, sourceText)) {
+            return true;
+        }
         return hasCompatibleSemanticToken(queryText, sourceText)
                 || result.score() >= MEDIA_TEXT_SEMANTIC_FALLBACK_MIN_SCORE;
     }
@@ -544,6 +554,9 @@ public class SearchService {
         }
         if ("asr_embedding".equals(vectorField)) {
             return asset.getAsrText();
+        }
+        if ("caption_embedding".equals(vectorField)) {
+            return asset.getCaptionText();
         }
         return null;
     }
@@ -567,16 +580,21 @@ public class SearchService {
             int topK) {
         Map<String, MilvusVectorService.MediaAssetVectorSearchResult> best = new LinkedHashMap<>();
         for (MilvusVectorService.MediaAssetVectorSearchResult result : concat(textResults, imageResults)) {
-            if (result == null || !hasText(result.assetId())) {
-                continue;
-            }
-            String key = result.assetId() + ":" + firstText(result.segmentId(), "asset");
-            best.merge(key, result, (left, right) -> right.score() > left.score() ? right : left);
+            mergeMediaVectorResult(best, result);
         }
         return best.values().stream()
                 .sorted(Comparator.comparingDouble(MilvusVectorService.MediaAssetVectorSearchResult::score).reversed())
                 .limit(topK)
                 .toList();
+    }
+
+    private void mergeMediaVectorResult(Map<String, MilvusVectorService.MediaAssetVectorSearchResult> best,
+                                        MilvusVectorService.MediaAssetVectorSearchResult result) {
+        if (best == null || result == null || !hasText(result.assetId())) {
+            return;
+        }
+        String key = result.assetId() + ":" + firstText(result.segmentId(), "asset");
+        best.merge(key, result, (left, right) -> right.score() > left.score() ? right : left);
     }
 
     private Map<UUID, MediaAsset> fetchAssetsById(List<List<MediaHitSeed>> seedLists) {
@@ -1119,6 +1137,35 @@ public class SearchService {
             return null;
         }
         return embeddingService.generateTextEmbedding(text);
+    }
+
+    private List<String> semanticQueryVariants(String queryText) {
+        if (!hasText(queryText)) {
+            return List.of();
+        }
+        LinkedHashSet<String> variants = new LinkedHashSet<>();
+        String normalized = normalizeWhitespace(queryText);
+        if (hasText(normalized)) {
+            variants.add(normalized);
+        }
+        Arrays.stream(queryText.split("[\\r\\n]+"))
+                .map(this::normalizeWhitespace)
+                .filter(this::hasText)
+                .filter(value -> value.length() >= 8)
+                .forEach(variants::add);
+        Arrays.stream(queryText.split("[。！？!?；;。،؛؟।]+"))
+                .map(this::normalizeWhitespace)
+                .filter(this::hasText)
+                .filter(value -> value.length() >= 8)
+                .forEach(variants::add);
+        return variants.stream().limit(4).toList();
+    }
+
+    private String normalizeWhitespace(String text) {
+        if (text == null) {
+            return null;
+        }
+        return text.replaceAll("\\s+", " ").trim();
     }
 
     private float[] imageEmbedding(String imageUrl) {
@@ -1737,14 +1784,29 @@ public class SearchService {
             return List.of();
         }
 
-        float[] embedding = embeddingService.generateTextEmbedding(queryText);
-        if (embedding == null) {
-            return List.of();
-        }
         float minScore = contentSemanticMinScore(queryText, semanticMinScore);
-        return milvusService.searchTextEmbeddingsWithScore(embedding, topK, platform, language).stream()
-                .filter(result -> result.score() >= minScore)
+        Map<String, MilvusVectorService.ScoredEntityId> best = new LinkedHashMap<>();
+        for (String variant : semanticQueryVariants(queryText)) {
+            float[] embedding = embeddingService.generateTextEmbedding(variant);
+            if (embedding == null) {
+                continue;
+            }
+            milvusService.searchTextEmbeddingsWithScore(embedding, topK, platform, language).stream()
+                    .filter(result -> result.score() >= minScore)
+                    .forEach(result -> mergeScoredEntityId(best, result));
+        }
+        return best.values().stream()
+                .sorted(Comparator.comparingDouble(MilvusVectorService.ScoredEntityId::score).reversed())
+                .limit(topK)
                 .toList();
+    }
+
+    private void mergeScoredEntityId(Map<String, MilvusVectorService.ScoredEntityId> best,
+                                     MilvusVectorService.ScoredEntityId result) {
+        if (best == null || result == null || !hasText(result.entityId())) {
+            return;
+        }
+        best.merge(result.entityId(), result, (left, right) -> right.score() > left.score() ? right : left);
     }
 
     private List<String> searchAccountSemanticIds(String queryText, int topK) {
@@ -2068,6 +2130,53 @@ public class SearchService {
             }
         }
         return false;
+    }
+
+    private boolean isLikelyCrossLanguage(String queryText, String sourceText) {
+        String queryScript = dominantScriptGroup(queryText);
+        String sourceScript = dominantScriptGroup(sourceText);
+        return hasText(queryScript) && hasText(sourceScript) && !queryScript.equals(sourceScript);
+    }
+
+    private boolean isNaturalLanguageQuery(String queryText) {
+        if (!hasText(queryText) || isIdentifierLikeQuery(queryText)) {
+            return false;
+        }
+        String normalized = normalizeWhitespace(queryText);
+        if (!hasText(normalized)) {
+            return false;
+        }
+        int tokenCount = semanticTextTokens(normalized).size();
+        long letterCount = normalized.codePoints().filter(Character::isLetter).count();
+        boolean hasSentencePunctuation = normalized.matches(".*[。！？!?；;,.，、].*");
+        return tokenCount >= 4 || letterCount >= 18 || hasSentencePunctuation;
+    }
+
+    private String dominantScriptGroup(String text) {
+        if (!hasText(text)) {
+            return null;
+        }
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        text.codePoints()
+                .filter(Character::isLetter)
+                .mapToObj(this::scriptGroup)
+                .filter(Objects::nonNull)
+                .forEach(group -> counts.merge(group, 1, Integer::sum));
+        return counts.entrySet().stream()
+                .max(Map.Entry.comparingByValue())
+                .map(Map.Entry::getKey)
+                .orElse(null);
+    }
+
+    private String scriptGroup(int codePoint) {
+        Character.UnicodeScript script = Character.UnicodeScript.of(codePoint);
+        return switch (script) {
+            case HAN, HIRAGANA, KATAKANA, HANGUL -> "cjk";
+            case LATIN -> "latin";
+            case ARABIC -> "arabic";
+            case CYRILLIC -> "cyrillic";
+            default -> null;
+        };
     }
 
     private List<String> semanticTextTokens(String text) {

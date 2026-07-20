@@ -6,7 +6,7 @@ import lombok.Data;
 public class T2ExtractRequest {
     private String title;
     private String text;
-    private Object annotation;
+    private Object t1Annotation;
     private Context context;
     private String language;
 

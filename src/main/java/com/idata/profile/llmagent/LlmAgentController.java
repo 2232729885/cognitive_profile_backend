@@ -712,9 +712,9 @@ public class LlmAgentController {
         StringBuilder sb = new StringBuilder();
         sb.append("请从以下文本中抽取实体、关系和事件：\n\n");
 
-        if (request.getAnnotation() != null) {
-            sb.append("T1标注参考（仅供参考，以文本为准）：")
-                    .append(request.getAnnotation()).append("\n\n");
+        if (request.getT1Annotation() != null) {
+            sb.append("T1完整标注参考（仅供参考，以文本为准）：")
+                    .append(request.getT1Annotation()).append("\n\n");
         }
 
         if (request.getContext() != null && request.getContext().getHashtags() != null

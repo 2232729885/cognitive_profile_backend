@@ -5,7 +5,6 @@ import com.idata.profile.agentproxy.dto.t2.T2ExtractRequest;
 import com.idata.profile.agentproxy.dto.t2.T2ExtractResponse;
 import com.idata.profile.common.constant.AllowedRelationTypes;
 import com.idata.profile.common.constant.PipelineStatus;
-import com.idata.profile.common.util.T1AnnotationView;
 import com.idata.profile.entity.account.SocialAccount;
 import com.idata.profile.entity.content.MediaContent;
 import com.idata.profile.entity.raw.RawRecord;
@@ -98,9 +97,9 @@ public class T2ExtractionStep {
         request.setTitle(blankToNull(mc.getTitle()));
         request.setText(extractionText(mc));
         request.setLanguage(mc.getLanguage());
-        Object t1EntitiesHint = extractT1EntitiesHint(mc);
-        if (t1EntitiesHint != null) {
-            request.setAnnotation(t1EntitiesHint);
+        Object t1Annotation = extractT1Annotation(mc);
+        if (t1Annotation != null) {
+            request.setT1Annotation(t1Annotation);
         }
 
         T2ExtractRequest.Context context = new T2ExtractRequest.Context();
@@ -143,15 +142,15 @@ public class T2ExtractionStep {
         return response;
     }
 
-    private Object extractT1EntitiesHint(MediaContent mc) {
-        String entitiesHintJson = T1AnnotationView.parse(mc.getT1Annotation()).entitiesHintJson();
-        if (entitiesHintJson == null) {
+    private Object extractT1Annotation(MediaContent mc) {
+        String t1AnnotationJson = mc.getT1Annotation();
+        if (!hasText(t1AnnotationJson)) {
             return null;
         }
         try {
-            return OBJECT_MAPPER.readValue(entitiesHintJson, Object.class);
+            return OBJECT_MAPPER.readValue(t1AnnotationJson, Object.class);
         } catch (Exception e) {
-            log.warn("Failed to parse T1 entities hint for T2, contentId={}", mc.getId(), e);
+            log.warn("Failed to parse T1 annotation for T2, contentId={}", mc.getId(), e);
             return null;
         }
     }

@@ -50,7 +50,7 @@ public final class T1AnnotationView {
         return textAt("aigcDetection", "overallAigcLabel");
     }
 
-    /** 返回 annotations.basicObjective.entitiesHint 这部分的原始JSON文本（供T2解析用），没有则返回null */
+    /** 返回 annotations.basicObjective.entitiesHint 这部分的原始JSON文本，没有则返回null */
     public String entitiesHintJson() {
         JsonNode node = path("annotations", "basicObjective", "entitiesHint");
         return node != null && !node.isNull() && !(node.isArray() && node.isEmpty()) ? node.toString() : null;
