@@ -100,6 +100,9 @@ agent-proxy:
     enabled: true
     dir: logs/agent-requests
 
+pipeline:
+  thread-pool-size: 64
+
 llm:
   embedding:
     base-url: http://172.16.40.232:18013/v1

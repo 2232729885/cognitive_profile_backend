@@ -1,5 +1,6 @@
 package com.idata.profile.config;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.TaskScheduler;
@@ -20,10 +21,11 @@ import java.util.concurrent.Executors;
 public class ThreadPoolConfig {
 
     @Bean
-    public ExecutorService pipelineThreadPool() {
+    public ExecutorService pipelineThreadPool(
+            @Value("${pipeline.thread-pool-size:64}") int threadPoolSize) {
         // TODO: 按实际吞吐量调整线程数，初期可用固定大小，
         // 生产环境建议根据T1-T6 Agent的并发承载能力调整
-        return Executors.newFixedThreadPool(16);
+        return Executors.newFixedThreadPool(Math.max(1, threadPoolSize));
     }
 
     @Bean
