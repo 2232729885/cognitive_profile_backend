@@ -18,6 +18,7 @@ import com.idata.profile.mapper.task.PipelineTaskMapper;
 import com.idata.profile.pipeline.PipelineExecutor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -44,6 +45,7 @@ public class SocialContentConsumer {
     private final MediaContentMapper mediaContentMapper;
     private final PipelineTaskMapper pipelineTaskMapper;
     private final PipelineExecutor pipelineExecutor;
+    private final ObjectProvider<SocialContentConsumer> selfProvider;
 
     @KafkaListener(topics = KafkaTopicConstants.SOCIAL_CONTENT, groupId = "cognitive-profile-ingestion")
     public void onMessage(String rawMessage) {
@@ -61,7 +63,7 @@ public class SocialContentConsumer {
             return;
         }
 
-        processInTransaction(kafkaMessage);
+        selfProvider.getObject().processInTransaction(kafkaMessage);
     }
 
     @Transactional

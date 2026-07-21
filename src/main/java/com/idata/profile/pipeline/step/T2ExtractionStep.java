@@ -69,7 +69,8 @@ public class T2ExtractionStep {
                 response != null ? response.getEntities() : null,
                 mc.getId().toString(),
                 mc.getPlatform(),
-                mc.getLanguage());
+                mc.getLanguage(),
+                resolutionContextText(mc));
         Map<String, EntityResolutionService.ResolvedMention> resolvedMentions =
                 resolutionResult.getResolvedMentions();
 
@@ -119,6 +120,17 @@ public class T2ExtractionStep {
 
     private boolean hasExtractableText(MediaContent mc) {
         return hasText(mc.getTitle()) || hasText(mc.getBodyText());
+    }
+
+    private String resolutionContextText(MediaContent mc) {
+        StringBuilder text = new StringBuilder();
+        if (hasText(mc.getTitle())) {
+            text.append(mc.getTitle().trim()).append('\n');
+        }
+        if (hasText(mc.getBodyText())) {
+            text.append(mc.getBodyText().trim());
+        }
+        return text.toString().trim();
     }
 
     private String extractionText(MediaContent mc) {

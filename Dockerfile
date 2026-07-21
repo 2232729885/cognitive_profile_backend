@@ -55,14 +55,8 @@ RUN set -eux; \
 
 WORKDIR /app
 
-# 创建非 root 用户
-RUN groupadd -r appuser \
-    && useradd -r -g appuser appuser
-
 # 本地先打好 jar 包：mvn package -DskipTests
-COPY --chown=appuser:appuser cognitive-profile-backend-*.jar app.jar
-
-USER appuser
+COPY cognitive-profile-backend-*.jar app.jar
 
 EXPOSE 8080
 

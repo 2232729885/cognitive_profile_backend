@@ -14,6 +14,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.ObjectMapper;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 
@@ -101,7 +102,12 @@ public class ImageEmbeddingJob {
                 context.setContentType(mc.getContentType());
                 context.setAuthorHandle(mc.getAuthorPlatformUserId());
                 context.setPublishedAt(mc.getPublishedAt() != null ? mc.getPublishedAt().toString() : null);
-                context.setHashtags(mc.getHashtags() != null ? List.of(mc.getHashtags()) : null);
+                context.setHashtags(stringList(mc.getHashtags()));
+                context.setLikeCount(countOrZero(mc.getLikeCount()));
+                context.setCommentCount(countOrZero(mc.getCommentCount()));
+                context.setShareCount(countOrZero(mc.getShareCount()));
+                context.setRepostCount(countOrZero(mc.getRepostCount()));
+                context.setViewCount(countOrZero(mc.getViewCount()));
                 context.setParentContentId(mc.getParentContentId());
                 context.setUrl(mc.getUrl());
                 request.setContext(context);
@@ -126,5 +132,18 @@ public class ImageEmbeddingJob {
             }
         }
         log.info("[ImageEmbeddingJob] T1 multimodal re-annotation completed, success={}/{}", success, contentIds.size());
+    }
+
+    private List<String> stringList(String[] values) {
+        if (values == null || values.length == 0) {
+            return List.of();
+        }
+        return Arrays.stream(values)
+                .filter(value -> value != null && !value.isBlank())
+                .toList();
+    }
+
+    private Long countOrZero(Long value) {
+        return value != null ? value : 0L;
     }
 }

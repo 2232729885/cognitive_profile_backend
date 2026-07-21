@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
@@ -14,8 +15,16 @@ import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * 全系统调用T1-T6 Agent的唯一入口。
@@ -36,9 +45,19 @@ public class AgentProxyClient {
 
     private static final int STRUCTURED_LLM_AGENT_MIN_TIMEOUT_SECONDS = 1200;
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final Object REQUEST_JSONL_WRITE_LOCK = new Object();
 
     private final SubAgentRegistryMapper subAgentRegistryMapper;
     private final ObjectProvider<AgentProxyClient> selfProvider;
+
+    @Value("${agent-proxy.request-jsonl.enabled:true}")
+    private boolean requestJsonlEnabled;
+
+    @Value("${agent-proxy.request-jsonl.dir:/tmp/cognitive-profile/agent-requests}")
+    private String requestJsonlDir;
+
+    private volatile boolean requestJsonlFallbackLogged;
+    private volatile boolean requestJsonlFailureLogged;
 
     /**
      * 调用指定Agent的指定action。
@@ -76,16 +95,34 @@ public class AgentProxyClient {
                 String.format("Agent[%s]的%s地址未配置", agentCode, agent.getActiveUrlType()));
         }
 
-        log.debug("调用Agent: code={}, action={}, urlType={}, url={}",
-                agentCode, action, agent.getActiveUrlType(), baseUrl);
+        int timeoutSeconds = timeoutSeconds(agentCode, agent.getTimeoutSeconds());
+        String url = baseUrl + "/" + action;
+        log.debug("调用Agent: code={}, action={}, urlType={}, url={}, timeoutSeconds={}",
+                agentCode, action, agent.getActiveUrlType(), url, timeoutSeconds);
+        recordRequestJsonl(agentCode, action, request);
 
-        String rawResponse = restClient(timeoutSeconds(agentCode, agent.getTimeoutSeconds())).post()
-                .uri(baseUrl + "/" + action)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON)
-                .body(request)
-                .retrieve()
-                .body(String.class);
+        String rawResponse;
+        try {
+            rawResponse = restClient(timeoutSeconds).post()
+                    .uri(url)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .accept(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN, MediaType.APPLICATION_OCTET_STREAM)
+                    .body(request)
+                    .exchange((httpRequest, httpResponse) -> {
+                        byte[] responseBytes = httpResponse.getBody().readAllBytes();
+                        String responseText = new String(responseBytes, StandardCharsets.UTF_8);
+                        if (httpResponse.getStatusCode().isError()) {
+                            throw new IllegalStateException(String.format(
+                                    "Agent HTTP failure: agentCode=%s, action=%s, status=%s, body=%s",
+                                    agentCode, action, httpResponse.getStatusCode(), abbreviate(responseText, 1000)));
+                        }
+                        return responseText;
+                    });
+        } catch (RestClientException e) {
+            throw new IllegalStateException(String.format(
+                    "Agent HTTP call failed: agentCode=%s, action=%s, url=%s, timeoutSeconds=%s",
+                    agentCode, action, url, timeoutSeconds), e);
+        }
         return parseAgentResponse(agentCode, action, rawResponse, responseType);
     }
 
@@ -130,6 +167,73 @@ public class AgentProxyClient {
         }
         JsonNode value = node.path(fieldName);
         return value.isMissingNode() || value.isNull() ? null : value.asText(null);
+    }
+
+    private String abbreviate(String text, int maxLength) {
+        if (text == null || text.length() <= maxLength) {
+            return text;
+        }
+        return text.substring(0, maxLength) + "...";
+    }
+
+    private void recordRequestJsonl(String agentCode, String action, Object request) {
+        if (!requestJsonlEnabled || (!"T1".equals(agentCode) && !"T2".equals(agentCode) && !"T3".equals(agentCode))) {
+            return;
+        }
+        try {
+            Map<String, Object> line = new LinkedHashMap<>();
+            line.put("api", action);
+            line.put("request", request);
+
+            Path dir = requestJsonlOutputDir();
+            Path file = dir.resolve(requestJsonlFileName(agentCode));
+            String jsonLine = OBJECT_MAPPER.writeValueAsString(line) + System.lineSeparator();
+            synchronized (REQUEST_JSONL_WRITE_LOCK) {
+                Files.writeString(file, jsonLine, StandardCharsets.UTF_8,
+                        StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            }
+        } catch (JacksonException | IOException e) {
+            if (!requestJsonlFailureLogged) {
+                requestJsonlFailureLogged = true;
+                log.warn("Failed to record Agent request jsonl, agentCode={}, action={}, configuredDir={}",
+                        agentCode, action, requestJsonlDir, e);
+            } else {
+                log.debug("Failed to record Agent request jsonl, agentCode={}, action={}", agentCode, action, e);
+            }
+        }
+    }
+
+    private Path requestJsonlOutputDir() throws IOException {
+        Path configuredDir = Path.of(requestJsonlDir);
+        try {
+            Files.createDirectories(configuredDir);
+            return configuredDir;
+        } catch (IOException configuredError) {
+            Path fallbackDir = Path.of(System.getProperty("java.io.tmpdir"),
+                    "cognitive-profile", "agent-requests");
+            try {
+                Files.createDirectories(fallbackDir);
+                if (!requestJsonlFallbackLogged) {
+                    requestJsonlFallbackLogged = true;
+                    log.warn("Agent request jsonl dir is not writable, configuredDir={}, fallbackDir={}, reason={}",
+                            configuredDir, fallbackDir, configuredError.toString());
+                }
+                return fallbackDir;
+            } catch (IOException fallbackError) {
+                configuredError.addSuppressed(fallbackError);
+                throw configuredError;
+            }
+        }
+    }
+
+    private String requestJsonlFileName(String agentCode) {
+        if ("T1".equals(agentCode)) {
+            return "T1请求体样例 运行数据.jsonl";
+        }
+        if ("T2".equals(agentCode)) {
+            return "T2请求体样例 运行数据.jsonl";
+        }
+        return "T3请求体样例 运行数据.jsonl";
     }
 
     private RestClient restClient(int timeoutSeconds) {

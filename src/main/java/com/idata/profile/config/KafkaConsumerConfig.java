@@ -19,13 +19,17 @@ public class KafkaConsumerConfig {
     public ConsumerFactory<String, String> consumerFactory(
             @Value("${spring.kafka.bootstrap-servers}") String bootstrapServers,
             @Value("${spring.kafka.consumer.group-id:cognitive-profile-ingestion}") String groupId,
-            @Value("${spring.kafka.consumer.auto-offset-reset:earliest}") String autoOffsetReset) {
+            @Value("${spring.kafka.consumer.auto-offset-reset:earliest}") String autoOffsetReset,
+            @Value("${spring.kafka.consumer.properties.max.poll.interval.ms:1800000}") int maxPollIntervalMs,
+            @Value("${spring.kafka.consumer.properties.max.poll.records:1}") int maxPollRecords) {
         Map<String, Object> properties = new HashMap<>();
         properties.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         properties.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
         properties.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, autoOffsetReset);
         properties.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         properties.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        properties.put(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG, maxPollIntervalMs);
+        properties.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, maxPollRecords);
         return new DefaultKafkaConsumerFactory<>(properties);
     }
 

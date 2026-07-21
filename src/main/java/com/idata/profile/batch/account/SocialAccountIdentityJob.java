@@ -81,7 +81,7 @@ public class SocialAccountIdentityJob {
         mention.setAttributes(attributes);
 
         EntityResolutionService.ResolutionResult resolutionResult = entityResolutionService.resolveMentions(
-                List.of(mention), account.getId().toString(), account.getPlatform(), null);
+                List.of(mention), account.getId().toString(), account.getPlatform(), null, accountContextText(account));
         Map<String, EntityResolutionService.ResolvedMention> resolvedMap = resolutionResult.getResolvedMentions();
         EntityResolutionService.ResolvedMention resolvedMention = resolvedMap.get(account.getId().toString());
 
@@ -122,6 +122,25 @@ public class SocialAccountIdentityJob {
             return "organization";
         }
         return null;
+    }
+
+    private String accountContextText(SocialAccount account) {
+        StringBuilder text = new StringBuilder();
+        appendIfHasText(text, account.getDisplayName());
+        appendIfHasText(text, account.getHandle());
+        appendIfHasText(text, account.getBio());
+        appendIfHasText(text, account.getSelfDeclaredLocation());
+        return text.toString().trim();
+    }
+
+    private void appendIfHasText(StringBuilder text, String value) {
+        if (!hasText(value)) {
+            return;
+        }
+        if (!text.isEmpty()) {
+            text.append('\n');
+        }
+        text.append(value.trim());
     }
 
     private void mergeSocialAccountNode(SocialAccount account) {

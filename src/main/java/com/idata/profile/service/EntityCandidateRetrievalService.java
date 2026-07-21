@@ -18,6 +18,8 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class EntityCandidateRetrievalService {
 
+    private static final double MIN_VECTOR_ONLY_SCORE = 0.85D;
+
     private final EntityEsService entityEsService;
     private final MilvusVectorService milvusVectorService;
     private final EmbeddingService embeddingService;
@@ -59,6 +61,9 @@ public class EntityCandidateRetrievalService {
                     String entityId = hit.entityId();
                     if (candidates.containsKey(entityId)) {
                         addChannel(candidates.get(entityId), "VECTOR_INDEX");
+                        continue;
+                    }
+                    if (hit.score() < MIN_VECTOR_ONLY_SCORE) {
                         continue;
                     }
                     Map<String, Object> doc = backfilled.get(entityId);

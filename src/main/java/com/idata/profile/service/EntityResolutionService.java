@@ -39,6 +39,7 @@ public class EntityResolutionService {
 
     private static final double AUTO_MERGE_THRESHOLD = 0.9D;
     private static final double REVIEW_THRESHOLD = 0.6D;
+    private static final int CONTEXT_WINDOW_RADIUS = 180;
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final AgentProxyClient agentProxyClient;
@@ -54,7 +55,7 @@ public class EntityResolutionService {
 
     public ResolutionResult resolveMentions(
             List<T2ExtractResponse.ExtractedMention> rawMentions,
-            String contentId, String platform, String language) {
+            String contentId, String platform, String language, String contextText) {
         Map<String, ResolvedMention> resolved = new LinkedHashMap<>();
         ResolutionResult empty = new ResolutionResult();
         empty.setResolvedMentions(resolved);
@@ -66,7 +67,7 @@ public class EntityResolutionService {
                 .map(this::normalizeMention)
                 .filter(m -> hasText(m.getMentionId()) && hasText(m.getType()) && hasText(entityName(m)))
                 .toList();
-        T3BatchOutcome t3Outcome = resolveWithT3(mentions, contentId, platform, language);
+        T3BatchOutcome t3Outcome = resolveWithT3(mentions, contentId, platform, language, contextText);
 
         for (T2ExtractResponse.ExtractedMention mention : mentions) {
             T3ResolveBatchResponse.ResolveResult result = t3Outcome.results.get(mention.getMentionId());
@@ -98,10 +99,10 @@ public class EntityResolutionService {
 
     private T3BatchOutcome resolveWithT3(
             List<T2ExtractResponse.ExtractedMention> mentions,
-            String contentId, String platform, String language) {
+            String contentId, String platform, String language, String contextText) {
         T3ResolveBatchRequest request = new T3ResolveBatchRequest();
         request.setItems(mentions.stream()
-                .map(mention -> toResolveItem(mention, contentId, platform, language))
+                .map(mention -> toResolveItem(mention, contentId, platform, language, contextText))
                 .filter(item -> item.getCandidates() != null && !item.getCandidates().isEmpty())
                 .toList());
         T3ResolveBatchRequest.Strategy strategy = new T3ResolveBatchRequest.Strategy();
@@ -135,14 +136,18 @@ public class EntityResolutionService {
     }
 
     private T3ResolveBatchRequest.ResolveItem toResolveItem(
-            T2ExtractResponse.ExtractedMention mention, String contentId, String platform, String language) {
+            T2ExtractResponse.ExtractedMention mention,
+            String contentId,
+            String platform,
+            String language,
+            String contextText) {
         T3ResolveBatchRequest.ResolveItem item = new T3ResolveBatchRequest.ResolveItem();
         item.setMention(toT3Mention(mention));
         item.setCandidates(candidateRetrievalService.retrieveCandidates(entityName(mention), mention.getType(), 10));
         T3ResolveBatchRequest.Context context = new T3ResolveBatchRequest.Context();
         context.setContentId(contentId);
         context.setPlatform(platform);
-        context.setTextWindow(entityName(mention));
+        context.setTextWindow(buildContextWindow(contextText, mention));
         context.setLanguage(language);
         item.setContext(context);
         return item;
@@ -366,6 +371,42 @@ public class EntityResolutionService {
             return null;
         }
         return BigDecimal.valueOf(boundedScore(score, 0D)).setScale(4, RoundingMode.HALF_UP);
+    }
+
+    private String buildContextWindow(String contextText, T2ExtractResponse.ExtractedMention mention) {
+        if (!hasText(contextText)) {
+            return entityName(mention);
+        }
+        String text = contextText.trim();
+        T2ExtractResponse.ExtractedMention.Span span = mention.getSpan();
+        if (span != null && span.getStart() != null && span.getEnd() != null) {
+            int start = Math.max(0, span.getStart() - CONTEXT_WINDOW_RADIUS);
+            int end = Math.min(text.length(), span.getEnd() + CONTEXT_WINDOW_RADIUS);
+            if (start < end) {
+                return text.substring(start, end);
+            }
+        }
+        String name = entityName(mention);
+        if (!hasText(name)) {
+            return abbreviate(text, CONTEXT_WINDOW_RADIUS * 2);
+        }
+        int index = text.indexOf(name);
+        if (index < 0 && mention.getName() != null) {
+            index = text.indexOf(mention.getName());
+        }
+        if (index >= 0) {
+            int start = Math.max(0, index - CONTEXT_WINDOW_RADIUS);
+            int end = Math.min(text.length(), index + name.length() + CONTEXT_WINDOW_RADIUS);
+            return text.substring(start, end);
+        }
+        return abbreviate(text, CONTEXT_WINDOW_RADIUS * 2);
+    }
+
+    private String abbreviate(String value, int maxLength) {
+        if (value == null || value.length() <= maxLength) {
+            return value;
+        }
+        return value.substring(0, maxLength);
     }
 
     private double boundedScore(Double value, double fallback) {

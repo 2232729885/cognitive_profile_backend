@@ -54,7 +54,7 @@ spring:
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       properties:
         max.poll.interval.ms: 1800000
-        max.poll.records: 10
+        max.poll.records: 1
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
@@ -94,6 +94,11 @@ logging:
     com.idata.profile: info
 #  file:
 #    name: logs/cognitive-profile-backend.log
+
+agent-proxy:
+  request-jsonl:
+    enabled: true
+    dir: logs/agent-requests
 
 llm:
   embedding:

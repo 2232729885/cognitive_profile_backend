@@ -16,7 +16,7 @@ public class T1AnnotateRequest {
     private String language;
 
     /** 图片/视频列表，可以为空（纯文本内容），也可以同时有多张图和多个视频 */
-    private List<MediaItem> medias;
+    private List<MediaItem> medias = List.of();
 
     /** 内容上下文，辅助提升标注质量 */
     private Context context;

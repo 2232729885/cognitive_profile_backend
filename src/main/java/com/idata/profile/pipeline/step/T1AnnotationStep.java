@@ -21,6 +21,7 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.OffsetDateTime;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -75,19 +76,17 @@ public class T1AnnotationStep {
         request.setText(mc.getBodyText());
         request.setLanguage(mc.getLanguage());
 
-        if (!assets.isEmpty()) {
-            request.setMedias(assets.stream()
-                    .filter(a -> "image".equals(a.getAssetType()) || "video".equals(a.getAssetType()))
-                    .map(a -> {
-                        T1AnnotateRequest.MediaItem item = new T1AnnotateRequest.MediaItem();
-                        item.setId(a.getId().toString());
-                        item.setUrl(imageAnnotationUtil.buildImageUrl(a));
-                        item.setMediaType(a.getAssetType());
-                        return item;
-                    })
-                    .filter(item -> item.getUrl() != null)
-                    .toList());
-        }
+        request.setMedias(assets.stream()
+                .filter(a -> "image".equals(a.getAssetType()) || "video".equals(a.getAssetType()))
+                .map(a -> {
+                    T1AnnotateRequest.MediaItem item = new T1AnnotateRequest.MediaItem();
+                    item.setId(a.getId().toString());
+                    item.setUrl(imageAnnotationUtil.buildImageUrl(a));
+                    item.setMediaType(a.getAssetType());
+                    return item;
+                })
+                .filter(item -> item.getUrl() != null)
+                .toList());
 
         T1AnnotateRequest.Context context = new T1AnnotateRequest.Context();
         context.setContentId(mc.getId().toString());
@@ -95,12 +94,12 @@ public class T1AnnotationStep {
         context.setContentType(mc.getContentType());
         context.setAuthorHandle(mc.getAuthorPlatformUserId());
         context.setPublishedAt(mc.getPublishedAt() != null ? mc.getPublishedAt().toString() : null);
-        context.setHashtags(mc.getHashtags() != null ? List.of(mc.getHashtags()) : null);
-        context.setLikeCount(mc.getLikeCount());
-        context.setCommentCount(mc.getCommentCount());
-        context.setShareCount(mc.getShareCount());
-        context.setRepostCount(mc.getRepostCount());
-        context.setViewCount(mc.getViewCount());
+        context.setHashtags(stringList(mc.getHashtags()));
+        context.setLikeCount(countOrZero(mc.getLikeCount()));
+        context.setCommentCount(countOrZero(mc.getCommentCount()));
+        context.setShareCount(countOrZero(mc.getShareCount()));
+        context.setRepostCount(countOrZero(mc.getRepostCount()));
+        context.setViewCount(countOrZero(mc.getViewCount()));
         context.setParentContentId(mc.getParentContentId());
         context.setUrl(mc.getUrl());
         request.setContext(context);
@@ -156,6 +155,19 @@ public class T1AnnotationStep {
             log.warn("Failed to serialize T1 response");
             return null;
         }
+    }
+
+    private List<String> stringList(String[] values) {
+        if (values == null || values.length == 0) {
+            return List.of();
+        }
+        return Arrays.stream(values)
+                .filter(value -> value != null && !value.isBlank())
+                .toList();
+    }
+
+    private Long countOrZero(Long value) {
+        return value != null ? value : 0L;
     }
 
     private boolean hasText(String value) {
