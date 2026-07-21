@@ -835,8 +835,47 @@ CREATE TRIGGER trg_pipeline_tasks_updated_at
     BEFORE UPDATE ON pipeline_tasks
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
+CREATE TABLE IF NOT EXISTS pipeline_task_failures (
+    id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_id             UUID        NOT NULL REFERENCES pipeline_tasks(id) ON DELETE CASCADE,
+    raw_record_id       UUID        REFERENCES raw_records(id),
+    content_id          UUID        REFERENCES media_contents(id),
+    failed_step         VARCHAR(4)  NOT NULL,
+    attempt_no          SMALLINT    NOT NULL,
+    max_retries         SMALLINT    NOT NULL,
+    will_retry          BOOLEAN     NOT NULL DEFAULT TRUE,
+    task_status         VARCHAR(32),
+    step_status         VARCHAR(16),
+    error_class         VARCHAR(255),
+    error_message       TEXT,
+    root_error_class    VARCHAR(255),
+    root_error_message  TEXT,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+COMMENT ON TABLE  pipeline_task_failures                    IS '入库流水线失败尝试明细表。每次T1/T2/T3/T4执行失败都会记录一条，不会被后续重试覆盖';
+COMMENT ON COLUMN pipeline_task_failures.id                 IS '主键，UUID';
+COMMENT ON COLUMN pipeline_task_failures.task_id            IS '关联 pipeline_tasks.id';
+COMMENT ON COLUMN pipeline_task_failures.raw_record_id      IS '失败任务对应的 raw_records.id 快照';
+COMMENT ON COLUMN pipeline_task_failures.content_id         IS '失败任务对应的 media_contents.id 快照';
+COMMENT ON COLUMN pipeline_task_failures.failed_step        IS '失败发生在哪一步：T1 | T2 | T3 | T4';
+COMMENT ON COLUMN pipeline_task_failures.attempt_no         IS '本次失败后的累计尝试次数，对应 pipeline_tasks.retry_count';
+COMMENT ON COLUMN pipeline_task_failures.max_retries        IS '任务最大重试次数快照';
+COMMENT ON COLUMN pipeline_task_failures.will_retry         IS '本次失败后是否还会自动重试';
+COMMENT ON COLUMN pipeline_task_failures.task_status        IS '记录失败时的任务整体状态快照';
+COMMENT ON COLUMN pipeline_task_failures.step_status        IS '记录失败时的步骤状态快照';
+COMMENT ON COLUMN pipeline_task_failures.error_class        IS '捕获到的异常类名';
+COMMENT ON COLUMN pipeline_task_failures.error_message      IS '捕获到的异常消息';
+COMMENT ON COLUMN pipeline_task_failures.root_error_class   IS '根因异常类名';
+COMMENT ON COLUMN pipeline_task_failures.root_error_message IS '根因异常消息';
+
+CREATE INDEX IF NOT EXISTS idx_ptf_task    ON pipeline_task_failures(task_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ptf_step    ON pipeline_task_failures(failed_step, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ptf_created ON pipeline_task_failures(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ptf_retry   ON pipeline_task_failures(will_retry, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS workflow_tasks (
-                                              id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                                               id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id          UUID,
     user_id             UUID,
     input_text          TEXT,

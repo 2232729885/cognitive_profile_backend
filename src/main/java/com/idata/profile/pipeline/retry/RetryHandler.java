@@ -3,7 +3,9 @@ package com.idata.profile.pipeline.retry;
 import com.idata.profile.common.constant.PipelineStatus;
 import com.idata.profile.entity.raw.RawRecord;
 import com.idata.profile.entity.task.PipelineTask;
+import com.idata.profile.entity.task.PipelineTaskFailure;
 import com.idata.profile.mapper.raw.RawRecordMapper;
+import com.idata.profile.mapper.task.PipelineTaskFailureMapper;
 import com.idata.profile.mapper.task.PipelineTaskMapper;
 import com.idata.profile.pipeline.PipelineExecutor;
 import lombok.RequiredArgsConstructor;
@@ -13,12 +15,9 @@ import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
-import java.time.OffsetDateTime;
 
 /**
- * 失败重试统一处理。见 docs/数据处理流程.md 第九章。
- * 指数退避：1s/2s/4s（重试次数从0开始，delay = 2^retryCount秒）。
- * 超过max_retries(默认3)后推死信队列，不影响其他记录继续处理。
+ * Unified retry handling for pipeline step failures.
  */
 @Slf4j
 @Component
@@ -26,8 +25,9 @@ import java.time.OffsetDateTime;
 public class RetryHandler {
 
     private final PipelineTaskMapper pipelineTaskMapper;
+    private final PipelineTaskFailureMapper pipelineTaskFailureMapper;
     private final RawRecordMapper rawRecordMapper;
-    private final TaskScheduler taskScheduler;  // 见 config.ThreadPoolConfig
+    private final TaskScheduler taskScheduler;
     private final ObjectProvider<PipelineExecutor> pipelineExecutorProvider;
 
     public void markFailedAndRetry(PipelineTask task, String failedStep, Exception error) {
@@ -41,8 +41,11 @@ public class RetryHandler {
             case "T2" -> task.setT2Status("failed");
             case "T3" -> task.setT3Status("failed");
             case "T4" -> task.setT4Status("failed");
-            default -> log.warn("未知失败步骤: {}", failedStep);
+            default -> log.warn("Unknown failed pipeline step: {}", failedStep);
         }
+
+        boolean willRetry = newRetryCount < task.getMaxRetries();
+        recordFailureAttempt(task, failedStep, error, newRetryCount, willRetry);
 
         if (newRetryCount >= task.getMaxRetries()) {
             task.setStatus("FAILED");
@@ -61,6 +64,40 @@ public class RetryHandler {
         }
     }
 
+    private void recordFailureAttempt(PipelineTask task, String failedStep, Exception error,
+                                      short attemptNo, boolean willRetry) {
+        try {
+            PipelineTaskFailure failure = new PipelineTaskFailure();
+            failure.setTaskId(task.getId());
+            failure.setRawRecordId(task.getRawRecordId());
+            failure.setContentId(task.getContentId());
+            failure.setFailedStep(failedStep);
+            failure.setAttemptNo(attemptNo);
+            failure.setMaxRetries(task.getMaxRetries());
+            failure.setWillRetry(willRetry);
+            failure.setTaskStatus(willRetry ? task.getStatus() : "FAILED");
+            failure.setStepStatus("failed");
+            failure.setErrorClass(error.getClass().getName());
+            failure.setErrorMessage(error.getMessage());
+
+            Throwable root = rootCause(error);
+            failure.setRootErrorClass(root.getClass().getName());
+            failure.setRootErrorMessage(root.getMessage());
+            pipelineTaskFailureMapper.insert(failure);
+        } catch (Exception insertError) {
+            log.warn("Failed to record pipeline task failure, taskId={}, failedStep={}",
+                    task.getId(), failedStep, insertError);
+        }
+    }
+
+    private Throwable rootCause(Throwable error) {
+        Throwable current = error;
+        while (current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current;
+    }
+
     private void scheduleRetry(java.util.UUID taskId, Duration delay) {
         taskScheduler.schedule(
                 () -> pipelineExecutorProvider.getObject().submit(taskId),
@@ -68,7 +105,8 @@ public class RetryHandler {
     }
 
     private void sendToDeadLetterQueue(PipelineTask task) {
-        log.error("任务进入死信队列, taskId={}, rawRecordId={}", task.getId(), task.getRawRecordId());
-        // TODO: 实际死信队列实现（如写专门的表，或发Kafka到死信topic，供人工核查）
+        log.error("Pipeline task entered dead-letter queue, taskId={}, rawRecordId={}",
+                task.getId(), task.getRawRecordId());
+        // TODO: Add a real dead-letter queue or manual review table if needed.
     }
 }
