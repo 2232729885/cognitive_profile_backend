@@ -121,8 +121,13 @@ llm:
     base-url: http://172.16.40.232:18015/v1
     api-key: idata@123456
     model: Qwen3-ASR-1.7B
+    timeout-seconds: 180
 
 media:
+  ocr:
+    concurrency: 4
+    timeout-seconds: 180
+    max-tokens: 1024
   caption:
     enabled: true
     timeout-seconds: 300
