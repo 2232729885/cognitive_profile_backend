@@ -21,7 +21,7 @@ public class KafkaConsumerConfig {
             @Value("${spring.kafka.consumer.group-id:cognitive-profile-ingestion}") String groupId,
             @Value("${spring.kafka.consumer.auto-offset-reset:earliest}") String autoOffsetReset,
             @Value("${spring.kafka.consumer.properties.max.poll.interval.ms:1800000}") int maxPollIntervalMs,
-            @Value("${spring.kafka.consumer.properties.max.poll.records:1}") int maxPollRecords) {
+            @Value("${spring.kafka.consumer.properties.max.poll.records:50}") int maxPollRecords) {
         Map<String, Object> properties = new HashMap<>();
         properties.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         properties.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
