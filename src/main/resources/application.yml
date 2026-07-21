@@ -54,7 +54,7 @@ spring:
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       properties:
         max.poll.interval.ms: 1800000
-        max.poll.records: 50
+        max.poll.records: 256
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
@@ -105,8 +105,8 @@ llm:
     base-url: http://172.16.40.232:18013/v1
     api-key: idata@123456
     model: Qwen3-VL-Embedding-8B
-    text-concurrency: 1
-    image-concurrency: 1
+    text-concurrency: 256
+    image-concurrency: 256
     timeout-seconds: 60
     max-retries: 2
     retry-backoff-ms: 500
