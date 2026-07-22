@@ -168,6 +168,8 @@ public class SearchQueryTranslationService {
     public TranslatedMediaText translateMediaText(String ocrText, String asrText,
                                                   String captionText, String language) {
         if (!enabled) {
+            log.warn("[SearchTranslation] media text translation skipped because translation is disabled, language={}, hasOcr={}, hasAsr={}, hasCaption={}",
+                    language, hasText(ocrText), hasText(asrText), hasText(captionText));
             return TranslatedMediaText.empty();
         }
         String normalizedOcrText = TextEncodingRepairUtil.repairLikelyUtf8Mojibake(ocrText);
@@ -181,6 +183,9 @@ public class SearchQueryTranslationService {
             return new TranslatedMediaText(normalizedOcrText, normalizedAsrText, normalizedCaptionText);
         }
         if (!tryAcquire()) {
+            log.warn("[SearchTranslation] media text translation skipped because translation route is busy, language={}, ocrLength={}, asrLength={}, captionLength={}",
+                    language, textLength(normalizedOcrText), textLength(normalizedAsrText),
+                    textLength(normalizedCaptionText));
             return TranslatedMediaText.empty();
         }
         try {
@@ -212,7 +217,7 @@ public class SearchQueryTranslationService {
                     englishPivotText(response.getAsrText(), normalizedAsrText),
                     englishPivotText(response.getCaptionText(), normalizedCaptionText));
         } catch (Exception e) {
-            log.debug("[SearchTranslation] media text translation failed, language={}, reason={}",
+            log.warn("[SearchTranslation] media text translation failed, language={}, reason={}",
                     language, rootMessage(e));
             return TranslatedMediaText.empty();
         } finally {
@@ -397,6 +402,10 @@ public class SearchQueryTranslationService {
 
     private boolean hasText(String value) {
         return value != null && !value.trim().isEmpty();
+    }
+
+    private int textLength(String value) {
+        return value == null ? 0 : value.length();
     }
 
     private String rootMessage(Throwable error) {

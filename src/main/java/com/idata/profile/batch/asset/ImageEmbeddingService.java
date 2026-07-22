@@ -476,6 +476,13 @@ public class ImageEmbeddingService {
             if (needsCaption && hasText(generated.captionText())) {
                 translatedCaptionText = generated.captionText();
             }
+            if ((needsOcr && !hasText(generated.ocrText()))
+                    || (needsAsr && !hasText(generated.asrText()))
+                    || (needsCaption && !hasText(generated.captionText()))) {
+                log.warn("Media asset text translation produced empty result, assetId={}, contentId={}, language={}, needsOcr={}, needsAsr={}, needsCaption={}, ocrLength={}, asrLength={}, captionLength={}",
+                        asset.getId(), asset.getContentId(), language, needsOcr, needsAsr, needsCaption,
+                        textLength(asset.getOcrText()), textLength(asset.getAsrText()), textLength(captionText));
+            }
         }
 
         asset.setTranslatedOcrText(cleanMediaText(translatedOcrText));
@@ -650,6 +657,10 @@ public class ImageEmbeddingService {
 
     private boolean hasText(String value) {
         return value != null && !value.trim().isEmpty();
+    }
+
+    private int textLength(String value) {
+        return value == null ? 0 : value.length();
     }
 
     private String rootMessage(Throwable error) {
