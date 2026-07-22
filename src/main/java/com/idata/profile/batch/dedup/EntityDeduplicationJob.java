@@ -355,6 +355,8 @@ public class EntityDeduplicationJob {
         item.setMention(mention);
         item.setCandidates(candidates);
         T3ResolveBatchRequest.Context context = new T3ResolveBatchRequest.Context();
+        context.setContentId(candidate.getId());
+        context.setPlatform("entity_dedup_job");
         context.setLanguage("zh");
         context.setTextWindow(candidate.getCanonicalName());
         item.setContext(context);

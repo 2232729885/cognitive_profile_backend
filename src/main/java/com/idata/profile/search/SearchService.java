@@ -1,6 +1,7 @@
 package com.idata.profile.search;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.idata.profile.common.util.T1AnnotationView;
 import com.idata.profile.entity.account.SocialAccount;
 import com.idata.profile.entity.content.MediaAsset;
 import com.idata.profile.entity.content.MediaContent;
@@ -15,12 +16,14 @@ import com.idata.profile.mapper.content.MediaAssetMapper;
 import com.idata.profile.mapper.content.MediaContentMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.concurrent.TimeoutException;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -43,7 +46,6 @@ public class SearchService {
     private static final int MAX_RECALL_SIZE = 500;
     private static final int MAX_PAGE_SIZE = 100;
     private static final int RRF_K = 60;
-    private static final long HYBRID_ROUTE_TIMEOUT_SECONDS = 8L;
     private static final float DEFAULT_CONTENT_SEMANTIC_MIN_SCORE = 0.45F;
     private static final float DEFAULT_MEDIA_TEXT_SEMANTIC_MIN_SCORE = 0.58F;
     private static final float DEFAULT_MEDIA_VISUAL_MIN_SCORE = 0.65F;
@@ -53,6 +55,7 @@ public class SearchService {
     private static final float MEDIA_ONLY_TEXT_SEMANTIC_MIN_SCORE = 0.72F;
     private static final float MEDIA_TARGET_TEXT_SEMANTIC_MIN_SCORE = 0.80F;
     private static final float MEDIA_TEXT_SEMANTIC_FALLBACK_MIN_SCORE = 0.86F;
+    private static final float SHORT_QUERY_SEMANTIC_FALLBACK_MIN_SCORE = 0.90F;
     private static final double MEDIA_FIRST_RATIO = 0.60D;
     private static final double TEXT_FIRST_RATIO = 0.60D;
     private static final double STRONG_MEDIA_KEYWORD_SCORE = 8D;
@@ -76,6 +79,9 @@ public class SearchService {
     private final MediaAssetMapper mediaAssetMapper;
     private final SocialAccountMapper socialAccountMapper;
     private final SearchQueryTranslationService translationService;
+
+    @Value("${search.hybrid.route-timeout-seconds:30}")
+    private long hybridRouteTimeoutSeconds;
 
     public SearchResult searchByText(String keyword, String platform,
                                      String language, int page, int size) {
@@ -159,11 +165,13 @@ public class SearchService {
                                               Double semanticMinScore, Double visualMinScore, long startedAt) {
         boolean includeText = !isMediaOnlyTargetModality(targetModality);
         boolean includeMedia = !"text".equals(targetModality);
+        List<String> queryVariants = hasText(queryText) ? semanticQueryVariants(queryText) : List.of();
         CompletableFuture<List<MediaContentEsService.EsSearchResult>> esFuture = includeText && isEnabled(request, "es")
-                ? safeRoute("es", () -> searchContentKeywordVariants(queryText, platform, language, topK))
+                ? safeRoute("es", () -> searchContentKeywordVariants(queryText, platform, language, topK, queryVariants))
                 : CompletableFuture.completedFuture(List.of());
         CompletableFuture<List<MilvusVectorService.ScoredEntityId>> milvusFuture = includeText && isEnabled(request, "milvus")
-                ? safeRoute("milvus", () -> searchSemanticIds(queryText, platform, language, topK, semanticMinScore))
+                ? safeRoute("milvus", () -> searchSemanticIds(
+                        queryText, platform, language, topK, semanticMinScore, queryVariants))
                 : CompletableFuture.completedFuture(List.of());
         CompletableFuture<List<String>> neo4jFuture = includeText && request != null && request.isEnableNeo4j()
                 ? safeRoute("neo4j", () -> searchNeo4jContentIds(queryText, platform, language, topK))
@@ -171,12 +179,12 @@ public class SearchService {
         CompletableFuture<List<MediaAssetEsService.EsImageAssetSearchResult>> mediaKeywordFuture =
                 includeMedia && isEnabled(request, "es") && hasText(queryText)
                         ? safeRoute("media-es", () -> searchMediaKeywordVariants(
-                                queryText, mediaTopK, targetMediaType(targetModality)))
+                                queryText, mediaTopK, targetMediaType(targetModality), queryVariants))
                         : CompletableFuture.completedFuture(List.of());
         CompletableFuture<List<MilvusVectorService.MediaAssetVectorSearchResult>> mediaSemanticFuture =
                 includeMedia && isEnabled(request, "milvus") && hasText(queryText)
                         ? safeRoute("media-milvus", () -> searchMediaAssetTextVectors(
-                                queryText, mediaTopK, semanticMinScore, targetModality))
+                                queryText, mediaTopK, semanticMinScore, visualMinScore, targetModality, queryVariants))
                         : CompletableFuture.completedFuture(List.of());
         CompletableFuture<List<MilvusVectorService.MediaAssetVectorSearchResult>> imageFuture = includeMedia && hasImage
                 ? safeRoute("image", () -> searchMediaAssetVisualVectors(
@@ -197,7 +205,8 @@ public class SearchService {
         List<MediaAssetEsService.EsImageAssetSearchResult> mediaKeywordResults = mediaKeywordFuture.join();
         List<MilvusVectorService.MediaAssetVectorSearchResult> mediaSemanticResults =
                 filterMediaSemanticResultsForTarget(
-                        filterMediaTextSemanticBySourceText(mediaSemanticFuture.join(), queryText),
+                        filterMediaTextSemanticBySourceText(
+                                mediaSemanticFuture.join(), queryText, queryVariants),
                         targetModality,
                         !mediaKeywordResults.isEmpty());
 
@@ -235,11 +244,16 @@ public class SearchService {
 
     private List<MediaContentEsService.EsSearchResult> searchContentKeywordVariants(
             String queryText, String platform, String language, int topK) {
+        return searchContentKeywordVariants(queryText, platform, language, topK, semanticQueryVariants(queryText));
+    }
+
+    private List<MediaContentEsService.EsSearchResult> searchContentKeywordVariants(
+            String queryText, String platform, String language, int topK, List<String> queryVariants) {
         if (!hasText(queryText) || topK <= 0) {
             return List.of();
         }
         Map<String, MediaContentEsService.EsSearchResult> best = new LinkedHashMap<>();
-        for (String query : translationService.expandQuery(queryText)) {
+        for (String query : usableQueryVariants(queryText, queryVariants)) {
             for (MediaContentEsService.EsSearchResult result
                     : esService.searchByKeywordWithHighlight(query, platform, language, topK)) {
                 if (result == null || !hasText(result.getContentId())) {
@@ -258,11 +272,16 @@ public class SearchService {
 
     private List<MediaAssetEsService.EsImageAssetSearchResult> searchMediaKeywordVariants(
             String queryText, int topK, String mediaType) {
+        return searchMediaKeywordVariants(queryText, topK, mediaType, semanticQueryVariants(queryText));
+    }
+
+    private List<MediaAssetEsService.EsImageAssetSearchResult> searchMediaKeywordVariants(
+            String queryText, int topK, String mediaType, List<String> queryVariants) {
         if (!hasText(queryText) || topK <= 0) {
             return List.of();
         }
         Map<String, MediaAssetEsService.EsImageAssetSearchResult> best = new LinkedHashMap<>();
-        for (String query : translationService.expandQuery(queryText)) {
+        for (String query : usableQueryVariants(queryText, queryVariants)) {
             for (MediaAssetEsService.EsImageAssetSearchResult result
                     : mediaAssetEsService.searchMediaByKeyword(query, topK, mediaType)) {
                 if (result == null || !hasText(result.assetId())) {
@@ -506,9 +525,16 @@ public class SearchService {
     }
 
     private List<MilvusVectorService.MediaAssetVectorSearchResult> searchMediaAssetTextVectors(
-            String queryText, int topK, Double semanticMinScore, String targetModality) {
+            String queryText, int topK, Double semanticMinScore, Double visualMinScore, String targetModality) {
+        return searchMediaAssetTextVectors(queryText, topK, semanticMinScore, visualMinScore,
+                targetModality, semanticQueryVariants(queryText));
+    }
+
+    private List<MilvusVectorService.MediaAssetVectorSearchResult> searchMediaAssetTextVectors(
+            String queryText, int topK, Double semanticMinScore, Double visualMinScore,
+            String targetModality, List<String> queryVariants) {
         Map<String, MilvusVectorService.MediaAssetVectorSearchResult> best = new LinkedHashMap<>();
-        for (String variant : semanticQueryVariants(queryText)) {
+        for (String variant : usableQueryVariants(queryText, queryVariants)) {
             float[] embedding = textEmbedding(variant);
             if (embedding == null) {
                 continue;
@@ -516,7 +542,7 @@ public class SearchService {
             milvusService.searchMediaAssetTextEmbeddingsDetailed(embedding, topK).stream()
                     .filter(result -> matchesTargetMediaType(result.mediaType(), targetModality))
                     .filter(result -> result.score() >= mediaSemanticMinScore(
-                            queryText, semanticMinScore, targetModality, result.vectorField()))
+                            queryText, semanticMinScore, visualMinScore, targetModality, result.vectorField()))
                     .forEach(result -> mergeMediaVectorResult(best, result));
         }
         return best.values().stream()
@@ -541,7 +567,7 @@ public class SearchService {
 
     private List<MilvusVectorService.MediaAssetVectorSearchResult> filterMediaTextSemanticBySourceText(
             List<MilvusVectorService.MediaAssetVectorSearchResult> results,
-            String queryText) {
+            String queryText, List<String> queryVariants) {
         if (results == null || results.isEmpty()) {
             return List.of();
         }
@@ -562,13 +588,13 @@ public class SearchService {
             }
         }
         return results.stream()
-                .filter(result -> isQualifiedMediaTextSemanticResult(result, queryText, assetsById))
+                .filter(result -> isQualifiedMediaTextSemanticResult(result, queryText, queryVariants, assetsById))
                 .toList();
     }
 
     private boolean isQualifiedMediaTextSemanticResult(
             MilvusVectorService.MediaAssetVectorSearchResult result,
-            String queryText,
+            String queryText, List<String> queryVariants,
             Map<UUID, MediaAsset> assetsById) {
         if (result == null) {
             return false;
@@ -581,16 +607,16 @@ public class SearchService {
         MediaAsset asset = assetId == null ? null : assetsById.get(assetId);
         String sourceText = mediaSemanticSourceText(vectorField, asset);
         if (!hasText(sourceText)) {
-            return result.score() >= MEDIA_TEXT_SEMANTIC_FALLBACK_MIN_SCORE;
+            return result.score() >= strictSemanticFallbackMinScore(queryText, MEDIA_TEXT_SEMANTIC_FALLBACK_MIN_SCORE);
         }
         if (!isUsefulSemanticSourceText(sourceText)) {
             return false;
         }
-        if (isNaturalLanguageQuery(queryText) || isLikelyCrossLanguage(queryText, sourceText)) {
+        if (isNaturalLanguageQuery(queryText)) {
             return true;
         }
-        return hasCompatibleSemanticToken(queryText, sourceText)
-                || result.score() >= MEDIA_TEXT_SEMANTIC_FALLBACK_MIN_SCORE;
+        return hasCompatibleSemanticQuery(queryText, queryVariants, sourceText)
+                || result.score() >= strictSemanticFallbackMinScore(queryText, MEDIA_TEXT_SEMANTIC_FALLBACK_MIN_SCORE);
     }
 
     private String mediaSemanticSourceText(String vectorField, MediaAsset asset) {
@@ -1173,9 +1199,15 @@ public class SearchService {
                         return List.<T>of();
                     }
                 })
-                .orTimeout(HYBRID_ROUTE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                .orTimeout(hybridRouteTimeoutSeconds(), TimeUnit.SECONDS)
                 .exceptionally(e -> {
-                    log.warn("Hybrid search route completed exceptionally, route={}", routeName, e);
+                    Throwable root = rootCause(e);
+                    if (root instanceof TimeoutException) {
+                        log.warn("Hybrid search route timed out, route={}, timeoutSeconds={}",
+                                routeName, hybridRouteTimeoutSeconds());
+                    } else {
+                        log.warn("Hybrid search route completed exceptionally, route={}", routeName, e);
+                    }
                     return List.of();
                 });
     }
@@ -1209,6 +1241,24 @@ public class SearchService {
                 .filter(value -> value.length() >= 8)
                 .forEach(variants::add);
         return variants.stream().limit(4).toList();
+    }
+
+    private List<String> usableQueryVariants(String queryText, List<String> queryVariants) {
+        LinkedHashSet<String> variants = new LinkedHashSet<>();
+        if (queryVariants != null) {
+            queryVariants.stream()
+                    .map(this::normalizeWhitespace)
+                    .filter(this::hasText)
+                    .forEach(variants::add);
+        }
+        if (variants.isEmpty() && hasText(queryText)) {
+            variants.add(normalizeWhitespace(queryText));
+        }
+        return variants.stream().limit(4).toList();
+    }
+
+    private long hybridRouteTimeoutSeconds() {
+        return Math.max(1L, hybridRouteTimeoutSeconds);
     }
 
     private String normalizeWhitespace(String text) {
@@ -1830,13 +1880,20 @@ public class SearchService {
 
     private List<MilvusVectorService.ScoredEntityId> searchSemanticIds(
             String queryText, String platform, String language, int topK, Double semanticMinScore) {
+        return searchSemanticIds(queryText, platform, language, topK, semanticMinScore, semanticQueryVariants(queryText));
+    }
+
+    private List<MilvusVectorService.ScoredEntityId> searchSemanticIds(
+            String queryText, String platform, String language, int topK, Double semanticMinScore,
+            List<String> queryVariants) {
         if (!hasText(queryText) || topK <= 0) {
             return List.of();
         }
 
         float minScore = contentSemanticMinScore(queryText, semanticMinScore);
         Map<String, MilvusVectorService.ScoredEntityId> best = new LinkedHashMap<>();
-        for (String variant : semanticQueryVariants(queryText)) {
+        List<String> variants = usableQueryVariants(queryText, queryVariants);
+        for (String variant : variants) {
             float[] embedding = embeddingService.generateTextEmbedding(variant);
             if (embedding == null) {
                 continue;
@@ -1845,10 +1902,70 @@ public class SearchService {
                     .filter(result -> result.score() >= minScore)
                     .forEach(result -> mergeScoredEntityId(best, result));
         }
-        return best.values().stream()
+        List<MilvusVectorService.ScoredEntityId> sorted = best.values().stream()
                 .sorted(Comparator.comparingDouble(MilvusVectorService.ScoredEntityId::score).reversed())
+                .toList();
+        return filterContentSemanticBySourceText(sorted, queryText, variants).stream()
                 .limit(topK)
                 .toList();
+    }
+
+    private List<MilvusVectorService.ScoredEntityId> filterContentSemanticBySourceText(
+            List<MilvusVectorService.ScoredEntityId> results, String queryText, List<String> queryVariants) {
+        if (results == null || results.isEmpty()) {
+            return List.of();
+        }
+        if (isNaturalLanguageQuery(queryText)) {
+            return results;
+        }
+        List<UUID> contentIds = results.stream()
+                .map(MilvusVectorService.ScoredEntityId::entityId)
+                .map(this::parseUuid)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        Map<UUID, MediaContent> contentsById = new LinkedHashMap<>();
+        if (!contentIds.isEmpty()) {
+            for (MediaContent content : mediaContentMapper.selectBatchIds(contentIds)) {
+                if (content != null && content.getId() != null) {
+                    contentsById.put(content.getId(), content);
+                }
+            }
+        }
+        return results.stream()
+                .filter(result -> isQualifiedContentSemanticResult(result, queryText, queryVariants, contentsById))
+                .toList();
+    }
+
+    private boolean isQualifiedContentSemanticResult(MilvusVectorService.ScoredEntityId result,
+                                                     String queryText,
+                                                     List<String> queryVariants,
+                                                     Map<UUID, MediaContent> contentsById) {
+        if (result == null || !hasText(result.entityId())) {
+            return false;
+        }
+        if (isNaturalLanguageQuery(queryText)) {
+            return true;
+        }
+        UUID contentId = parseUuid(result.entityId());
+        MediaContent content = contentId == null ? null : contentsById.get(contentId);
+        String sourceText = contentSemanticSourceText(content);
+        if (!hasText(sourceText)) {
+            return result.score() >= SHORT_QUERY_SEMANTIC_FALLBACK_MIN_SCORE;
+        }
+        return hasCompatibleSemanticQuery(queryText, queryVariants, sourceText)
+                || result.score() >= SHORT_QUERY_SEMANTIC_FALLBACK_MIN_SCORE;
+    }
+
+    private String contentSemanticSourceText(MediaContent content) {
+        if (content == null) {
+            return null;
+        }
+        T1AnnotationView t1 = T1AnnotationView.parse(content.getT1Annotation());
+        return String.join("\n",
+                textOrBlank(content.getTitle()),
+                textOrBlank(content.getBodyText()),
+                textOrBlank(t1.summaryText()));
     }
 
     private void mergeScoredEntityId(Map<String, MilvusVectorService.ScoredEntityId> best,
@@ -2133,9 +2250,10 @@ public class SearchService {
     }
 
     private float mediaSemanticMinScore(String queryText, Double semanticMinScore,
-                                        String targetModality, String vectorField) {
+                                        Double visualMinScore, String targetModality, String vectorField) {
         if (isVisualVectorField(vectorField)) {
-            return Math.max(DEFAULT_MEDIA_VISUAL_MIN_SCORE, normalizeSemanticMinScore(semanticMinScore));
+            return Math.max(imageQueryVisualMinScore(visualMinScore),
+                    Math.max(DEFAULT_MEDIA_VISUAL_MIN_SCORE, normalizeSemanticMinScore(semanticMinScore)));
         }
         float minScore = mediaTextSemanticMinScore(queryText, semanticMinScore);
         return isMediaOnlyTargetModality(targetModality)
@@ -2182,10 +2300,48 @@ public class SearchService {
         return false;
     }
 
-    private boolean isLikelyCrossLanguage(String queryText, String sourceText) {
-        String queryScript = dominantScriptGroup(queryText);
-        String sourceScript = dominantScriptGroup(sourceText);
-        return hasText(queryScript) && hasText(sourceScript) && !queryScript.equals(sourceScript);
+    private boolean hasCompatibleSemanticQuery(String queryText, List<String> queryVariants, String sourceText) {
+        if (!hasText(queryText) || !hasText(sourceText)) {
+            return false;
+        }
+        LinkedHashSet<String> candidates = new LinkedHashSet<>();
+        candidates.add(queryText);
+        if (queryVariants != null) {
+            queryVariants.stream()
+                    .filter(this::hasText)
+                    .forEach(candidates::add);
+        }
+        String normalizedSource = normalizeSemanticComparableText(sourceText);
+        for (String candidate : candidates) {
+            String normalizedCandidate = normalizeSemanticComparableText(candidate);
+            if (normalizedCandidate.length() >= 2 && normalizedSource.contains(normalizedCandidate)) {
+                return true;
+            }
+            if (hasCompatibleSemanticToken(candidate, sourceText)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String normalizeSemanticComparableText(String text) {
+        if (!hasText(text)) {
+            return "";
+        }
+        return text.toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("[^\\p{L}\\p{Nd}]+", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+    }
+
+    private float strictSemanticFallbackMinScore(String queryText, float baseMinScore) {
+        return isNaturalLanguageQuery(queryText)
+                ? baseMinScore
+                : Math.max(baseMinScore, SHORT_QUERY_SEMANTIC_FALLBACK_MIN_SCORE);
+    }
+
+    private String textOrBlank(String text) {
+        return hasText(text) ? text : "";
     }
 
     private boolean isNaturalLanguageQuery(String queryText) {
@@ -2200,33 +2356,6 @@ public class SearchService {
         long letterCount = normalized.codePoints().filter(Character::isLetter).count();
         boolean hasSentencePunctuation = normalized.matches(".*[。！？!?；;,.，、].*");
         return tokenCount >= 4 || letterCount >= 18 || hasSentencePunctuation;
-    }
-
-    private String dominantScriptGroup(String text) {
-        if (!hasText(text)) {
-            return null;
-        }
-        Map<String, Integer> counts = new LinkedHashMap<>();
-        text.codePoints()
-                .filter(Character::isLetter)
-                .mapToObj(this::scriptGroup)
-                .filter(Objects::nonNull)
-                .forEach(group -> counts.merge(group, 1, Integer::sum));
-        return counts.entrySet().stream()
-                .max(Map.Entry.comparingByValue())
-                .map(Map.Entry::getKey)
-                .orElse(null);
-    }
-
-    private String scriptGroup(int codePoint) {
-        Character.UnicodeScript script = Character.UnicodeScript.of(codePoint);
-        return switch (script) {
-            case HAN, HIRAGANA, KATAKANA, HANGUL -> "cjk";
-            case LATIN -> "latin";
-            case ARABIC -> "arabic";
-            case CYRILLIC -> "cyrillic";
-            default -> null;
-        };
     }
 
     private List<String> semanticTextTokens(String text) {
@@ -2346,6 +2475,14 @@ public class SearchService {
 
     private String stringValue(Object value) {
         return value == null ? null : value.toString();
+    }
+
+    private Throwable rootCause(Throwable error) {
+        Throwable root = error;
+        while (root != null && root.getCause() != null) {
+            root = root.getCause();
+        }
+        return root != null ? root : error;
     }
 
     private boolean hasText(String value) {

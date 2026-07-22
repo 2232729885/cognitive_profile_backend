@@ -104,6 +104,8 @@ pipeline:
   thread-pool-size: 64
 
 search:
+  hybrid:
+    route-timeout-seconds: 30
   translation:
     enabled: true
     timeout-seconds: 20

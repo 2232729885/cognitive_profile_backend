@@ -172,13 +172,17 @@ public class SearchQueryTranslationService {
         if (!hasText(ocrText) && !hasText(asrText) && !hasText(captionText)) {
             return TranslatedMediaText.empty();
         }
-        if (isEnglish(language)) {
+        if (isEnglish(language) && allPresentTextProbablyEnglish(ocrText, asrText, captionText)) {
             return new TranslatedMediaText(ocrText, asrText, captionText);
         }
         if (!tryAcquire()) {
             return TranslatedMediaText.empty();
         }
         try {
+            String sourceLanguage = isEnglish(language)
+                    && !allPresentTextProbablyEnglish(ocrText, asrText, captionText)
+                    ? "unknown"
+                    : firstText(language, "unknown");
             String userPrompt = """
                     Source language: %s
 
@@ -191,7 +195,7 @@ public class SearchQueryTranslationService {
                     Caption text:
                     %s
                     """.formatted(
-                    hasText(language) ? language : "unknown",
+                    sourceLanguage,
                     truncate(ocrText, CONTENT_TEXT_MAX_LENGTH),
                     truncate(asrText, CONTENT_TEXT_MAX_LENGTH),
                     truncate(captionText, 1_500));
@@ -199,9 +203,9 @@ public class SearchQueryTranslationService {
             MediaTextTranslationResponse response =
                     OBJECT_MAPPER.readValue(cleanJson(raw), MediaTextTranslationResponse.class);
             return new TranslatedMediaText(
-                    blankToNull(response.getOcrText()),
-                    blankToNull(response.getAsrText()),
-                    blankToNull(response.getCaptionText()));
+                    englishPivotText(response.getOcrText(), ocrText),
+                    englishPivotText(response.getAsrText(), asrText),
+                    englishPivotText(response.getCaptionText(), captionText));
         } catch (Exception e) {
             log.debug("[SearchTranslation] media text translation failed, language={}, reason={}",
                     language, rootMessage(e));
@@ -313,6 +317,66 @@ public class SearchQueryTranslationService {
 
     private String blankToNull(String value) {
         return hasText(value) ? value.trim() : null;
+    }
+
+    private String englishPivotText(String translated, String original) {
+        String clean = blankToNull(translated);
+        if (isProbablyEnglishText(original)) {
+            return hasText(clean) ? clean : blankToNull(original);
+        }
+        return isProbablyEnglishText(clean) ? clean : null;
+    }
+
+    private boolean allPresentTextProbablyEnglish(String... values) {
+        boolean hasAnyText = false;
+        for (String value : values) {
+            if (!hasText(value)) {
+                continue;
+            }
+            hasAnyText = true;
+            if (!isProbablyEnglishText(value)) {
+                return false;
+            }
+        }
+        return hasAnyText;
+    }
+
+    private boolean isProbablyEnglishText(String text) {
+        if (!hasText(text)) {
+            return false;
+        }
+        int latinLetters = 0;
+        int nonLatinLetters = 0;
+        int totalLetters = 0;
+        for (int i = 0; i < text.length(); ) {
+            int codePoint = text.codePointAt(i);
+            i += Character.charCount(codePoint);
+            if (!Character.isLetter(codePoint)) {
+                continue;
+            }
+            totalLetters++;
+            if (Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.LATIN) {
+                latinLetters++;
+            } else {
+                nonLatinLetters++;
+            }
+        }
+        if (totalLetters == 0) {
+            return true;
+        }
+        return nonLatinLetters == 0 || latinLetters / (double) totalLetters >= 0.85D;
+    }
+
+    private String firstText(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (hasText(value)) {
+                return value.trim();
+            }
+        }
+        return null;
     }
 
     private boolean isEnglish(String language) {
