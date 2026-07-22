@@ -38,6 +38,7 @@ public class MediaContentEsService {
         try {
             boolean exists = esClient.indices().exists(e -> e.index(MEDIA_CONTENTS_INDEX)).value();
             if (exists) {
+                ensureTranslationFields();
                 log.info("ES index already exists: {}", MEDIA_CONTENTS_INDEX);
                 return;
             }
@@ -67,6 +68,18 @@ public class MediaContentEsService {
                                     .text(t -> t
                                             .analyzer("ik_max_word")
                                             .searchAnalyzer("ik_smart")))
+                            .properties("translated_title", p -> p
+                                    .text(t -> t
+                                            .analyzer("standard")
+                                            .searchAnalyzer("standard")))
+                            .properties("translated_body_text", p -> p
+                                    .text(t -> t
+                                            .analyzer("standard")
+                                            .searchAnalyzer("standard")))
+                            .properties("translated_summary", p -> p
+                                    .text(t -> t
+                                            .analyzer("standard")
+                                            .searchAnalyzer("standard")))
                             .properties("platform", p -> p.keyword(k -> k))
                             .properties("language", p -> p.keyword(k -> k))
                             .properties("hashtags", p -> p.keyword(k -> k))
@@ -85,6 +98,21 @@ public class MediaContentEsService {
             log.info("ES index created with IK analyzer: {}", MEDIA_CONTENTS_INDEX);
         } catch (IOException e) {
             log.error("Failed to ensure ES index: {}", MEDIA_CONTENTS_INDEX, e);
+        }
+    }
+
+    private void ensureTranslationFields() {
+        try {
+            esClient.indices().putMapping(m -> m
+                    .index(MEDIA_CONTENTS_INDEX)
+                    .properties("translated_title", p -> p
+                            .text(t -> t.analyzer("standard").searchAnalyzer("standard")))
+                    .properties("translated_body_text", p -> p
+                            .text(t -> t.analyzer("standard").searchAnalyzer("standard")))
+                    .properties("translated_summary", p -> p
+                            .text(t -> t.analyzer("standard").searchAnalyzer("standard"))));
+        } catch (Exception e) {
+            log.warn("Failed to ensure ES translation fields, index={}", MEDIA_CONTENTS_INDEX, e);
         }
     }
 
@@ -130,14 +158,28 @@ public class MediaContentEsService {
                                         .field("summary")
                                         .query(normalizedKeyword)
                                         .boost(10F)));
+                                b.should(sh -> sh.matchPhrase(mp -> mp
+                                        .field("translated_title")
+                                        .query(normalizedKeyword)
+                                        .boost(12F)));
+                                b.should(sh -> sh.matchPhrase(mp -> mp
+                                        .field("translated_body_text")
+                                        .query(normalizedKeyword)
+                                        .boost(8F)));
+                                b.should(sh -> sh.matchPhrase(mp -> mp
+                                        .field("translated_summary")
+                                        .query(normalizedKeyword)
+                                        .boost(8F)));
                                 b.should(sh -> sh.multiMatch(mm -> mm
                                         .query(effectiveKeyword)
-                                        .fields("title^5", "body_text^3", "summary^2")
+                                        .fields("title^5", "body_text^3", "summary^2",
+                                                "translated_title^4", "translated_body_text^2", "translated_summary^2")
                                         .minimumShouldMatch("70%")
                                         .boost(4F)));
                                 b.should(sh -> sh.multiMatch(mm -> mm
                                         .query(effectiveKeyword)
-                                        .fields("title^3", "body_text", "summary")
+                                        .fields("title^3", "body_text", "summary",
+                                                "translated_title^3", "translated_body_text", "translated_summary")
                                         .minimumShouldMatch("40%")
                                         .boost(1F)));
                                 b.minimumShouldMatch("1");
@@ -156,6 +198,15 @@ public class MediaContentEsService {
                                             .preTags("<em class=\"highlight\">")
                                             .postTags("</em>"))
                                     .fields("title", f -> f
+                                            .numberOfFragments(1)
+                                            .preTags("<em class=\"highlight\">")
+                                            .postTags("</em>"))
+                                    .fields("translated_body_text", f -> f
+                                            .numberOfFragments(2)
+                                            .fragmentSize(150)
+                                            .preTags("<em class=\"highlight\">")
+                                            .postTags("</em>"))
+                                    .fields("translated_title", f -> f
                                             .numberOfFragments(1)
                                             .preTags("<em class=\"highlight\">")
                                             .postTags("</em>"))),

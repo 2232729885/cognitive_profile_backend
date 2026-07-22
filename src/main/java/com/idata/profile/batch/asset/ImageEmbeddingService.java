@@ -12,6 +12,7 @@ import com.idata.profile.infra.milvus.MilvusVectorService;
 import com.idata.profile.infra.ocr.ImageOcrService;
 import com.idata.profile.mapper.content.MediaAssetMapper;
 import com.idata.profile.mapper.content.MediaContentMapper;
+import com.idata.profile.search.SearchQueryTranslationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -42,6 +43,7 @@ public class ImageEmbeddingService {
     private final MediaSegmentService mediaSegmentService;
     private final ExecutorService pipelineThreadPool;
     private final ImageAnnotationUtil imageAnnotationUtil;
+    private final SearchQueryTranslationService translationService;
 
     public void submitAfterCommit(UUID assetId) {
         Runnable task = () -> pipelineThreadPool.submit(() -> processById(assetId));
@@ -173,6 +175,7 @@ public class ImageEmbeddingService {
             }
             if (visualEmbedding != null || ocrEmbedding != null
                     || asrEmbedding != null || captionEmbedding != null) {
+                String contentLanguage = content != null ? content.getLanguage() : null;
                 String vectorId = milvusVectorService.upsertMediaAssetEmbedding(
                         asset.getId().toString(),
                         asset.getSourceAssetId(),
@@ -186,6 +189,17 @@ public class ImageEmbeddingService {
                         ocrEmbedding,
                         asrEmbedding,
                         captionEmbedding);
+                upsertMediaAssetPivotEmbedding(
+                        asset,
+                        null,
+                        contentId,
+                        platform,
+                        null,
+                        null,
+                        contentLanguage,
+                        asset.getOcrText(),
+                        asset.getAsrText(),
+                        captionText);
                 asset.setEmbeddingId(vectorId);
                 changed = true;
                 processed = true;
@@ -195,7 +209,8 @@ public class ImageEmbeddingService {
             }
 
             if (isVideo(asset) && hasText(mediaSource)) {
-                boolean segmentProcessed = indexVideoSegments(asset, contentId, platform, mediaSource);
+                boolean segmentProcessed = indexVideoSegments(asset, contentId, platform,
+                        content != null ? content.getLanguage() : null, mediaSource);
                 if (segmentProcessed) {
                     processed = true;
                     changed = true;
@@ -269,6 +284,17 @@ public class ImageEmbeddingService {
                     ocrEmbedding,
                     null,
                     captionEmbedding);
+            upsertMediaAssetPivotEmbedding(
+                    asset,
+                    null,
+                    contentId,
+                    platform,
+                    null,
+                    null,
+                    content != null ? content.getLanguage() : null,
+                    asset.getOcrText(),
+                    null,
+                    captionText);
             if (hasText(vectorId) && !vectorId.equals(asset.getEmbeddingId())) {
                 asset.setEmbeddingId(vectorId);
                 mediaAssetMapper.updateById(asset);
@@ -278,7 +304,8 @@ public class ImageEmbeddingService {
         }
     }
 
-    private boolean indexVideoSegments(MediaAsset asset, String contentId, String platform, String mediaSource) {
+    private boolean indexVideoSegments(MediaAsset asset, String contentId, String platform,
+                                       String language, String mediaSource) {
         boolean processed = false;
         List<MediaSegmentService.VideoSegmentFrame> frames =
                 mediaSegmentService.extractVideoSegmentFrames(mediaSource, asset.getDurationSeconds());
@@ -303,6 +330,17 @@ public class ImageEmbeddingService {
                         null,
                         null,
                         captionEmbedding);
+                upsertMediaAssetPivotEmbedding(
+                        asset,
+                        frame.segmentId(),
+                        contentId,
+                        platform,
+                        frame.segmentStart(),
+                        frame.segmentEnd(),
+                        language,
+                        null,
+                        null,
+                        caption);
                 mediaAssetEsService.indexAssetSegment(asset, frame.segmentId(),
                         frame.segmentStart(), frame.segmentEnd(), caption);
                 if (vectorId != null) {
@@ -319,6 +357,50 @@ public class ImageEmbeddingService {
             }
         }
         return processed;
+    }
+
+    private String upsertMediaAssetPivotEmbedding(MediaAsset asset, String segmentId,
+                                                  String contentId, String platform,
+                                                  Float segmentStart, Float segmentEnd,
+                                                  String language,
+                                                  String ocrText, String asrText, String captionText) {
+        if (asset == null || asset.getId() == null
+                || (!hasText(ocrText) && !hasText(asrText) && !hasText(captionText))) {
+            return null;
+        }
+        try {
+            SearchQueryTranslationService.TranslatedMediaText translated =
+                    translationService.translateMediaText(ocrText, asrText, captionText, language);
+            float[] pivotOcrEmbedding = hasText(translated.ocrText())
+                    ? embeddingService.generateTextEmbedding(translated.ocrText())
+                    : null;
+            float[] pivotAsrEmbedding = hasText(translated.asrText())
+                    ? embeddingService.generateTextEmbedding(translated.asrText())
+                    : null;
+            float[] pivotCaptionEmbedding = hasText(translated.captionText())
+                    ? embeddingService.generateTextEmbedding(translated.captionText())
+                    : null;
+            if (pivotOcrEmbedding == null && pivotAsrEmbedding == null && pivotCaptionEmbedding == null) {
+                return null;
+            }
+            return milvusVectorService.upsertMediaAssetPivotEmbedding(
+                    asset.getId().toString(),
+                    segmentId,
+                    asset.getSourceAssetId(),
+                    contentId,
+                    platform,
+                    asset.getAssetType(),
+                    asset.getMimeType(),
+                    segmentStart,
+                    segmentEnd,
+                    pivotOcrEmbedding,
+                    pivotAsrEmbedding,
+                    pivotCaptionEmbedding);
+        } catch (Exception e) {
+            log.debug("Media asset pivot embedding skipped, assetId={}, segmentId={}, reason={}",
+                    asset.getId(), segmentId, rootMessage(e));
+            return null;
+        }
     }
 
     private String toDataUrl(Path imageFile) throws IOException {
@@ -422,5 +504,13 @@ public class ImageEmbeddingService {
 
     private boolean hasText(String value) {
         return value != null && !value.trim().isEmpty();
+    }
+
+    private String rootMessage(Throwable error) {
+        Throwable root = error;
+        while (root != null && root.getCause() != null) {
+            root = root.getCause();
+        }
+        return root != null && root.getMessage() != null ? root.getMessage() : String.valueOf(error);
     }
 }

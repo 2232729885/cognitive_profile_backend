@@ -50,6 +50,17 @@ public class MockPipelineInfraConfig {
             }
 
             @Override
+            public String insertMediaContentPivotEmbedding(String contentId, String platform, String language,
+                                                           String contentType, long publishedAt,
+                                                           float[] titleEmbedding, float[] summaryEmbedding,
+                                                           float[] bodyEmbedding) {
+                String vectorId = "mock_media_content_pivot_vector_" + UUID.randomUUID();
+                log.info("Mock Milvus media content pivot embeddings inserted, contentId={}, vectorId={}",
+                        contentId, vectorId);
+                return vectorId;
+            }
+
+            @Override
             public String upsertMediaAssetEmbedding(String assetId, String sourceAssetId, String contentId,
                                                     String platform, String assetType, String mimeType,
                                                     float[] imageEmbedding, float[] ocrTextEmbedding) {
@@ -66,6 +77,19 @@ public class MockPipelineInfraConfig {
                 String vectorId = "mock_media_asset_vector_" + UUID.randomUUID();
                 log.info("Mock Milvus media asset embeddings upserted, assetId={}, vectorId={}",
                         assetId, vectorId);
+                return vectorId;
+            }
+
+            @Override
+            public String upsertMediaAssetPivotEmbedding(String assetId, String segmentId,
+                                                         String sourceAssetId, String contentId,
+                                                         String platform, String mediaType, String mimeType,
+                                                         Float segmentStart, Float segmentEnd,
+                                                         float[] ocrEmbedding,
+                                                         float[] asrEmbedding, float[] captionEmbedding) {
+                String vectorId = "mock_media_asset_pivot_vector_" + UUID.randomUUID();
+                log.info("Mock Milvus media asset pivot embeddings upserted, assetId={}, segmentId={}, vectorId={}",
+                        assetId, segmentId, vectorId);
                 return vectorId;
             }
 

@@ -42,7 +42,9 @@ public class MilvusVectorService {
 
     private static final int EMBEDDING_DIMENSION = 4096;
     private static final String MEDIA_CONTENT_COLLECTION = "media_content_embeddings";
+    private static final String MEDIA_CONTENT_PIVOT_COLLECTION = "media_content_pivot_embeddings";
     private static final String MEDIA_ASSET_COLLECTION = "media_asset_embeddings";
+    private static final String MEDIA_ASSET_PIVOT_COLLECTION = "media_asset_pivot_embeddings";
     private static final String ENTITY_COLLECTION = "entity_embeddings";
     private static final String ENTITY_HYBRID_POC_COLLECTION = "entity_hybrid_poc_embeddings";
 
@@ -106,6 +108,23 @@ public class MilvusVectorService {
                                               String contentType, long publishedAt,
                                               float[] titleEmbedding, float[] summaryEmbedding,
                                               float[] bodyEmbedding) {
+        return insertMediaContentEmbedding(MEDIA_CONTENT_COLLECTION, "media_content_", contentId, platform, language,
+                contentType, publishedAt, titleEmbedding, summaryEmbedding, bodyEmbedding);
+    }
+
+    public String insertMediaContentPivotEmbedding(String contentId, String platform, String language,
+                                                   String contentType, long publishedAt,
+                                                   float[] titleEmbedding, float[] summaryEmbedding,
+                                                   float[] bodyEmbedding) {
+        return insertMediaContentEmbedding(MEDIA_CONTENT_PIVOT_COLLECTION, "media_content_pivot_", contentId,
+                platform, language, contentType, publishedAt, titleEmbedding, summaryEmbedding, bodyEmbedding);
+    }
+
+    private String insertMediaContentEmbedding(String collectionName, String vectorIdPrefix,
+                                               String contentId, String platform, String language,
+                                               String contentType, long publishedAt,
+                                               float[] titleEmbedding, float[] summaryEmbedding,
+                                               float[] bodyEmbedding) {
         validateOptionalEmbedding(titleEmbedding);
         validateOptionalEmbedding(summaryEmbedding);
         validateOptionalEmbedding(bodyEmbedding);
@@ -113,7 +132,7 @@ public class MilvusVectorService {
             return null;
         }
 
-        String vectorId = "media_content_" + contentId;
+        String vectorId = vectorIdPrefix + contentId;
         JsonObject row = new JsonObject();
         addText(row, "id", vectorId, ID_MAX_LENGTH);
         addText(row, "content_id", contentId, ID_MAX_LENGTH);
@@ -124,7 +143,7 @@ public class MilvusVectorService {
         addVector(row, CONTENT_TITLE_VECTOR_FIELD, titleEmbedding);
         addVector(row, CONTENT_SUMMARY_VECTOR_FIELD, summaryEmbedding);
         addVector(row, CONTENT_BODY_VECTOR_FIELD, bodyEmbedding);
-        insert(MEDIA_CONTENT_COLLECTION, row);
+        insert(collectionName, row);
         return vectorId;
     }
 
@@ -157,6 +176,29 @@ public class MilvusVectorService {
                                             Float segmentStart, Float segmentEnd,
                                             float[] visualEmbedding, float[] ocrEmbedding,
                                             float[] asrEmbedding, float[] captionEmbedding) {
+        return upsertMediaAssetEmbedding(MEDIA_ASSET_COLLECTION, "media_asset_", assetId, segmentId,
+                sourceAssetId, contentId, platform, mediaType, mimeType, segmentStart, segmentEnd,
+                visualEmbedding, ocrEmbedding, asrEmbedding, captionEmbedding);
+    }
+
+    public String upsertMediaAssetPivotEmbedding(String assetId, String segmentId,
+                                                 String sourceAssetId, String contentId,
+                                                 String platform, String mediaType, String mimeType,
+                                                 Float segmentStart, Float segmentEnd,
+                                                 float[] ocrEmbedding,
+                                                 float[] asrEmbedding, float[] captionEmbedding) {
+        return upsertMediaAssetEmbedding(MEDIA_ASSET_PIVOT_COLLECTION, "media_asset_pivot_", assetId, segmentId,
+                sourceAssetId, contentId, platform, mediaType, mimeType, segmentStart, segmentEnd,
+                null, ocrEmbedding, asrEmbedding, captionEmbedding);
+    }
+
+    private String upsertMediaAssetEmbedding(String collectionName, String vectorIdPrefix,
+                                             String assetId, String segmentId,
+                                             String sourceAssetId, String contentId,
+                                             String platform, String mediaType, String mimeType,
+                                             Float segmentStart, Float segmentEnd,
+                                             float[] visualEmbedding, float[] ocrEmbedding,
+                                             float[] asrEmbedding, float[] captionEmbedding) {
         validateOptionalEmbedding(visualEmbedding);
         validateOptionalEmbedding(ocrEmbedding);
         validateOptionalEmbedding(asrEmbedding);
@@ -167,7 +209,7 @@ public class MilvusVectorService {
         }
 
         String normalizedSegmentId = hasText(segmentId) ? segmentId : "asset";
-        String vectorId = "media_asset_" + assetId + "_" + normalizedSegmentId;
+        String vectorId = vectorIdPrefix + assetId + "_" + normalizedSegmentId;
         JsonObject row = new JsonObject();
         addText(row, "id", vectorId, VECTOR_ID_MAX_LENGTH);
         addText(row, "asset_id", assetId, ID_MAX_LENGTH);
@@ -180,11 +222,13 @@ public class MilvusVectorService {
         addText(row, "mime_type", mimeType, MIME_TYPE_MAX_LENGTH);
         addFloat(row, "segment_start", segmentStart);
         addFloat(row, "segment_end", segmentEnd);
-        addVector(row, ASSET_VISUAL_VECTOR_FIELD, visualEmbedding);
+        if (MEDIA_ASSET_COLLECTION.equals(collectionName)) {
+            addVector(row, ASSET_VISUAL_VECTOR_FIELD, visualEmbedding);
+        }
         addVector(row, ASSET_OCR_VECTOR_FIELD, ocrEmbedding);
         addVector(row, ASSET_ASR_VECTOR_FIELD, asrEmbedding);
         addVector(row, ASSET_CAPTION_VECTOR_FIELD, captionEmbedding);
-        insert(MEDIA_ASSET_COLLECTION, row);
+        insert(collectionName, row);
         return vectorId;
     }
 
@@ -347,13 +391,22 @@ public class MilvusVectorService {
 
     public List<ScoredEntityId> searchMediaContentEmbeddingsWithScore(float[] queryEmbedding, int topK,
                                                                       String platform, String language) {
+        List<ScoredEntityId> originalResults = searchMediaContentCollectionEmbeddingsWithScore(
+                MEDIA_CONTENT_COLLECTION, queryEmbedding, topK, platform, language);
+        List<ScoredEntityId> pivotResults = searchMediaContentCollectionEmbeddingsWithScore(
+                MEDIA_CONTENT_PIVOT_COLLECTION, queryEmbedding, topK, platform, language);
+        return mergeByMaxScore(List.of(originalResults, pivotResults), topK);
+    }
+
+    private List<ScoredEntityId> searchMediaContentCollectionEmbeddingsWithScore(
+            String collectionName, float[] queryEmbedding, int topK, String platform, String language) {
         String filter = buildContentFilter(platform, language);
         List<ScoredEntityId> titleResults = searchEmbeddingsWithScore(
-                MEDIA_CONTENT_COLLECTION, CONTENT_TITLE_VECTOR_FIELD, queryEmbedding, topK, filter, "content_id");
+                collectionName, CONTENT_TITLE_VECTOR_FIELD, queryEmbedding, topK, filter, "content_id");
         List<ScoredEntityId> summaryResults = searchEmbeddingsWithScore(
-                MEDIA_CONTENT_COLLECTION, CONTENT_SUMMARY_VECTOR_FIELD, queryEmbedding, topK, filter, "content_id");
+                collectionName, CONTENT_SUMMARY_VECTOR_FIELD, queryEmbedding, topK, filter, "content_id");
         List<ScoredEntityId> bodyResults = searchEmbeddingsWithScore(
-                MEDIA_CONTENT_COLLECTION, CONTENT_BODY_VECTOR_FIELD, queryEmbedding, topK, filter, "content_id");
+                collectionName, CONTENT_BODY_VECTOR_FIELD, queryEmbedding, topK, filter, "content_id");
         return mergeByMaxScore(List.of(titleResults, summaryResults, bodyResults), topK);
     }
 
@@ -373,24 +426,42 @@ public class MilvusVectorService {
     }
 
     public List<ScoredEntityId> searchMediaAssetTextEmbeddingsWithScore(float[] queryEmbedding, int topK) {
-        List<ScoredEntityId> visualResults = searchEmbeddingsWithScore(
-                MEDIA_ASSET_COLLECTION, ASSET_VISUAL_VECTOR_FIELD, queryEmbedding, topK, null, "asset_id");
-        List<ScoredEntityId> ocrResults = searchEmbeddingsWithScore(
-                MEDIA_ASSET_COLLECTION, ASSET_OCR_VECTOR_FIELD, queryEmbedding, topK, null, "asset_id");
-        List<ScoredEntityId> asrResults = searchEmbeddingsWithScore(
-                MEDIA_ASSET_COLLECTION, ASSET_ASR_VECTOR_FIELD, queryEmbedding, topK, null, "asset_id");
-        List<ScoredEntityId> captionResults = searchEmbeddingsWithScore(
-                MEDIA_ASSET_COLLECTION, ASSET_CAPTION_VECTOR_FIELD, queryEmbedding, topK, null, "asset_id");
-        return mergeByMaxScore(List.of(visualResults, ocrResults, asrResults, captionResults), topK);
+        List<ScoredEntityId> originalResults = mergeByMaxScore(List.of(
+                searchEmbeddingsWithScore(
+                        MEDIA_ASSET_COLLECTION, ASSET_VISUAL_VECTOR_FIELD, queryEmbedding, topK, null, "asset_id"),
+                searchEmbeddingsWithScore(
+                        MEDIA_ASSET_COLLECTION, ASSET_OCR_VECTOR_FIELD, queryEmbedding, topK, null, "asset_id"),
+                searchEmbeddingsWithScore(
+                        MEDIA_ASSET_COLLECTION, ASSET_ASR_VECTOR_FIELD, queryEmbedding, topK, null, "asset_id"),
+                searchEmbeddingsWithScore(
+                        MEDIA_ASSET_COLLECTION, ASSET_CAPTION_VECTOR_FIELD, queryEmbedding, topK, null, "asset_id")), topK);
+        List<ScoredEntityId> pivotResults = mergeByMaxScore(List.of(
+                searchEmbeddingsWithScore(
+                        MEDIA_ASSET_PIVOT_COLLECTION, ASSET_OCR_VECTOR_FIELD, queryEmbedding, topK, null, "asset_id"),
+                searchEmbeddingsWithScore(
+                        MEDIA_ASSET_PIVOT_COLLECTION, ASSET_ASR_VECTOR_FIELD, queryEmbedding, topK, null, "asset_id"),
+                searchEmbeddingsWithScore(
+                        MEDIA_ASSET_PIVOT_COLLECTION, ASSET_CAPTION_VECTOR_FIELD, queryEmbedding, topK, null, "asset_id")), topK);
+        return mergeByMaxScore(List.of(originalResults, pivotResults), topK);
     }
 
     public List<MediaAssetVectorSearchResult> searchMediaAssetTextEmbeddingsDetailed(float[] queryEmbedding,
                                                                                      int topK) {
-        return mergeMediaAssetVectorResults(List.of(
+        List<MediaAssetVectorSearchResult> originalResults = mergeMediaAssetVectorResults(List.of(
                 searchMediaAssetFieldDetailed(ASSET_VISUAL_VECTOR_FIELD, queryEmbedding, topK),
                 searchMediaAssetFieldDetailed(ASSET_OCR_VECTOR_FIELD, queryEmbedding, topK),
                 searchMediaAssetFieldDetailed(ASSET_ASR_VECTOR_FIELD, queryEmbedding, topK),
                 searchMediaAssetFieldDetailed(ASSET_CAPTION_VECTOR_FIELD, queryEmbedding, topK)), topK);
+        List<MediaAssetVectorSearchResult> pivotResults = searchMediaAssetPivotTextEmbeddingsDetailed(queryEmbedding, topK);
+        return mergeMediaAssetVectorResults(List.of(originalResults, pivotResults), topK);
+    }
+
+    private List<MediaAssetVectorSearchResult> searchMediaAssetPivotTextEmbeddingsDetailed(float[] queryEmbedding,
+                                                                                           int topK) {
+        return mergeMediaAssetVectorResults(List.of(
+                searchMediaAssetFieldDetailed(MEDIA_ASSET_PIVOT_COLLECTION, ASSET_OCR_VECTOR_FIELD, queryEmbedding, topK),
+                searchMediaAssetFieldDetailed(MEDIA_ASSET_PIVOT_COLLECTION, ASSET_ASR_VECTOR_FIELD, queryEmbedding, topK),
+                searchMediaAssetFieldDetailed(MEDIA_ASSET_PIVOT_COLLECTION, ASSET_CAPTION_VECTOR_FIELD, queryEmbedding, topK)), topK);
     }
 
     public List<MediaAssetVectorSearchResult> searchMediaAssetVisualEmbeddingsDetailed(float[] queryEmbedding,
@@ -588,7 +659,9 @@ public class MilvusVectorService {
             return;
         }
         ensure("media content", this::ensureMediaContentCollection);
+        ensure("media content pivot", this::ensureMediaContentPivotCollection);
         ensure("media asset", this::ensureMediaAssetCollection);
+        ensure("media asset pivot", this::ensureMediaAssetPivotCollection);
         ensure("entity", this::ensureEntityCollection);
         ensure("entity hybrid POC", this::ensureEntityHybridPocCollection);
     }
@@ -606,6 +679,17 @@ public class MilvusVectorService {
         if (collectionExists(MEDIA_CONTENT_COLLECTION)) {
             return;
         }
+        createMediaContentLikeCollection(MEDIA_CONTENT_COLLECTION);
+    }
+
+    private void ensureMediaContentPivotCollection() {
+        if (collectionExists(MEDIA_CONTENT_PIVOT_COLLECTION)) {
+            return;
+        }
+        createMediaContentLikeCollection(MEDIA_CONTENT_PIVOT_COLLECTION);
+    }
+
+    private void createMediaContentLikeCollection(String collectionName) {
         CreateCollectionReq.CollectionSchema schema = CreateCollectionReq.CollectionSchema.builder()
                 .enableDynamicField(true)
                 .build()
@@ -618,7 +702,7 @@ public class MilvusVectorService {
                 .addField(vectorField(CONTENT_TITLE_VECTOR_FIELD))
                 .addField(vectorField(CONTENT_SUMMARY_VECTOR_FIELD))
                 .addField(vectorField(CONTENT_BODY_VECTOR_FIELD));
-        createCollection(MEDIA_CONTENT_COLLECTION, schema, List.of(
+        createCollection(collectionName, schema, List.of(
                 vectorIndex(CONTENT_TITLE_VECTOR_FIELD),
                 vectorIndex(CONTENT_SUMMARY_VECTOR_FIELD),
                 vectorIndex(CONTENT_BODY_VECTOR_FIELD)));
@@ -628,6 +712,17 @@ public class MilvusVectorService {
         if (collectionExists(MEDIA_ASSET_COLLECTION)) {
             return;
         }
+        createMediaAssetCollection(MEDIA_ASSET_COLLECTION, true);
+    }
+
+    private void ensureMediaAssetPivotCollection() {
+        if (collectionExists(MEDIA_ASSET_PIVOT_COLLECTION)) {
+            return;
+        }
+        createMediaAssetCollection(MEDIA_ASSET_PIVOT_COLLECTION, false);
+    }
+
+    private void createMediaAssetCollection(String collectionName, boolean includeVisualEmbedding) {
         CreateCollectionReq.CollectionSchema schema = CreateCollectionReq.CollectionSchema.builder()
                 .enableDynamicField(true)
                 .build()
@@ -641,16 +736,22 @@ public class MilvusVectorService {
                 .addField(varcharField("media_type", 32, true, false))
                 .addField(varcharField("mime_type", 128, true, false))
                 .addField(floatField("segment_start", true))
-                .addField(floatField("segment_end", true))
-                .addField(vectorField(ASSET_VISUAL_VECTOR_FIELD))
-                .addField(vectorField(ASSET_OCR_VECTOR_FIELD))
+                .addField(floatField("segment_end", true));
+        if (includeVisualEmbedding) {
+            schema.addField(vectorField(ASSET_VISUAL_VECTOR_FIELD));
+        }
+        schema.addField(vectorField(ASSET_OCR_VECTOR_FIELD))
                 .addField(vectorField(ASSET_ASR_VECTOR_FIELD))
                 .addField(vectorField(ASSET_CAPTION_VECTOR_FIELD));
-        createCollection(MEDIA_ASSET_COLLECTION, schema, List.of(
-                vectorIndex(ASSET_VISUAL_VECTOR_FIELD),
+        List<IndexParam> indexParams = new ArrayList<>();
+        if (includeVisualEmbedding) {
+            indexParams.add(vectorIndex(ASSET_VISUAL_VECTOR_FIELD));
+        }
+        indexParams.addAll(List.of(
                 vectorIndex(ASSET_OCR_VECTOR_FIELD),
                 vectorIndex(ASSET_ASR_VECTOR_FIELD),
                 vectorIndex(ASSET_CAPTION_VECTOR_FIELD)));
+        createCollection(collectionName, schema, indexParams);
     }
 
     private void ensureEntityCollection() {
@@ -925,18 +1026,25 @@ public class MilvusVectorService {
     private List<MediaAssetVectorSearchResult> searchMediaAssetFieldDetailed(String vectorField,
                                                                              float[] queryEmbedding,
                                                                              int topK) {
+        return searchMediaAssetFieldDetailed(MEDIA_ASSET_COLLECTION, vectorField, queryEmbedding, topK);
+    }
+
+    private List<MediaAssetVectorSearchResult> searchMediaAssetFieldDetailed(String collectionName,
+                                                                             String vectorField,
+                                                                             float[] queryEmbedding,
+                                                                             int topK) {
         if (milvusClient == null || topK <= 0) {
             return List.of();
         }
         validateEmbedding(queryEmbedding);
 
         try {
-            if (!collectionExists(MEDIA_ASSET_COLLECTION)) {
+            if (!collectionExists(collectionName)) {
                 return List.of();
             }
 
             SearchResp response = milvusClient.search(SearchReq.builder()
-                    .collectionName(MEDIA_ASSET_COLLECTION)
+                    .collectionName(collectionName)
                     .annsField(vectorField)
                     .metricType(IndexParam.MetricType.COSINE)
                     .topK(topK)
@@ -946,7 +1054,8 @@ public class MilvusVectorService {
                     .build());
             return extractMediaAssetVectorResults(response, vectorField);
         } catch (RuntimeException e) {
-            log.warn("Milvus media asset vector search failed, field={}, topK={}", vectorField, topK, e);
+            log.warn("Milvus media asset vector search failed, collection={}, field={}, topK={}",
+                    collectionName, vectorField, topK, e);
             return List.of();
         }
     }

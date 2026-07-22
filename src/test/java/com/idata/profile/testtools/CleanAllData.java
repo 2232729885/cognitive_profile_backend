@@ -54,6 +54,7 @@ public class CleanAllData {
             "sessions",
             "workflow_tasks",
             "pipeline_tasks",
+            "pipeline_task_failures",
             "person_profiles",
             "narratives",
             "events",
@@ -71,7 +72,9 @@ public class CleanAllData {
 
     private static final List<String> MILVUS_COLLECTIONS = List.of(
             "media_content_embeddings",
+            "media_content_pivot_embeddings",
             "media_asset_embeddings",
+            "media_asset_pivot_embeddings",
             "entity_embeddings",
             "entity_hybrid_poc_embeddings",
             "text_embeddings",

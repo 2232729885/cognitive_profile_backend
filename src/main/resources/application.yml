@@ -103,6 +103,13 @@ agent-proxy:
 pipeline:
   thread-pool-size: 64
 
+search:
+  translation:
+    enabled: true
+    timeout-seconds: 20
+    max-tokens: 1024
+    concurrency: 4
+
 llm:
   embedding:
     base-url: http://172.16.40.232:18013/v1

@@ -12,6 +12,7 @@ import com.idata.profile.infra.milvus.MilvusVectorService;
 import com.idata.profile.mapper.content.MediaContentMapper;
 import com.idata.profile.mapper.raw.RawRecordMapper;
 import com.idata.profile.mapper.task.PipelineTaskMapper;
+import com.idata.profile.search.SearchQueryTranslationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -38,6 +39,7 @@ public class T4IndexingStep {
     private final MediaContentMapper mediaContentMapper;
     private final RawRecordMapper rawRecordMapper;
     private final PipelineTaskMapper pipelineTaskMapper;
+    private final SearchQueryTranslationService translationService;
 
     public void run(PipelineTask task) {
         OffsetDateTime startedAt = OffsetDateTime.now();
@@ -52,12 +54,21 @@ public class T4IndexingStep {
         String bodyEmbeddingText = buildContentBodyEmbeddingText(mc, t1View);
         String contentDescriptionText = combineText(summaryText, bodyEmbeddingText);
         String contentNodeName = buildContentNodeName(mc, summaryText);
+        SearchQueryTranslationService.TranslatedContent translated = translationService.translateContent(
+                mc.getTitle(), mc.getBodyText(), summaryText, mc.getLanguage());
         float[] titleEmbedding = generateEmbedding(mc.getTitle());
         float[] contentNodeNameEmbedding = generateEmbedding(contentNodeName);
         float[] summaryEmbedding = generateEmbedding(summaryText);
         float[] bodyEmbedding = generateEmbedding(bodyEmbeddingText);
+        float[] pivotTitleEmbedding = generateEmbedding(translated.title());
+        float[] pivotSummaryEmbedding = generateEmbedding(translated.summary());
+        float[] pivotBodyEmbedding = generateEmbedding(buildPivotBodyEmbeddingText(mc, t1View, translated));
         boolean textEmbeddingSkipped = titleEmbedding == null && summaryEmbedding == null && bodyEmbedding == null;
+        boolean pivotTextEmbeddingSkipped = pivotTitleEmbedding == null
+                && pivotSummaryEmbedding == null
+                && pivotBodyEmbedding == null;
         String vectorId = null;
+        String pivotVectorId = null;
         if (textEmbeddingSkipped) {
             log.warn("[T4] media content vectorization skipped, contentId={}", mc.getId());
         } else {
@@ -82,8 +93,19 @@ public class T4IndexingStep {
                     null,
                     firstEmbedding(bodyEmbedding, summaryEmbedding));
         }
+        if (!pivotTextEmbeddingSkipped) {
+            pivotVectorId = milvusVectorService.insertMediaContentPivotEmbedding(
+                    mc.getId().toString(),
+                    mc.getPlatform(),
+                    mc.getLanguage(),
+                    mc.getContentType(),
+                    mc.getPublishedAt() != null ? mc.getPublishedAt().toEpochSecond() : 0L,
+                    pivotTitleEmbedding,
+                    pivotSummaryEmbedding,
+                    pivotBodyEmbedding);
+        }
 
-        mediaContentEsService.index(mc.getId().toString(), buildEsDocument(mc, t1View));
+        mediaContentEsService.index(mc.getId().toString(), buildEsDocument(mc, t1View, translated));
         entityEsService.indexEntity(
                 mc.getId().toString(),
                 contentNodeName,
@@ -93,7 +115,7 @@ public class T4IndexingStep {
                 contentEntityFields(mc));
 
         RawRecord rawRecord = rawRecordMapper.selectById(task.getRawRecordId());
-        rawRecord.setT4Output(buildT4Output(vectorId, textEmbeddingSkipped));
+        rawRecord.setT4Output(buildT4Output(vectorId, pivotVectorId, textEmbeddingSkipped, pivotTextEmbeddingSkipped));
         rawRecord.setPipelineStatus(PipelineStatus.T4_INDEXED.name());
         rawRecordMapper.updateById(rawRecord);
 
@@ -137,6 +159,38 @@ public class T4IndexingStep {
         return text.toString();
     }
 
+    private String buildPivotBodyEmbeddingText(MediaContent mc, T1AnnotationView t1View,
+                                               SearchQueryTranslationService.TranslatedContent translated) {
+        if (mc == null || translated == null) {
+            return null;
+        }
+        if (!hasText(translated.title()) && !hasText(translated.bodyText()) && !hasText(translated.summary())) {
+            return null;
+        }
+        StringBuilder text = new StringBuilder();
+        appendEmbeddingField(text, "translated_body_text", translated.bodyText());
+        appendEmbeddingField(text, "translated_summary", translated.summary());
+        appendEmbeddingField(text, "hashtags", mc.getHashtags());
+        appendEmbeddingField(text, "mentions", mc.getMentions());
+        appendEmbeddingField(text, "news_source_name", mc.getNewsSourceName());
+        appendEmbeddingField(text, "news_domain", mc.getNewsDomain());
+        appendEmbeddingField(text, "news_author", mc.getNewsAuthor());
+        appendEmbeddingField(text, "news_section", mc.getNewsSection());
+        appendEmbeddingField(text, "news_tags", mc.getNewsTags());
+        appendEmbeddingField(text, "topic_category", t1View.topicCategory());
+        appendEmbeddingField(text, "topic_type", t1View.topicTypeLabel());
+        appendEmbeddingField(text, "sentiment", t1View.sentimentLabel());
+        appendEmbeddingField(text, "stance", t1View.stanceLabel());
+        appendEmbeddingField(text, "ideology", t1View.ideologyLabel());
+        appendEmbeddingField(text, "language_styles", t1View.languageStyleLabels());
+        appendEmbeddingField(text, "manipulation_methods", t1View.manipulationMethodLabels());
+        appendEmbeddingField(text, "risk_label", t1View.riskLabel());
+        appendEmbeddingField(text, "risk_types", t1View.riskTypes());
+        appendEmbeddingField(text, "platform", mc.getPlatform());
+        appendEmbeddingField(text, "source_language", mc.getLanguage());
+        return text.toString();
+    }
+
     private String combineText(String... values) {
         if (values == null) {
             return null;
@@ -162,7 +216,8 @@ public class T4IndexingStep {
         return null;
     }
 
-    private Object buildEsDocument(MediaContent mc, T1AnnotationView t1View) {
+    private Object buildEsDocument(MediaContent mc, T1AnnotationView t1View,
+                                   SearchQueryTranslationService.TranslatedContent translated) {
         Map<String, Object> document = new LinkedHashMap<>();
         document.put("id", mc.getId() != null ? mc.getId().toString() : null);
         document.put("raw_record_id", mc.getRawRecordId() != null ? mc.getRawRecordId().toString() : null);
@@ -172,6 +227,9 @@ public class T4IndexingStep {
         document.put("author_platform_user_id", mc.getAuthorPlatformUserId());
         document.put("title", mc.getTitle());
         document.put("body_text", mc.getBodyText());
+        document.put("translated_title", translated.title());
+        document.put("translated_body_text", translated.bodyText());
+        document.put("translated_summary", translated.summary());
         document.put("language", mc.getLanguage());
         document.put("published_at", mc.getPublishedAt() != null ? mc.getPublishedAt().toString() : null);
         document.put("url", mc.getUrl());
@@ -220,11 +278,16 @@ public class T4IndexingStep {
                 readableSnippet(mc.getBodyText(), CONTENT_NODE_NAME_MAX_LENGTH));
     }
 
-    private String buildT4Output(String vectorId, boolean textEmbeddingSkipped) {
+    private String buildT4Output(String vectorId, String pivotVectorId,
+                                 boolean textEmbeddingSkipped, boolean pivotTextEmbeddingSkipped) {
         String vectorValue = vectorId != null ? "\"" + vectorId + "\"" : "null";
+        String pivotVectorValue = pivotVectorId != null ? "\"" + pivotVectorId + "\"" : "null";
         return "{\"textVectorId\":" + vectorValue
                 + ",\"mediaContentVectorId\":" + vectorValue
-                + ",\"textEmbeddingSkipped\":" + textEmbeddingSkipped + "}";
+                + ",\"pivotTextVectorId\":" + pivotVectorValue
+                + ",\"mediaContentPivotVectorId\":" + pivotVectorValue
+                + ",\"textEmbeddingSkipped\":" + textEmbeddingSkipped
+                + ",\"pivotTextEmbeddingSkipped\":" + pivotTextEmbeddingSkipped + "}";
     }
 
     private void appendEmbeddingField(StringBuilder text, String field, String value) {

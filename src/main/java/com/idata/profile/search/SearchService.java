@@ -75,6 +75,7 @@ public class SearchService {
     private final MediaContentMapper mediaContentMapper;
     private final MediaAssetMapper mediaAssetMapper;
     private final SocialAccountMapper socialAccountMapper;
+    private final SearchQueryTranslationService translationService;
 
     public SearchResult searchByText(String keyword, String platform,
                                      String language, int page, int size) {
@@ -83,7 +84,7 @@ public class SearchService {
         int safeSize = normalizePageSize(size);
         int fetchSize = Math.max((safePage + 1) * safeSize, safeSize);
 
-        List<MediaContentEsService.EsSearchResult> esResults = esService.searchByKeywordWithHighlight(
+        List<MediaContentEsService.EsSearchResult> esResults = searchContentKeywordVariants(
                 keyword, platform, language, fetchSize);
         List<String> rankedIds = esResults.stream()
                 .map(MediaContentEsService.EsSearchResult::getContentId)
@@ -159,7 +160,7 @@ public class SearchService {
         boolean includeText = !isMediaOnlyTargetModality(targetModality);
         boolean includeMedia = !"text".equals(targetModality);
         CompletableFuture<List<MediaContentEsService.EsSearchResult>> esFuture = includeText && isEnabled(request, "es")
-                ? safeRoute("es", () -> esService.searchByKeywordWithHighlight(queryText, platform, language, topK))
+                ? safeRoute("es", () -> searchContentKeywordVariants(queryText, platform, language, topK))
                 : CompletableFuture.completedFuture(List.of());
         CompletableFuture<List<MilvusVectorService.ScoredEntityId>> milvusFuture = includeText && isEnabled(request, "milvus")
                 ? safeRoute("milvus", () -> searchSemanticIds(queryText, platform, language, topK, semanticMinScore))
@@ -169,8 +170,8 @@ public class SearchService {
                 : CompletableFuture.completedFuture(List.of());
         CompletableFuture<List<MediaAssetEsService.EsImageAssetSearchResult>> mediaKeywordFuture =
                 includeMedia && isEnabled(request, "es") && hasText(queryText)
-                        ? safeRoute("media-es", () -> mediaAssetEsService.searchMediaByKeyword(
-                                queryText.trim(), mediaTopK, targetMediaType(targetModality)))
+                        ? safeRoute("media-es", () -> searchMediaKeywordVariants(
+                                queryText, mediaTopK, targetMediaType(targetModality)))
                         : CompletableFuture.completedFuture(List.of());
         CompletableFuture<List<MilvusVectorService.MediaAssetVectorSearchResult>> mediaSemanticFuture =
                 includeMedia && isEnabled(request, "milvus") && hasText(queryText)
@@ -230,6 +231,53 @@ public class SearchService {
         result.setHighlights(highlights);
         result.setContentHits(pageHits);
         return result;
+    }
+
+    private List<MediaContentEsService.EsSearchResult> searchContentKeywordVariants(
+            String queryText, String platform, String language, int topK) {
+        if (!hasText(queryText) || topK <= 0) {
+            return List.of();
+        }
+        Map<String, MediaContentEsService.EsSearchResult> best = new LinkedHashMap<>();
+        for (String query : translationService.expandQuery(queryText)) {
+            for (MediaContentEsService.EsSearchResult result
+                    : esService.searchByKeywordWithHighlight(query, platform, language, topK)) {
+                if (result == null || !hasText(result.getContentId())) {
+                    continue;
+                }
+                best.merge(result.getContentId(), result,
+                        (left, right) -> scoreValue(right.getScore()) > scoreValue(left.getScore()) ? right : left);
+            }
+        }
+        return best.values().stream()
+                .sorted(Comparator.comparingDouble(
+                        (MediaContentEsService.EsSearchResult result) -> scoreValue(result.getScore())).reversed())
+                .limit(topK)
+                .toList();
+    }
+
+    private List<MediaAssetEsService.EsImageAssetSearchResult> searchMediaKeywordVariants(
+            String queryText, int topK, String mediaType) {
+        if (!hasText(queryText) || topK <= 0) {
+            return List.of();
+        }
+        Map<String, MediaAssetEsService.EsImageAssetSearchResult> best = new LinkedHashMap<>();
+        for (String query : translationService.expandQuery(queryText)) {
+            for (MediaAssetEsService.EsImageAssetSearchResult result
+                    : mediaAssetEsService.searchMediaByKeyword(query, topK, mediaType)) {
+                if (result == null || !hasText(result.assetId())) {
+                    continue;
+                }
+                String key = result.assetId() + ":" + firstText(result.segmentId(), "asset");
+                best.merge(key, result,
+                        (left, right) -> scoreValue(right.score()) > scoreValue(left.score()) ? right : left);
+            }
+        }
+        return best.values().stream()
+                .sorted(Comparator.comparingDouble(
+                        (MediaAssetEsService.EsImageAssetSearchResult result) -> scoreValue(result.score())).reversed())
+                .limit(topK)
+                .toList();
     }
 
     private List<SearchResult.ContentHit> buildContentHits(
@@ -1145,8 +1193,10 @@ public class SearchService {
         }
         LinkedHashSet<String> variants = new LinkedHashSet<>();
         String normalized = normalizeWhitespace(queryText);
-        if (hasText(normalized)) {
-            variants.add(normalized);
+        for (String translatedVariant : translationService.expandQuery(normalized)) {
+            if (hasText(translatedVariant)) {
+                variants.add(normalizeWhitespace(translatedVariant));
+            }
         }
         Arrays.stream(queryText.split("[\\r\\n]+"))
                 .map(this::normalizeWhitespace)
