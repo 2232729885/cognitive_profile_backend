@@ -160,6 +160,9 @@ public class ImageEmbeddingService {
                 asset.setCaptionText(captionText);
                 changed = true;
             }
+            String contentLanguage = content != null ? content.getLanguage() : null;
+            SearchQueryTranslationService.TranslatedMediaText translatedMediaText =
+                    translateMediaText(asset.getOcrText(), asset.getAsrText(), captionText, contentLanguage);
             float[] visualEmbedding = isImage(asset) ? embeddingService.generateImageEmbedding(mediaSource) : null;
             float[] ocrEmbedding = null;
             if (hasText(asset.getOcrText())) {
@@ -175,7 +178,6 @@ public class ImageEmbeddingService {
             }
             if (visualEmbedding != null || ocrEmbedding != null
                     || asrEmbedding != null || captionEmbedding != null) {
-                String contentLanguage = content != null ? content.getLanguage() : null;
                 String vectorId = milvusVectorService.upsertMediaAssetEmbedding(
                         asset.getId().toString(),
                         asset.getSourceAssetId(),
@@ -199,7 +201,8 @@ public class ImageEmbeddingService {
                         contentLanguage,
                         asset.getOcrText(),
                         asset.getAsrText(),
-                        captionText);
+                        captionText,
+                        translatedMediaText);
                 asset.setEmbeddingId(vectorId);
                 changed = true;
                 processed = true;
@@ -220,7 +223,8 @@ public class ImageEmbeddingService {
             if (changed) {
                 mediaAssetMapper.updateById(asset);
             }
-            mediaAssetEsService.indexAssetSegment(asset, null, null, null, captionText);
+            mediaAssetEsService.indexAssetSegment(asset, null, null, null, captionText,
+                    translatedMediaText.ocrText(), translatedMediaText.asrText(), translatedMediaText.captionText());
             return processed;
         } catch (Exception e) {
             log.error("Image embedding failed, assetId={}, assetType={}, imageUrl={}, sourceUrl={}, storageUri={}",
@@ -250,8 +254,12 @@ public class ImageEmbeddingService {
                 asset.setContentId(content.getId());
             }
             mediaAssetMapper.updateById(asset);
-            mediaAssetEsService.indexAsset(asset);
-            backfillCaptionEmbedding(asset, content, mediaSource, captionText);
+            SearchQueryTranslationService.TranslatedMediaText translatedMediaText =
+                    translateMediaText(asset.getOcrText(), null, captionText,
+                            content != null ? content.getLanguage() : null);
+            mediaAssetEsService.indexAssetSegment(asset, null, null, null, captionText,
+                    translatedMediaText.ocrText(), translatedMediaText.asrText(), translatedMediaText.captionText());
+            backfillCaptionEmbedding(asset, content, mediaSource, captionText, translatedMediaText);
             log.info("Image caption backfilled, assetId={}, textLength={}",
                     asset.getId(), captionText.length());
             return true;
@@ -262,7 +270,8 @@ public class ImageEmbeddingService {
     }
 
     private void backfillCaptionEmbedding(MediaAsset asset, MediaContent content,
-                                          String mediaSource, String captionText) {
+                                          String mediaSource, String captionText,
+                                          SearchQueryTranslationService.TranslatedMediaText translatedMediaText) {
         try {
             String contentId = asset.getContentId() != null ? asset.getContentId().toString() : null;
             String platform = content != null ? content.getPlatform() : null;
@@ -294,7 +303,8 @@ public class ImageEmbeddingService {
                     content != null ? content.getLanguage() : null,
                     asset.getOcrText(),
                     null,
-                    captionText);
+                    captionText,
+                    translatedMediaText);
             if (hasText(vectorId) && !vectorId.equals(asset.getEmbeddingId())) {
                 asset.setEmbeddingId(vectorId);
                 mediaAssetMapper.updateById(asset);
@@ -316,6 +326,8 @@ public class ImageEmbeddingService {
                 float[] captionEmbedding = hasText(caption)
                         ? embeddingService.generateTextEmbedding(caption)
                         : null;
+                SearchQueryTranslationService.TranslatedMediaText translatedCaption =
+                        translateMediaText(null, null, caption, language);
                 String vectorId = milvusVectorService.upsertMediaAssetEmbedding(
                         asset.getId().toString(),
                         frame.segmentId(),
@@ -340,9 +352,11 @@ public class ImageEmbeddingService {
                         language,
                         null,
                         null,
-                        caption);
+                        caption,
+                        translatedCaption);
                 mediaAssetEsService.indexAssetSegment(asset, frame.segmentId(),
-                        frame.segmentStart(), frame.segmentEnd(), caption);
+                        frame.segmentStart(), frame.segmentEnd(), caption,
+                        translatedCaption.ocrText(), translatedCaption.asrText(), translatedCaption.captionText());
                 if (vectorId != null) {
                     asset.setEmbeddingId(vectorId);
                     processed = true;
@@ -363,22 +377,23 @@ public class ImageEmbeddingService {
                                                   String contentId, String platform,
                                                   Float segmentStart, Float segmentEnd,
                                                   String language,
-                                                  String ocrText, String asrText, String captionText) {
+                                                  String ocrText, String asrText, String captionText,
+                                                  SearchQueryTranslationService.TranslatedMediaText translated) {
         if (asset == null || asset.getId() == null
                 || (!hasText(ocrText) && !hasText(asrText) && !hasText(captionText))) {
             return null;
         }
         try {
-            SearchQueryTranslationService.TranslatedMediaText translated =
-                    translationService.translateMediaText(ocrText, asrText, captionText, language);
-            float[] pivotOcrEmbedding = hasText(translated.ocrText())
-                    ? embeddingService.generateTextEmbedding(translated.ocrText())
+            SearchQueryTranslationService.TranslatedMediaText safeTranslated =
+                    translated != null ? translated : translateMediaText(ocrText, asrText, captionText, language);
+            float[] pivotOcrEmbedding = hasText(safeTranslated.ocrText())
+                    ? embeddingService.generateTextEmbedding(safeTranslated.ocrText())
                     : null;
-            float[] pivotAsrEmbedding = hasText(translated.asrText())
-                    ? embeddingService.generateTextEmbedding(translated.asrText())
+            float[] pivotAsrEmbedding = hasText(safeTranslated.asrText())
+                    ? embeddingService.generateTextEmbedding(safeTranslated.asrText())
                     : null;
-            float[] pivotCaptionEmbedding = hasText(translated.captionText())
-                    ? embeddingService.generateTextEmbedding(translated.captionText())
+            float[] pivotCaptionEmbedding = hasText(safeTranslated.captionText())
+                    ? embeddingService.generateTextEmbedding(safeTranslated.captionText())
                     : null;
             if (pivotOcrEmbedding == null && pivotAsrEmbedding == null && pivotCaptionEmbedding == null) {
                 return null;
@@ -400,6 +415,16 @@ public class ImageEmbeddingService {
             log.debug("Media asset pivot embedding skipped, assetId={}, segmentId={}, reason={}",
                     asset.getId(), segmentId, rootMessage(e));
             return null;
+        }
+    }
+
+    private SearchQueryTranslationService.TranslatedMediaText translateMediaText(
+            String ocrText, String asrText, String captionText, String language) {
+        try {
+            return translationService.translateMediaText(ocrText, asrText, captionText, language);
+        } catch (Exception e) {
+            log.debug("Media asset text translation skipped, reason={}", rootMessage(e));
+            return SearchQueryTranslationService.TranslatedMediaText.empty();
         }
     }
 

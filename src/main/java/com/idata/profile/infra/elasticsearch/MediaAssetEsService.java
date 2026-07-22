@@ -35,6 +35,7 @@ public class MediaAssetEsService {
         try {
             boolean exists = esClient.indices().exists(e -> e.index(MEDIA_ASSETS_INDEX)).value();
             if (exists) {
+                ensureTranslationFields();
                 log.info("ES index already exists: {}", MEDIA_ASSETS_INDEX);
                 return;
             }
@@ -64,6 +65,18 @@ public class MediaAssetEsService {
                                     .text(t -> t
                                             .analyzer("ik_max_word")
                                             .searchAnalyzer("ik_smart")))
+                            .properties("translated_ocr_text", p -> p
+                                    .text(t -> t
+                                            .analyzer("standard")
+                                            .searchAnalyzer("standard")))
+                            .properties("translated_asr_text", p -> p
+                                    .text(t -> t
+                                            .analyzer("standard")
+                                            .searchAnalyzer("standard")))
+                            .properties("translated_caption_text", p -> p
+                                    .text(t -> t
+                                            .analyzer("standard")
+                                            .searchAnalyzer("standard")))
                             .properties("asset_id", p -> p.keyword(k -> k))
                             .properties("segment_id", p -> p.keyword(k -> k))
                             .properties("source_asset_id", p -> p.keyword(k -> k))
@@ -85,6 +98,21 @@ public class MediaAssetEsService {
         }
     }
 
+    private void ensureTranslationFields() {
+        try {
+            esClient.indices().putMapping(m -> m
+                    .index(MEDIA_ASSETS_INDEX)
+                    .properties("translated_ocr_text", p -> p
+                            .text(t -> t.analyzer("standard").searchAnalyzer("standard")))
+                    .properties("translated_asr_text", p -> p
+                            .text(t -> t.analyzer("standard").searchAnalyzer("standard")))
+                    .properties("translated_caption_text", p -> p
+                            .text(t -> t.analyzer("standard").searchAnalyzer("standard"))));
+        } catch (Exception e) {
+            log.warn("Failed to ensure ES media asset translation fields, index={}", MEDIA_ASSETS_INDEX, e);
+        }
+    }
+
     public void indexImageAsset(MediaAsset asset) {
         indexAsset(asset);
     }
@@ -97,6 +125,16 @@ public class MediaAssetEsService {
     public void indexAssetSegment(MediaAsset asset, String segmentId,
                                   Float segmentStart, Float segmentEnd,
                                   String captionText) {
+        indexAssetSegment(asset, segmentId, segmentStart, segmentEnd, captionText,
+                null, null, null);
+    }
+
+    public void indexAssetSegment(MediaAsset asset, String segmentId,
+                                  Float segmentStart, Float segmentEnd,
+                                  String captionText,
+                                  String translatedOcrText,
+                                  String translatedAsrText,
+                                  String translatedCaptionText) {
         if (esClient == null || asset == null || asset.getId() == null) {
             return;
         }
@@ -114,6 +152,9 @@ public class MediaAssetEsService {
             doc.put("ocr_text", asset.getOcrText());
             doc.put("asr_text", asset.getAsrText());
             doc.put("caption_text", captionText);
+            doc.put("translated_ocr_text", translatedOcrText);
+            doc.put("translated_asr_text", translatedAsrText);
+            doc.put("translated_caption_text", translatedCaptionText);
             doc.put("minio_bucket", asset.getMinioBucket());
             doc.put("minio_key", asset.getMinioKey());
             doc.put("width", asset.getWidth());
@@ -178,9 +219,26 @@ public class MediaAssetEsService {
                                                 .query(normalizedKeyword)
                                                 .boost(6F)
                                                 .queryName("caption_text")))
+                                        .should(sh -> sh.matchPhrase(mp -> mp
+                                                .field("translated_ocr_text")
+                                                .query(normalizedKeyword)
+                                                .boost(10F)
+                                                .queryName("translated_ocr_text")))
+                                        .should(sh -> sh.matchPhrase(mp -> mp
+                                                .field("translated_asr_text")
+                                                .query(normalizedKeyword)
+                                                .boost(8F)
+                                                .queryName("translated_asr_text")))
+                                        .should(sh -> sh.matchPhrase(mp -> mp
+                                                .field("translated_caption_text")
+                                                .query(normalizedKeyword)
+                                                .boost(5F)
+                                                .queryName("translated_caption_text")))
                                         .should(sh -> sh.multiMatch(mm -> mm
                                                 .query(effectiveKeyword)
-                                                .fields("ocr_text^4", "asr_text^3", "caption_text^2")
+                                                .fields("ocr_text^4", "asr_text^3", "caption_text^2",
+                                                        "translated_ocr_text^3", "translated_asr_text^2",
+                                                        "translated_caption_text^2")
                                                 .minimumShouldMatch("70%")
                                                 .boost(3F)
                                                 .queryName("media_text")))
@@ -189,11 +247,15 @@ public class MediaAssetEsService {
                             .source(src -> src.filter(f -> f.includes("asset_id", "segment_id",
                                     "source_asset_id", "media_type", "asset_type", "content_id",
                                     "source_url", "storage_uri", "mime_type", "minio_bucket", "minio_key",
-                                    "segment_start", "segment_end", "caption_text")))
+                                    "segment_start", "segment_end", "caption_text",
+                                    "translated_ocr_text", "translated_asr_text", "translated_caption_text")))
                             .highlight(h -> h
                                     .fields("ocr_text", hf -> hf)
                                     .fields("asr_text", hf -> hf)
-                                    .fields("caption_text", hf -> hf)),
+                                    .fields("caption_text", hf -> hf)
+                                    .fields("translated_ocr_text", hf -> hf)
+                                    .fields("translated_asr_text", hf -> hf)
+                                    .fields("translated_caption_text", hf -> hf)),
                     Map.class);
             return response.hits().hits().stream()
                     .map(hit -> {
@@ -254,6 +316,15 @@ public class MediaAssetEsService {
             if (highlights.containsKey("caption_text")) {
                 return "caption_text";
             }
+            if (highlights.containsKey("translated_ocr_text")) {
+                return "translated_ocr_text";
+            }
+            if (highlights.containsKey("translated_asr_text")) {
+                return "translated_asr_text";
+            }
+            if (highlights.containsKey("translated_caption_text")) {
+                return "translated_caption_text";
+            }
         }
         if (matchedQueries != null) {
             if (matchedQueries.contains("ocr_text")) {
@@ -265,12 +336,30 @@ public class MediaAssetEsService {
             if (matchedQueries.contains("caption_text")) {
                 return "caption_text";
             }
+            if (matchedQueries.contains("translated_ocr_text")) {
+                return "translated_ocr_text";
+            }
+            if (matchedQueries.contains("translated_asr_text")) {
+                return "translated_asr_text";
+            }
+            if (matchedQueries.contains("translated_caption_text")) {
+                return "translated_caption_text";
+            }
         }
         if (source != null && hasText(toString(source.get("caption_text")))) {
             return "caption_text";
         }
         if (source != null && hasText(toString(source.get("asr_text")))) {
             return "asr_text";
+        }
+        if (source != null && hasText(toString(source.get("translated_caption_text")))) {
+            return "translated_caption_text";
+        }
+        if (source != null && hasText(toString(source.get("translated_asr_text")))) {
+            return "translated_asr_text";
+        }
+        if (source != null && hasText(toString(source.get("translated_ocr_text")))) {
+            return "translated_ocr_text";
         }
         return "ocr_text";
     }
