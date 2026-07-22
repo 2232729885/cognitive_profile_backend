@@ -18,12 +18,28 @@ public interface EventMapper extends BaseMapper<Event> {
 
     @Insert("""
             INSERT INTO events (
-                id, canonical_name, importance_score, content_count, dedup_status
+                id, canonical_name, event_type, importance_score, content_count, dedup_status
             )
-            VALUES (gen_random_uuid(), #{canonicalName}, #{importanceScore}, 1, 'pending')
+            VALUES (#{id}, #{canonicalName}, #{eventType}, #{importanceScore}, 1, 'pending')
+            ON CONFLICT (id) DO UPDATE SET
+                event_type = COALESCE(EXCLUDED.event_type, events.event_type),
+                importance_score = GREATEST(events.importance_score, EXCLUDED.importance_score),
+                content_count = events.content_count + 1,
+                updated_at = NOW()
             """)
-    int insertEntity(@Param("canonicalName") String canonicalName,
+    int insertEntity(@Param("id") UUID id,
+                     @Param("canonicalName") String canonicalName,
+                     @Param("eventType") String eventType,
                      @Param("importanceScore") BigDecimal importanceScore);
+
+    @Update("""
+            UPDATE events
+            SET event_type = COALESCE(#{eventType}, event_type),
+                updated_at = NOW()
+            WHERE id = #{id}
+            """)
+    int updateExtractedAttributes(@Param("id") UUID id,
+                                  @Param("eventType") String eventType);
 
     @Select("SELECT COUNT(*) FROM events WHERE dedup_status = #{dedupStatus}")
     long countByDedupStatus(@Param("dedupStatus") String dedupStatus);

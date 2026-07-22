@@ -4,6 +4,7 @@ import com.idata.profile.agentproxy.AgentProxyClient;
 import com.idata.profile.agentproxy.dto.t2.T2ExtractResponse;
 import com.idata.profile.agentproxy.dto.t3.T3ResolveBatchRequest;
 import com.idata.profile.agentproxy.dto.t3.T3ResolveBatchResponse;
+import com.idata.profile.common.constant.AllowedEventTypes;
 import com.idata.profile.common.util.StableUuidUtil;
 import com.idata.profile.entity.dedup.EntityFusionRecord;
 import com.idata.profile.infra.elasticsearch.EntityEsService;
@@ -94,7 +95,18 @@ public class EntityResolutionService {
         if (mention.getAttributes() == null) {
             mention.setAttributes(Map.of());
         }
+        normalizeEventAttributes(mention);
         return mention;
+    }
+
+    private void normalizeEventAttributes(T2ExtractResponse.ExtractedMention mention) {
+        if (!"event".equals(mention.getType())) {
+            return;
+        }
+        Map<String, Object> normalized = new HashMap<>(mention.getAttributes());
+        String eventType = AllowedEventTypes.normalize(stringValue(normalized.get("eventType")));
+        normalized.put("eventType", eventType != null ? eventType : "other");
+        mention.setAttributes(normalized);
     }
 
     private T3BatchOutcome resolveWithT3(
@@ -176,19 +188,21 @@ public class EntityResolutionService {
         double confidence = boundedScore(result != null ? result.getConfidence() : null, 0D);
         if ("MERGE".equalsIgnoreCase(action) && confidence >= AUTO_MERGE_THRESHOLD
                 && hasText(result.getMatchedEntityId())) {
+            updateEventAttributes(mention, result.getMatchedEntityId());
             writeEntityNode(result.getMatchedEntityId(), mention, "t2_t3_merge");
             insertFusionRecord(mention, result, true);
             return resolved(mention, result.getMatchedEntityId(), "MERGE");
         }
         if ("REVIEW".equalsIgnoreCase(action) && confidence >= REVIEW_THRESHOLD
                 && hasText(result.getMatchedEntityId())) {
+            updateEventAttributes(mention, result.getMatchedEntityId());
             writeEntityNode(result.getMatchedEntityId(), mention, "t2_t3_review");
             insertFusionRecord(mention, result, false);
             return resolved(mention, result.getMatchedEntityId(), "REVIEW");
         }
 
         String nodeId = stableUuid(mention.getType() + ":" + entityName(mention));
-        insertEntity(mention);
+        insertEntity(mention, nodeId);
         writeEntityNode(nodeId, mention, "t2_create");
         indexEntity(nodeId, mention);
         syncEntityVectorToMilvus(nodeId, mention);
@@ -206,7 +220,7 @@ public class EntityResolutionService {
         return result;
     }
 
-    private void insertEntity(T2ExtractResponse.ExtractedMention entity) {
+    private void insertEntity(T2ExtractResponse.ExtractedMention entity, String nodeId) {
         String entityType = entity.getType();
         String canonicalName = entityName(entity);
         BigDecimal importanceScore = entity.getImportanceScore() != null
@@ -215,9 +229,26 @@ public class EntityResolutionService {
         switch (entityType) {
             case "person" -> personMapper.insertEntity(canonicalName, importanceScore);
             case "organization" -> organizationMapper.insertEntity(canonicalName, importanceScore);
-            case "event" -> eventMapper.insertEntity(canonicalName, importanceScore);
+            case "event" -> eventMapper.insertEntity(parseUuid(nodeId), canonicalName,
+                    eventType(entity), importanceScore);
             case "location" -> log.debug("Location mention is stored in Neo4j only, name={}", canonicalName);
             default -> log.warn("Unknown extracted entity type: {}", entity.getType());
+        }
+    }
+
+    private void updateEventAttributes(T2ExtractResponse.ExtractedMention entity, String nodeId) {
+        if (!"event".equals(entity.getType())) {
+            return;
+        }
+        UUID eventId = parseUuid(nodeId);
+        if (eventId == null) {
+            return;
+        }
+        try {
+            eventMapper.updateExtractedAttributes(eventId, eventType(entity));
+        } catch (Exception e) {
+            log.warn("[EntityResolutionService] failed to update PG event attributes, eventId={}, name={}",
+                    eventId, entityName(entity), e);
         }
     }
 
@@ -235,7 +266,7 @@ public class EntityResolutionService {
             props.put("importanceScore", entity.getImportanceScore());
         }
         if ("event".equals(entity.getType())) {
-            putIfHasText(props, "eventType", stringValue(entity.getAttributes().get("eventType")));
+            putIfHasText(props, "eventType", eventType(entity));
             putIfHasText(props, "eventTimeStart", stringValue(entity.getAttributes().get("eventTimeStart")));
         }
         props.put("source", source);
@@ -441,6 +472,14 @@ public class EntityResolutionService {
         if (hasText(value)) {
             target.put(key, value);
         }
+    }
+
+    private String eventType(T2ExtractResponse.ExtractedMention entity) {
+        if (entity == null || entity.getAttributes() == null) {
+            return "other";
+        }
+        String eventType = AllowedEventTypes.normalize(stringValue(entity.getAttributes().get("eventType")));
+        return eventType != null ? eventType : "other";
     }
 
     private UUID parseUuid(String value) {

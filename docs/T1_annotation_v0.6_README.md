@@ -1237,11 +1237,14 @@ annotate_event_heat请求
 
 | 枚举值 | 含义 |
 |---|---|
-| `election` | 选举类事件 |
+| `politics` | 政治类事件 |
 | `military` | 军事类事件 |
-| `diplomatic` | 外交类事件 |
-| `protest` | 抗议或示威类事件 |
-| `disaster` | 灾害类事件 |
+| `economy` | 经济金融类事件 |
+| `society` | 社会议题类事件 |
+| `culture` | 文化教育娱乐类事件 |
+| `science_tech` | 科技、网络、科研类事件 |
+| `security` | 犯罪、公共安全、执法类事件 |
+| `nature` | 自然灾害、环境、天气类事件 |
 | `other` | 其他事件 |
 
 ### `relatedEntities`

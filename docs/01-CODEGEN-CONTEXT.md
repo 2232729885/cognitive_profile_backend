@@ -156,7 +156,7 @@ events:         id · canonical_name · event_type VARCHAR(64) · occurred_at_st
 ```
 **枚举值：**
 - `org_type`: `government` | `media` | `ngo` | `political_party` | `military` | `company` | `other`
-- `event_type`: `election` | `military` | `diplomatic` | `protest` | `disaster` | `other`
+- `event_type`: `politics` | `military` | `economy` | `society` | `culture` | `science_tech` | `security` | `nature` | `other`
 
 ### narratives
 ```

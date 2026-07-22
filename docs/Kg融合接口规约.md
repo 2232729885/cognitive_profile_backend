@@ -159,6 +159,8 @@ T1 annotate_account（判断账号类别）
 | `span` | 这个实体在 `text` 里的字符位置，`{start, end}` 对象，不是数组 |
 | `aliases` | 同一实体的其他表达方式 |
 | `attributes` | 实体扩展属性，`event` 类型时包含 `eventType`/`eventTimeStart`，其他类型可为空对象 `{}` |
+
+`event.attributes.eventType` 取值范围：`politics` / `military` / `economy` / `society` / `culture` / `science_tech` / `security` / `nature` / `other`。
 | `predicate` | 关系类型，必须在 `docs/关系词表与头尾实体类型说明.md` 定义的16个关系类型内取值，不在词表内的会被后端过滤掉，不会写入图谱 |
 
 ---

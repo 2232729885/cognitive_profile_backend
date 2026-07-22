@@ -595,13 +595,19 @@ CREATE TABLE IF NOT EXISTS events (
     event_heat_score             NUMERIC(6,2),
     event_heat_confidence        NUMERIC(4,3),
     event_related_content_count  INTEGER,
-    event_heat_computed_at       TIMESTAMPTZ
+    event_heat_computed_at       TIMESTAMPTZ,
+    CONSTRAINT chk_events_event_type CHECK (
+        event_type IS NULL OR event_type IN (
+            'politics', 'military', 'economy', 'society', 'culture',
+            'science_tech', 'security', 'nature', 'other'
+        )
+    )
     );
 
 COMMENT ON TABLE  events                  IS 'L2实体层（精简）：事件实体索引表。详细属性存Neo4j';
 COMMENT ON COLUMN events.id               IS '主键，UUID，与Neo4j Event节点id保持一致';
 COMMENT ON COLUMN events.canonical_name   IS '标准化事件名称';
-COMMENT ON COLUMN events.event_type       IS '事件类型：election | military | diplomatic | protest | disaster | other';
+COMMENT ON COLUMN events.event_type       IS '事件类型：politics | military | economy | society | culture | science_tech | security | nature | other';
 COMMENT ON COLUMN events.occurred_at_start IS '事件开始时间';
 COMMENT ON COLUMN events.occurred_at_end   IS '事件结束时间（持续性事件用）';
 COMMENT ON COLUMN events.country          IS '事件发生地国家/地区';

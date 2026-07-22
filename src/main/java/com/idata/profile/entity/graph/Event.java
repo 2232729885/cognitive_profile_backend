@@ -22,7 +22,7 @@ public class Event {
     private UUID id;   // 与Neo4j Event节点id一致
 
     private String canonicalName;
-    private String eventType;           // election|military|diplomatic|protest|disaster|other
+    private String eventType;           // politics|military|economy|society|culture|science_tech|security|nature|other
     private OffsetDateTime occurredAtStart;
     private OffsetDateTime occurredAtEnd;
     private String country;
