@@ -1,5 +1,6 @@
 package com.idata.profile.infra.ocr;
 
+import com.idata.profile.common.util.TextEncodingRepairUtil;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -132,7 +133,7 @@ public class ImageOcrService {
                 || "no text visible".equalsIgnoreCase(result)) {
             return "";
         }
-        return result;
+        return TextEncodingRepairUtil.repairLikelyUtf8Mojibake(result);
     }
 
     private String normalizeBaseUrl(String value) {

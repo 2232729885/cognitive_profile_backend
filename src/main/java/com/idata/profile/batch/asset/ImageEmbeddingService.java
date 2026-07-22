@@ -3,6 +3,7 @@ package com.idata.profile.batch.asset;
 import com.idata.profile.entity.content.MediaAsset;
 import com.idata.profile.entity.content.MediaContent;
 import com.idata.profile.common.util.ImageAnnotationUtil;
+import com.idata.profile.common.util.TextEncodingRepairUtil;
 import com.idata.profile.infra.elasticsearch.MediaAssetEsService;
 import com.idata.profile.infra.embedding.EmbeddingService;
 import com.idata.profile.infra.media.MediaAsrService;
@@ -121,6 +122,7 @@ public class ImageEmbeddingService {
             String contentId = asset.getContentId() != null ? asset.getContentId().toString() : null;
             String platform = content != null ? content.getPlatform() : null;
             String mediaSource = resolveMediaSource(asset);
+            changed |= cleanStoredMediaText(asset);
 
             if (isImage(asset)) {
                 if (!hasText(mediaSource)) {
@@ -426,6 +428,43 @@ public class ImageEmbeddingService {
             log.debug("Media asset text translation skipped, reason={}", rootMessage(e));
             return SearchQueryTranslationService.TranslatedMediaText.empty();
         }
+    }
+
+    private boolean cleanStoredMediaText(MediaAsset asset) {
+        if (asset == null) {
+            return false;
+        }
+        boolean changed = false;
+        String ocrText = cleanMediaText(asset.getOcrText());
+        if (!sameText(asset.getOcrText(), ocrText)) {
+            asset.setOcrText(ocrText);
+            changed = true;
+        }
+        String asrText = cleanMediaText(asset.getAsrText());
+        if (!sameText(asset.getAsrText(), asrText)) {
+            asset.setAsrText(asrText);
+            changed = true;
+        }
+        String captionText = cleanMediaText(asset.getCaptionText());
+        if (!sameText(asset.getCaptionText(), captionText)) {
+            asset.setCaptionText(captionText);
+            changed = true;
+        }
+        return changed;
+    }
+
+    private String cleanMediaText(String value) {
+        if (!hasText(value) || "null".equalsIgnoreCase(value.trim())) {
+            return null;
+        }
+        return TextEncodingRepairUtil.repairLikelyUtf8Mojibake(value.trim());
+    }
+
+    private boolean sameText(String left, String right) {
+        if (left == null) {
+            return right == null;
+        }
+        return left.equals(right);
     }
 
     private String toDataUrl(Path imageFile) throws IOException {

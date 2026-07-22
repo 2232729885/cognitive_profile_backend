@@ -1,6 +1,7 @@
 package com.idata.profile.controller;
 
 import com.idata.profile.batch.asset.ImageEmbeddingJob;
+import com.idata.profile.batch.asset.ImageEmbeddingService;
 import com.idata.profile.batch.content.ContentPropagationBackfillJob;
 import com.idata.profile.batch.profile.PersonProfileGenerationJob;
 import com.idata.profile.batch.relation.AccountRelationBackfillJob;
@@ -20,6 +21,7 @@ import java.util.concurrent.ExecutorService;
 public class JobController {
 
     private final ImageEmbeddingJob imageEmbeddingJob;
+    private final ImageEmbeddingService imageEmbeddingService;
     private final AccountRelationBackfillJob accountRelationBackfillJob;
     private final ContentPropagationBackfillJob contentPropagationBackfillJob;
     private final PersonProfileGenerationJob personProfileGenerationJob;
@@ -30,6 +32,12 @@ public class JobController {
     @PostMapping("/image-embedding/trigger")
     public Result<String> triggerImageEmbedding() {
         return trigger("image-embedding", imageEmbeddingJob::run);
+    }
+
+    @PostMapping("/image-embedding/{assetId}/reindex")
+    public Result<String> reindexMediaAsset(@org.springframework.web.bind.annotation.PathVariable java.util.UUID assetId) {
+        boolean accepted = imageEmbeddingService.processById(assetId);
+        return accepted ? Result.ok("reindexed: " + assetId) : Result.fail("REINDEX_FAILED", "media asset reindex failed: " + assetId);
     }
 
     @PostMapping("/account-relation/trigger")

@@ -1,5 +1,6 @@
 package com.idata.profile.infra.media;
 
+import com.idata.profile.common.util.TextEncodingRepairUtil;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -70,7 +71,10 @@ public class MediaAsrService {
             return null;
         }
         String result = text.trim();
-        return result.isBlank() || "null".equalsIgnoreCase(result) ? null : result;
+        if (result.isBlank() || "null".equalsIgnoreCase(result)) {
+            return null;
+        }
+        return TextEncodingRepairUtil.repairLikelyUtf8Mojibake(result);
     }
 
     private String normalizeBaseUrl(String value) {

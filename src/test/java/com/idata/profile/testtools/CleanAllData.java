@@ -84,6 +84,7 @@ public class CleanAllData {
 
     private static final List<String> ES_INDICES = List.of(
             "media_contents_index",
+            "media_assets_index",
             "entities_index",
             "social_accounts_index",
             "workflow_logs_index"
@@ -209,6 +210,8 @@ public class CleanAllData {
                     continue;
                 }
                 Request request = new Request("POST", "/" + index + "/_delete_by_query");
+                request.addParameter("conflicts", "proceed");
+                request.addParameter("refresh", "true");
                 request.setJsonEntity("{\"query\":{\"match_all\":{}}}");
                 restClient.performRequest(request);
                 System.out.println("[4/6] Elasticsearch 已清理 index: " + index);

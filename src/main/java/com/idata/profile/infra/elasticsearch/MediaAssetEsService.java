@@ -3,6 +3,7 @@ package com.idata.profile.infra.elasticsearch;
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch._types.ElasticsearchException;
 import co.elastic.clients.elasticsearch.core.SearchResponse;
+import com.idata.profile.common.util.TextEncodingRepairUtil;
 import com.idata.profile.entity.content.MediaAsset;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -149,12 +150,12 @@ public class MediaAssetEsService {
             doc.put("source_url", asset.getSourceUrl());
             doc.put("storage_uri", asset.getStorageUri());
             doc.put("mime_type", asset.getMimeType());
-            doc.put("ocr_text", asset.getOcrText());
-            doc.put("asr_text", asset.getAsrText());
-            doc.put("caption_text", captionText);
-            doc.put("translated_ocr_text", translatedOcrText);
-            doc.put("translated_asr_text", translatedAsrText);
-            doc.put("translated_caption_text", translatedCaptionText);
+            doc.put("ocr_text", cleanText(asset.getOcrText()));
+            doc.put("asr_text", cleanText(asset.getAsrText()));
+            doc.put("caption_text", cleanText(captionText));
+            doc.put("translated_ocr_text", cleanText(translatedOcrText));
+            doc.put("translated_asr_text", cleanText(translatedAsrText));
+            doc.put("translated_caption_text", cleanText(translatedCaptionText));
             doc.put("minio_bucket", asset.getMinioBucket());
             doc.put("minio_key", asset.getMinioKey());
             doc.put("width", asset.getWidth());
@@ -369,7 +370,14 @@ public class MediaAssetEsService {
     }
 
     private boolean hasText(String value) {
-        return value != null && !value.trim().isEmpty();
+        return value != null && !value.trim().isEmpty() && !"null".equalsIgnoreCase(value.trim());
+    }
+
+    private String cleanText(String value) {
+        if (!hasText(value)) {
+            return null;
+        }
+        return TextEncodingRepairUtil.repairLikelyUtf8Mojibake(value.trim());
     }
 
     private String effectiveKeyword(String keyword) {

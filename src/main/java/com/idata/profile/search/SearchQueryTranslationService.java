@@ -1,5 +1,6 @@
 package com.idata.profile.search;
 
+import com.idata.profile.common.util.TextEncodingRepairUtil;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -169,18 +170,22 @@ public class SearchQueryTranslationService {
         if (!enabled) {
             return TranslatedMediaText.empty();
         }
-        if (!hasText(ocrText) && !hasText(asrText) && !hasText(captionText)) {
+        String normalizedOcrText = TextEncodingRepairUtil.repairLikelyUtf8Mojibake(ocrText);
+        String normalizedAsrText = TextEncodingRepairUtil.repairLikelyUtf8Mojibake(asrText);
+        String normalizedCaptionText = TextEncodingRepairUtil.repairLikelyUtf8Mojibake(captionText);
+        if (!hasText(normalizedOcrText) && !hasText(normalizedAsrText) && !hasText(normalizedCaptionText)) {
             return TranslatedMediaText.empty();
         }
-        if (isEnglish(language) && allPresentTextProbablyEnglish(ocrText, asrText, captionText)) {
-            return new TranslatedMediaText(ocrText, asrText, captionText);
+        if (isEnglish(language)
+                && allPresentTextProbablyEnglish(normalizedOcrText, normalizedAsrText, normalizedCaptionText)) {
+            return new TranslatedMediaText(normalizedOcrText, normalizedAsrText, normalizedCaptionText);
         }
         if (!tryAcquire()) {
             return TranslatedMediaText.empty();
         }
         try {
             String sourceLanguage = isEnglish(language)
-                    && !allPresentTextProbablyEnglish(ocrText, asrText, captionText)
+                    && !allPresentTextProbablyEnglish(normalizedOcrText, normalizedAsrText, normalizedCaptionText)
                     ? "unknown"
                     : firstText(language, "unknown");
             String userPrompt = """
@@ -196,16 +201,16 @@ public class SearchQueryTranslationService {
                     %s
                     """.formatted(
                     sourceLanguage,
-                    truncate(ocrText, CONTENT_TEXT_MAX_LENGTH),
-                    truncate(asrText, CONTENT_TEXT_MAX_LENGTH),
-                    truncate(captionText, 1_500));
+                    truncate(normalizedOcrText, CONTENT_TEXT_MAX_LENGTH),
+                    truncate(normalizedAsrText, CONTENT_TEXT_MAX_LENGTH),
+                    truncate(normalizedCaptionText, 1_500));
             String raw = callJsonLlm(MEDIA_TEXT_SYSTEM_PROMPT, userPrompt);
             MediaTextTranslationResponse response =
                     OBJECT_MAPPER.readValue(cleanJson(raw), MediaTextTranslationResponse.class);
             return new TranslatedMediaText(
-                    englishPivotText(response.getOcrText(), ocrText),
-                    englishPivotText(response.getAsrText(), asrText),
-                    englishPivotText(response.getCaptionText(), captionText));
+                    englishPivotText(response.getOcrText(), normalizedOcrText),
+                    englishPivotText(response.getAsrText(), normalizedAsrText),
+                    englishPivotText(response.getCaptionText(), normalizedCaptionText));
         } catch (Exception e) {
             log.debug("[SearchTranslation] media text translation failed, language={}, reason={}",
                     language, rootMessage(e));
@@ -345,26 +350,29 @@ public class SearchQueryTranslationService {
         if (!hasText(text)) {
             return false;
         }
-        int latinLetters = 0;
-        int nonLatinLetters = 0;
+        if (TextEncodingRepairUtil.looksLikeUtf8Mojibake(text)) {
+            return false;
+        }
+        int asciiLetters = 0;
         int totalLetters = 0;
         for (int i = 0; i < text.length(); ) {
             int codePoint = text.codePointAt(i);
             i += Character.charCount(codePoint);
+            if ((codePoint >= 0x80 && codePoint <= 0x9F) || codePoint == 0xFFFD) {
+                return false;
+            }
             if (!Character.isLetter(codePoint)) {
                 continue;
             }
             totalLetters++;
-            if (Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.LATIN) {
-                latinLetters++;
-            } else {
-                nonLatinLetters++;
+            if ((codePoint >= 'A' && codePoint <= 'Z') || (codePoint >= 'a' && codePoint <= 'z')) {
+                asciiLetters++;
             }
         }
         if (totalLetters == 0) {
             return true;
         }
-        return nonLatinLetters == 0 || latinLetters / (double) totalLetters >= 0.85D;
+        return asciiLetters / (double) totalLetters >= 0.85D;
     }
 
     private String firstText(String... values) {
