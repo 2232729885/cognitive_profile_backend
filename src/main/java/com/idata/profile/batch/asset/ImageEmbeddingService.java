@@ -85,7 +85,15 @@ public class ImageEmbeddingService {
     public int backfillImageAssetEsIndex(int limit) {
         List<MediaAsset> assets = mediaAssetMapper.selectImageAssetsWithOcrText(limit);
         for (MediaAsset asset : assets) {
-            mediaAssetEsService.indexAsset(asset);
+            if (cleanStoredMediaText(asset)) {
+                mediaAssetMapper.updateById(asset);
+            }
+            MediaContent content = resolveLinkedContent(asset);
+            SearchQueryTranslationService.TranslatedMediaText translatedMediaText =
+                    translateMediaText(asset.getOcrText(), asset.getAsrText(),
+                            asset.getCaptionText(), content != null ? content.getLanguage() : null);
+            mediaAssetEsService.indexAssetSegment(asset, null, null, null, asset.getCaptionText(),
+                    translatedMediaText.ocrText(), translatedMediaText.asrText(), translatedMediaText.captionText());
         }
         return assets.size();
     }
