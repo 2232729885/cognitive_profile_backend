@@ -5,6 +5,7 @@ import com.idata.profile.agentproxy.dto.t1.T1AnnotateRequest;
 import com.idata.profile.agentproxy.dto.t1.T1AnnotateResponse;
 import com.idata.profile.common.constant.PipelineStatus;
 import com.idata.profile.common.util.ImageAnnotationUtil;
+import com.idata.profile.common.util.LanguageCodeUtil;
 import com.idata.profile.entity.content.MediaAsset;
 import com.idata.profile.entity.content.MediaContent;
 import com.idata.profile.entity.raw.RawRecord;
@@ -74,7 +75,7 @@ public class T1AnnotationStep {
         T1AnnotateRequest request = new T1AnnotateRequest();
         request.setTitle(mc.getTitle());
         request.setText(mc.getBodyText());
-        request.setLanguage(mc.getLanguage());
+        request.setLanguage(LanguageCodeUtil.normalizeForT1(mc.getLanguage()));
 
         request.setMedias(assets.stream()
                 .filter(a -> "image".equals(a.getAssetType()) || "video".equals(a.getAssetType()))

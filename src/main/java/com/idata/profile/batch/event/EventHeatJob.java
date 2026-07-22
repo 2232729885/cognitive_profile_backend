@@ -72,6 +72,7 @@ public class EventHeatJob {
                 entity.setEntityId(id);
                 entity.setEntityType(entityType(label));
                 entity.setName(displayName(props));
+                setZeroEngagement(entity);
                 nonContentEntities.add(entity);
             }
         }
@@ -91,11 +92,11 @@ public class EventHeatJob {
             entity.setEntityType("media_content");
             entity.setPublishedAt(stringValue(props.get("publishedAt")));
             entity.setPlatform(stringValue(props.get("platform")));
-            entity.setLikeCount(longObject(props.get("likeCount")));
-            entity.setCommentCount(longObject(props.get("commentCount")));
-            entity.setShareCount(longObject(props.get("shareCount")));
-            entity.setRepostCount(longObject(props.get("repostCount")));
-            entity.setViewCount(longObject(props.get("viewCount")));
+            entity.setLikeCount(longValue(props.get("likeCount")));
+            entity.setCommentCount(longValue(props.get("commentCount")));
+            entity.setShareCount(longValue(props.get("shareCount")));
+            entity.setRepostCount(longValue(props.get("repostCount")));
+            entity.setViewCount(longValue(props.get("viewCount")));
             entities.add(entity);
         }
 
@@ -187,8 +188,12 @@ public class EventHeatJob {
         }
     }
 
-    private Long longObject(Object value) {
-        return value == null ? null : longValue(value);
+    private void setZeroEngagement(T1AnnotateEventHeatRequest.RelatedEntity entity) {
+        entity.setLikeCount(0L);
+        entity.setCommentCount(0L);
+        entity.setShareCount(0L);
+        entity.setRepostCount(0L);
+        entity.setViewCount(0L);
     }
 
     private String stringValue(Object value) {
