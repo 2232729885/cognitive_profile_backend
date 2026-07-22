@@ -56,6 +56,19 @@ public interface MediaContentMapper extends BaseMapper<MediaContent> {
     @Update("UPDATE media_contents SET propagation_synced_to_neo4j = TRUE WHERE id = #{id}")
     int markPropagationSyncedToNeo4j(@Param("id") UUID id);
 
+    @Update("""
+            UPDATE media_contents
+            SET translated_title = #{translatedTitle},
+                translated_body_text = #{translatedBodyText},
+                translated_summary = #{translatedSummary},
+                updated_at = NOW()
+            WHERE id = #{id}
+            """)
+    int updateTranslationFields(@Param("id") UUID id,
+                                @Param("translatedTitle") String translatedTitle,
+                                @Param("translatedBodyText") String translatedBodyText,
+                                @Param("translatedSummary") String translatedSummary);
+
     @Update("UPDATE media_contents " +
             "SET media_asset_ids = array_append(coalesce(media_asset_ids, ARRAY[]::uuid[]), #{assetId}::uuid) " +
             "WHERE id = #{contentId} " +

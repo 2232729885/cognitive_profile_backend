@@ -63,7 +63,8 @@ batch_import_id UUID · created_at · updated_at
 ```
 id UUID PK · raw_record_id UUID NOT NULL FK→raw_records · platform VARCHAR(64) NOT NULL · content_type VARCHAR(32) NOT NULL
 platform_content_id VARCHAR(256) · author_platform_user_id VARCHAR(256) · author_account_id UUID（可空，后回填）
-title TEXT · body_text TEXT · language VARCHAR(16) · published_at TIMESTAMPTZ · url TEXT
+title TEXT · body_text TEXT · translated_title TEXT · translated_body_text TEXT · translated_summary TEXT
+language VARCHAR(16) · published_at TIMESTAMPTZ · url TEXT
 parent_content_id VARCHAR(256) · root_content_id VARCHAR(256) · repost_of_content_id VARCHAR(256) · quoted_content_id VARCHAR(256)
 hashtags TEXT[] · mentions TEXT[] · external_urls TEXT[]
 like_count/comment_count/share_count/repost_count/quote_count/view_count/reaction_count BIGINT NOT NULL DEFAULT 0
@@ -126,7 +127,8 @@ id UUID PK · raw_record_id UUID FK→raw_records · content_id UUID FK→media_
 source_asset_id VARCHAR(256)（唯一，可空） · asset_type VARCHAR(32) NOT NULL
 source_url TEXT · storage_uri TEXT · mime_type VARCHAR(128) · sha256 VARCHAR(64)（唯一，可空）
 file_size_bytes BIGINT · width INTEGER · height INTEGER · duration_seconds INTEGER
-thumbnail_uri TEXT · ocr_text TEXT · asr_text TEXT · aigc_score NUMERIC(4,3)
+thumbnail_uri TEXT · ocr_text TEXT · asr_text TEXT · caption_text TEXT
+translated_ocr_text TEXT · translated_asr_text TEXT · translated_caption_text TEXT · aigc_score NUMERIC(4,3)
 minio_bucket VARCHAR(128) · minio_key TEXT · embedding_id VARCHAR(128)
 created_at
 ```

@@ -120,7 +120,10 @@ public class MediaAssetEsService {
 
     public void indexAsset(MediaAsset asset) {
         indexAssetSegment(asset, null, null, null,
-                firstText(asset != null ? asset.getCaptionText() : null, buildCaptionText(asset)));
+                firstText(asset != null ? asset.getCaptionText() : null, buildCaptionText(asset)),
+                asset != null ? asset.getTranslatedOcrText() : null,
+                asset != null ? asset.getTranslatedAsrText() : null,
+                asset != null ? asset.getTranslatedCaptionText() : null);
     }
 
     public void indexAssetSegment(MediaAsset asset, String segmentId,

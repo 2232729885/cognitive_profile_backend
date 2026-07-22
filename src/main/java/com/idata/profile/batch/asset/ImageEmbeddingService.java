@@ -85,13 +85,19 @@ public class ImageEmbeddingService {
     public int backfillImageAssetEsIndex(int limit) {
         List<MediaAsset> assets = mediaAssetMapper.selectImageAssetsWithOcrText(limit);
         for (MediaAsset asset : assets) {
-            if (cleanStoredMediaText(asset)) {
+            boolean changed = cleanStoredMediaText(asset);
+            MediaContent content = resolveLinkedContent(asset);
+            String beforeTranslatedOcrText = asset.getTranslatedOcrText();
+            String beforeTranslatedAsrText = asset.getTranslatedAsrText();
+            String beforeTranslatedCaptionText = asset.getTranslatedCaptionText();
+            SearchQueryTranslationService.TranslatedMediaText translatedMediaText =
+                    resolveTranslatedMediaText(asset, asset.getCaptionText(),
+                            content != null ? content.getLanguage() : null);
+            changed |= translatedFieldsChanged(asset, beforeTranslatedOcrText,
+                    beforeTranslatedAsrText, beforeTranslatedCaptionText);
+            if (changed) {
                 mediaAssetMapper.updateById(asset);
             }
-            MediaContent content = resolveLinkedContent(asset);
-            SearchQueryTranslationService.TranslatedMediaText translatedMediaText =
-                    translateMediaText(asset.getOcrText(), asset.getAsrText(),
-                            asset.getCaptionText(), content != null ? content.getLanguage() : null);
             mediaAssetEsService.indexAssetSegment(asset, null, null, null, asset.getCaptionText(),
                     translatedMediaText.ocrText(), translatedMediaText.asrText(), translatedMediaText.captionText());
         }
@@ -171,8 +177,13 @@ public class ImageEmbeddingService {
                 changed = true;
             }
             String contentLanguage = content != null ? content.getLanguage() : null;
+            String beforeTranslatedOcrText = asset.getTranslatedOcrText();
+            String beforeTranslatedAsrText = asset.getTranslatedAsrText();
+            String beforeTranslatedCaptionText = asset.getTranslatedCaptionText();
             SearchQueryTranslationService.TranslatedMediaText translatedMediaText =
-                    translateMediaText(asset.getOcrText(), asset.getAsrText(), captionText, contentLanguage);
+                    resolveTranslatedMediaText(asset, captionText, contentLanguage);
+            changed |= translatedFieldsChanged(asset, beforeTranslatedOcrText,
+                    beforeTranslatedAsrText, beforeTranslatedCaptionText);
             float[] visualEmbedding = isImage(asset) ? embeddingService.generateImageEmbedding(mediaSource) : null;
             float[] ocrEmbedding = null;
             if (hasText(asset.getOcrText())) {
@@ -263,10 +274,10 @@ public class ImageEmbeddingService {
             if (asset.getContentId() == null && content != null && content.getId() != null) {
                 asset.setContentId(content.getId());
             }
-            mediaAssetMapper.updateById(asset);
             SearchQueryTranslationService.TranslatedMediaText translatedMediaText =
-                    translateMediaText(asset.getOcrText(), null, captionText,
+                    resolveTranslatedMediaText(asset, captionText,
                             content != null ? content.getLanguage() : null);
+            mediaAssetMapper.updateById(asset);
             mediaAssetEsService.indexAssetSegment(asset, null, null, null, captionText,
                     translatedMediaText.ocrText(), translatedMediaText.asrText(), translatedMediaText.captionText());
             backfillCaptionEmbedding(asset, content, mediaSource, captionText, translatedMediaText);
@@ -438,6 +449,54 @@ public class ImageEmbeddingService {
         }
     }
 
+    private SearchQueryTranslationService.TranslatedMediaText resolveTranslatedMediaText(
+            MediaAsset asset, String captionText, String language) {
+        if (asset == null) {
+            return SearchQueryTranslationService.TranslatedMediaText.empty();
+        }
+        String translatedOcrText = cleanMediaText(asset.getTranslatedOcrText());
+        String translatedAsrText = cleanMediaText(asset.getTranslatedAsrText());
+        String translatedCaptionText = cleanMediaText(asset.getTranslatedCaptionText());
+
+        boolean needsOcr = hasText(asset.getOcrText()) && !hasText(translatedOcrText);
+        boolean needsAsr = hasText(asset.getAsrText()) && !hasText(translatedAsrText);
+        boolean needsCaption = hasText(captionText) && !hasText(translatedCaptionText);
+        if (needsOcr || needsAsr || needsCaption) {
+            SearchQueryTranslationService.TranslatedMediaText generated = translateMediaText(
+                    needsOcr ? asset.getOcrText() : null,
+                    needsAsr ? asset.getAsrText() : null,
+                    needsCaption ? captionText : null,
+                    language);
+            if (needsOcr && hasText(generated.ocrText())) {
+                translatedOcrText = generated.ocrText();
+            }
+            if (needsAsr && hasText(generated.asrText())) {
+                translatedAsrText = generated.asrText();
+            }
+            if (needsCaption && hasText(generated.captionText())) {
+                translatedCaptionText = generated.captionText();
+            }
+        }
+
+        asset.setTranslatedOcrText(cleanMediaText(translatedOcrText));
+        asset.setTranslatedAsrText(cleanMediaText(translatedAsrText));
+        asset.setTranslatedCaptionText(cleanMediaText(translatedCaptionText));
+        return new SearchQueryTranslationService.TranslatedMediaText(
+                asset.getTranslatedOcrText(),
+                asset.getTranslatedAsrText(),
+                asset.getTranslatedCaptionText());
+    }
+
+    private boolean translatedFieldsChanged(MediaAsset asset,
+                                            String beforeTranslatedOcrText,
+                                            String beforeTranslatedAsrText,
+                                            String beforeTranslatedCaptionText) {
+        return asset != null
+                && (!sameText(beforeTranslatedOcrText, asset.getTranslatedOcrText())
+                || !sameText(beforeTranslatedAsrText, asset.getTranslatedAsrText())
+                || !sameText(beforeTranslatedCaptionText, asset.getTranslatedCaptionText()));
+    }
+
     private boolean cleanStoredMediaText(MediaAsset asset) {
         if (asset == null) {
             return false;
@@ -456,6 +515,21 @@ public class ImageEmbeddingService {
         String captionText = cleanMediaText(asset.getCaptionText());
         if (!sameText(asset.getCaptionText(), captionText)) {
             asset.setCaptionText(captionText);
+            changed = true;
+        }
+        String translatedOcrText = cleanMediaText(asset.getTranslatedOcrText());
+        if (!sameText(asset.getTranslatedOcrText(), translatedOcrText)) {
+            asset.setTranslatedOcrText(translatedOcrText);
+            changed = true;
+        }
+        String translatedAsrText = cleanMediaText(asset.getTranslatedAsrText());
+        if (!sameText(asset.getTranslatedAsrText(), translatedAsrText)) {
+            asset.setTranslatedAsrText(translatedAsrText);
+            changed = true;
+        }
+        String translatedCaptionText = cleanMediaText(asset.getTranslatedCaptionText());
+        if (!sameText(asset.getTranslatedCaptionText(), translatedCaptionText)) {
+            asset.setTranslatedCaptionText(translatedCaptionText);
             changed = true;
         }
         return changed;

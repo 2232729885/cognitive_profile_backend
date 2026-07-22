@@ -28,6 +28,9 @@ public class MediaContent {
 
     private String title;
     private String bodyText;
+    private String translatedTitle;
+    private String translatedBodyText;
+    private String translatedSummary;
     private String language;
     private OffsetDateTime publishedAt;
     private String url;

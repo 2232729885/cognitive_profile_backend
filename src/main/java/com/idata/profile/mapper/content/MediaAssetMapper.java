@@ -19,12 +19,14 @@ public interface MediaAssetMapper extends BaseMapper<MediaAsset> {
                 id, raw_record_id, content_id, source_asset_id, asset_type,
                 source_url, storage_uri, mime_type, sha256, file_size_bytes,
                 width, height, duration_seconds, thumbnail_uri, ocr_text, asr_text, caption_text,
+                translated_ocr_text, translated_asr_text, translated_caption_text,
                 aigc_score, minio_bucket, minio_key, embedding_id
             )
             VALUES (
                 #{asset.id}, #{asset.rawRecordId}, #{asset.contentId}, #{asset.sourceAssetId}, #{asset.assetType},
                 #{asset.sourceUrl}, #{asset.storageUri}, #{asset.mimeType}, #{asset.sha256}, #{asset.fileSizeBytes},
                 #{asset.width}, #{asset.height}, #{asset.durationSeconds}, #{asset.thumbnailUri}, #{asset.ocrText}, #{asset.asrText}, #{asset.captionText},
+                #{asset.translatedOcrText}, #{asset.translatedAsrText}, #{asset.translatedCaptionText},
                 #{asset.aigcScore}, #{asset.minioBucket}, #{asset.minioKey}, #{asset.embeddingId}
             )
             ON CONFLICT (sha256) WHERE sha256 IS NOT NULL DO NOTHING
@@ -39,19 +41,21 @@ public interface MediaAssetMapper extends BaseMapper<MediaAsset> {
     List<MediaAsset> selectPendingEmbedding(@Param("limit") int limit);
 
     @Select("SELECT * FROM media_assets WHERE ocr_text IS NULL " +
-            "AND asset_type = 'image' LIMIT #{limit}")
+            "AND asset_type = 'image' ORDER BY created_at ASC LIMIT #{limit}")
     List<MediaAsset> selectPendingOcr(@Param("limit") int limit);
 
     @Select("SELECT * FROM media_assets WHERE " +
-            "(ocr_text IS NOT NULL OR asr_text IS NOT NULL OR caption_text IS NOT NULL) " +
+            "((ocr_text IS NOT NULL AND translated_ocr_text IS NULL) " +
+            "OR (asr_text IS NOT NULL AND translated_asr_text IS NULL) " +
+            "OR (caption_text IS NOT NULL AND translated_caption_text IS NULL)) " +
             "AND asset_type IN ('image','video','audio') AND content_id IS NOT NULL " +
-            "ORDER BY created_at DESC LIMIT #{limit}")
+            "ORDER BY created_at ASC LIMIT #{limit}")
     List<MediaAsset> selectImageAssetsWithOcrText(@Param("limit") int limit);
 
     @Select("SELECT * FROM media_assets WHERE caption_text IS NULL " +
             "AND asset_type = 'image' " +
             "AND (source_url IS NOT NULL OR (minio_bucket IS NOT NULL AND minio_key IS NOT NULL)) " +
-            "ORDER BY created_at DESC LIMIT #{limit}")
+            "ORDER BY created_at ASC LIMIT #{limit}")
     List<MediaAsset> selectPendingCaption(@Param("limit") int limit);
 
     /** 查找有资产待T1标注、且资产已关联内容的内容ID列表（去重，用于ImageEmbeddingJob按内容重新标注） */

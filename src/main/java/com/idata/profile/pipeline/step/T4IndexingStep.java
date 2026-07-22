@@ -2,6 +2,7 @@ package com.idata.profile.pipeline.step;
 
 import com.idata.profile.common.constant.PipelineStatus;
 import com.idata.profile.common.util.T1AnnotationView;
+import com.idata.profile.common.util.TextEncodingRepairUtil;
 import com.idata.profile.entity.content.MediaContent;
 import com.idata.profile.entity.raw.RawRecord;
 import com.idata.profile.entity.task.PipelineTask;
@@ -54,8 +55,17 @@ public class T4IndexingStep {
         String bodyEmbeddingText = buildContentBodyEmbeddingText(mc, t1View);
         String contentDescriptionText = combineText(summaryText, bodyEmbeddingText);
         String contentNodeName = buildContentNodeName(mc, summaryText);
-        SearchQueryTranslationService.TranslatedContent translated = translationService.translateContent(
-                mc.getTitle(), mc.getBodyText(), summaryText, mc.getLanguage());
+        String beforeTranslatedTitle = mc.getTranslatedTitle();
+        String beforeTranslatedBodyText = mc.getTranslatedBodyText();
+        String beforeTranslatedSummary = mc.getTranslatedSummary();
+        SearchQueryTranslationService.TranslatedContent translated = resolveTranslatedContent(mc, summaryText);
+        if (translatedFieldsChanged(mc, beforeTranslatedTitle, beforeTranslatedBodyText, beforeTranslatedSummary)) {
+            mediaContentMapper.updateTranslationFields(
+                    mc.getId(),
+                    mc.getTranslatedTitle(),
+                    mc.getTranslatedBodyText(),
+                    mc.getTranslatedSummary());
+        }
         float[] titleEmbedding = generateEmbedding(mc.getTitle());
         float[] contentNodeNameEmbedding = generateEmbedding(contentNodeName);
         float[] summaryEmbedding = generateEmbedding(summaryText);
@@ -130,6 +140,53 @@ public class T4IndexingStep {
             return null;
         }
         return embeddingService.generateTextEmbedding(truncateForEmbedding(text));
+    }
+
+    private SearchQueryTranslationService.TranslatedContent resolveTranslatedContent(MediaContent mc, String summaryText) {
+        if (mc == null) {
+            return SearchQueryTranslationService.TranslatedContent.empty();
+        }
+        String translatedTitle = cleanText(mc.getTranslatedTitle());
+        String translatedBodyText = cleanText(mc.getTranslatedBodyText());
+        String translatedSummary = cleanText(mc.getTranslatedSummary());
+
+        boolean needsTitle = hasText(mc.getTitle()) && !hasText(translatedTitle);
+        boolean needsBodyText = hasText(mc.getBodyText()) && !hasText(translatedBodyText);
+        boolean needsSummary = hasText(summaryText) && !hasText(translatedSummary);
+        if (needsTitle || needsBodyText || needsSummary) {
+            SearchQueryTranslationService.TranslatedContent generated = translationService.translateContent(
+                    needsTitle ? mc.getTitle() : null,
+                    needsBodyText ? mc.getBodyText() : null,
+                    needsSummary ? summaryText : null,
+                    mc.getLanguage());
+            if (needsTitle && hasText(generated.title())) {
+                translatedTitle = generated.title();
+            }
+            if (needsBodyText && hasText(generated.bodyText())) {
+                translatedBodyText = generated.bodyText();
+            }
+            if (needsSummary && hasText(generated.summary())) {
+                translatedSummary = generated.summary();
+            }
+        }
+
+        mc.setTranslatedTitle(cleanText(translatedTitle));
+        mc.setTranslatedBodyText(cleanText(translatedBodyText));
+        mc.setTranslatedSummary(cleanText(translatedSummary));
+        return new SearchQueryTranslationService.TranslatedContent(
+                mc.getTranslatedTitle(),
+                mc.getTranslatedBodyText(),
+                mc.getTranslatedSummary());
+    }
+
+    private boolean translatedFieldsChanged(MediaContent mc,
+                                            String beforeTranslatedTitle,
+                                            String beforeTranslatedBodyText,
+                                            String beforeTranslatedSummary) {
+        return mc != null
+                && (!sameText(beforeTranslatedTitle, mc.getTranslatedTitle())
+                || !sameText(beforeTranslatedBodyText, mc.getTranslatedBodyText())
+                || !sameText(beforeTranslatedSummary, mc.getTranslatedSummary()));
     }
 
     private String buildContentBodyEmbeddingText(MediaContent mc, T1AnnotationView t1View) {
@@ -314,7 +371,21 @@ public class T4IndexingStep {
     }
 
     private boolean hasText(String value) {
-        return value != null && !value.trim().isEmpty();
+        return value != null && !value.trim().isEmpty() && !"null".equalsIgnoreCase(value.trim());
+    }
+
+    private String cleanText(String value) {
+        if (!hasText(value)) {
+            return null;
+        }
+        return TextEncodingRepairUtil.repairLikelyUtf8Mojibake(value.trim());
+    }
+
+    private boolean sameText(String left, String right) {
+        if (left == null) {
+            return right == null;
+        }
+        return left.equals(right);
     }
 
     private String truncateForEmbedding(String text) {

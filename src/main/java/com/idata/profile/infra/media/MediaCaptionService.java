@@ -34,7 +34,7 @@ public class MediaCaptionService {
             Output one concise paragraph.
             """;
 
-    private final Semaphore captionSemaphore = new Semaphore(1);
+    private Semaphore captionSemaphore;
 
     @Value("${spring.ai.openai.base-url}")
     private String baseUrl;
@@ -50,6 +50,12 @@ public class MediaCaptionService {
 
     @Value("${media.caption.timeout-seconds:45}")
     private int timeoutSeconds;
+
+    @Value("${media.caption.queue-timeout-seconds:5}")
+    private int queueTimeoutSeconds;
+
+    @Value("${media.caption.concurrency:1}")
+    private int concurrency;
 
     @Value("${media.caption.max-tokens:256}")
     private int maxTokens;
@@ -78,9 +84,10 @@ public class MediaCaptionService {
     private String describeImageReference(String imageReference, String logSource) {
         boolean acquired = false;
         try {
-            acquired = captionSemaphore.tryAcquire(1, TimeUnit.SECONDS);
+            acquired = captionSemaphore().tryAcquire(Math.max(1, queueTimeoutSeconds), TimeUnit.SECONDS);
             if (!acquired) {
-                log.debug("[MediaCaptionService] caption skipped because model route is busy, source={}", logSource);
+                log.warn("[MediaCaptionService] caption skipped because model route is busy, source={}, concurrency={}, queueTimeoutSeconds={}",
+                        logSource, Math.max(1, concurrency), Math.max(1, queueTimeoutSeconds));
                 return null;
             }
             Map<String, Object> requestBody = Map.of(
@@ -120,9 +127,17 @@ public class MediaCaptionService {
             return null;
         } finally {
             if (acquired) {
-                captionSemaphore.release();
+                captionSemaphore().release();
             }
         }
+    }
+
+    private synchronized Semaphore captionSemaphore() {
+        int permits = Math.max(1, concurrency);
+        if (captionSemaphore == null) {
+            captionSemaphore = new Semaphore(permits);
+        }
+        return captionSemaphore;
     }
 
     private RestClient restClient() {

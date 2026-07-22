@@ -143,6 +143,8 @@ media:
     max-tokens: 1024
   caption:
     enabled: true
+    concurrency: 1
+    queue-timeout-seconds: 5
     timeout-seconds: 300
     max-tokens: 256
   processing:

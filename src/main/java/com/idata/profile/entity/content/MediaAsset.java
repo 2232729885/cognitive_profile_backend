@@ -36,6 +36,9 @@ public class MediaAsset {
     private String ocrText;
     private String asrText;
     private String captionText;
+    private String translatedOcrText;
+    private String translatedAsrText;
+    private String translatedCaptionText;
     /** @deprecated 自T1多模态改造起不再写入，仅保留历史数据，完整标注结果见 MediaContent.t1Annotation。 */
     @Deprecated
     private BigDecimal aigcScore;
