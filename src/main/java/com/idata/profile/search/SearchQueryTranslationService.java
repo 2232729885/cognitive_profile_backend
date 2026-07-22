@@ -126,8 +126,8 @@ public class SearchQueryTranslationService {
         if (!hasText(title) && !hasText(bodyText) && !hasText(summary)) {
             return TranslatedContent.empty();
         }
-        if (isEnglish(language)) {
-            return new TranslatedContent(title, bodyText, summary);
+        if (allPresentTextProbablyEnglish(title, bodyText, summary)) {
+            return TranslatedContent.empty();
         }
         if (!tryAcquire()) {
             return TranslatedContent.empty();
@@ -153,9 +153,9 @@ public class SearchQueryTranslationService {
             ContentTranslationResponse response =
                     OBJECT_MAPPER.readValue(cleanJson(raw), ContentTranslationResponse.class);
             return new TranslatedContent(
-                    blankToNull(response.getTitle()),
-                    blankToNull(response.getBodyText()),
-                    blankToNull(response.getSummary()));
+                    englishPivotText(response.getTitle(), title),
+                    englishPivotText(response.getBodyText(), bodyText),
+                    englishPivotText(response.getSummary(), summary));
         } catch (Exception e) {
             log.debug("[SearchTranslation] content translation failed, language={}, reason={}",
                     language, rootMessage(e));
@@ -180,7 +180,7 @@ public class SearchQueryTranslationService {
         }
         if (isEnglish(language)
                 && allPresentTextProbablyEnglish(normalizedOcrText, normalizedAsrText, normalizedCaptionText)) {
-            return new TranslatedMediaText(normalizedOcrText, normalizedAsrText, normalizedCaptionText);
+            return TranslatedMediaText.empty();
         }
         if (!tryAcquire()) {
             log.warn("[SearchTranslation] media text translation skipped because translation route is busy, language={}, ocrLength={}, asrLength={}, captionLength={}",
@@ -332,9 +332,14 @@ public class SearchQueryTranslationService {
     private String englishPivotText(String translated, String original) {
         String clean = blankToNull(translated);
         if (isProbablyEnglishText(original)) {
-            return hasText(clean) ? clean : blankToNull(original);
+            return null;
         }
         return isProbablyEnglishText(clean) ? clean : null;
+    }
+
+    public boolean needsPivotTranslation(String text) {
+        String normalized = TextEncodingRepairUtil.repairLikelyUtf8Mojibake(text);
+        return hasText(normalized) && !isProbablyEnglishText(normalized);
     }
 
     private boolean allPresentTextProbablyEnglish(String... values) {

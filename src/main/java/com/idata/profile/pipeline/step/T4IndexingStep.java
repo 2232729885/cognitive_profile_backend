@@ -150,9 +150,19 @@ public class T4IndexingStep {
         String translatedBodyText = cleanText(mc.getTranslatedBodyText());
         String translatedSummary = cleanText(mc.getTranslatedSummary());
 
-        boolean needsTitle = hasText(mc.getTitle()) && !hasText(translatedTitle);
-        boolean needsBodyText = hasText(mc.getBodyText()) && !hasText(translatedBodyText);
-        boolean needsSummary = hasText(summaryText) && !hasText(translatedSummary);
+        if (!translationService.needsPivotTranslation(mc.getTitle())) {
+            translatedTitle = null;
+        }
+        if (!translationService.needsPivotTranslation(mc.getBodyText())) {
+            translatedBodyText = null;
+        }
+        if (!translationService.needsPivotTranslation(summaryText)) {
+            translatedSummary = null;
+        }
+
+        boolean needsTitle = translationService.needsPivotTranslation(mc.getTitle()) && !hasText(translatedTitle);
+        boolean needsBodyText = translationService.needsPivotTranslation(mc.getBodyText()) && !hasText(translatedBodyText);
+        boolean needsSummary = translationService.needsPivotTranslation(summaryText) && !hasText(translatedSummary);
         if (needsTitle || needsBodyText || needsSummary) {
             SearchQueryTranslationService.TranslatedContent generated = translationService.translateContent(
                     needsTitle ? mc.getTitle() : null,

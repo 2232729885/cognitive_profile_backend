@@ -458,9 +458,19 @@ public class ImageEmbeddingService {
         String translatedAsrText = cleanMediaText(asset.getTranslatedAsrText());
         String translatedCaptionText = cleanMediaText(asset.getTranslatedCaptionText());
 
-        boolean needsOcr = hasText(asset.getOcrText()) && !hasText(translatedOcrText);
-        boolean needsAsr = hasText(asset.getAsrText()) && !hasText(translatedAsrText);
-        boolean needsCaption = hasText(captionText) && !hasText(translatedCaptionText);
+        if (!translationService.needsPivotTranslation(asset.getOcrText())) {
+            translatedOcrText = null;
+        }
+        if (!translationService.needsPivotTranslation(asset.getAsrText())) {
+            translatedAsrText = null;
+        }
+        if (!translationService.needsPivotTranslation(captionText)) {
+            translatedCaptionText = null;
+        }
+
+        boolean needsOcr = translationService.needsPivotTranslation(asset.getOcrText()) && !hasText(translatedOcrText);
+        boolean needsAsr = translationService.needsPivotTranslation(asset.getAsrText()) && !hasText(translatedAsrText);
+        boolean needsCaption = translationService.needsPivotTranslation(captionText) && !hasText(translatedCaptionText);
         if (needsOcr || needsAsr || needsCaption) {
             SearchQueryTranslationService.TranslatedMediaText generated = translateMediaText(
                     needsOcr ? asset.getOcrText() : null,
