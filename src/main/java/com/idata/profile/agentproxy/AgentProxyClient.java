@@ -187,9 +187,10 @@ public class AgentProxyClient {
 
             Path dir = requestJsonlOutputDir();
             Path file = dir.resolve(requestJsonlFileName(agentCode));
-            String jsonLine = OBJECT_MAPPER.writeValueAsString(line) + System.lineSeparator();
+            String jsonLine = replaceUnpairedSurrogates(OBJECT_MAPPER.writeValueAsString(line))
+                    + System.lineSeparator();
             synchronized (REQUEST_JSONL_WRITE_LOCK) {
-                Files.writeString(file, jsonLine, StandardCharsets.UTF_8,
+                Files.write(file, jsonLine.getBytes(StandardCharsets.UTF_8),
                         StandardOpenOption.CREATE, StandardOpenOption.APPEND);
             }
         } catch (JacksonException | IOException e) {
@@ -234,6 +235,28 @@ public class AgentProxyClient {
             return "T2请求体样例 运行数据.jsonl";
         }
         return "T3请求体样例 运行数据.jsonl";
+    }
+
+    private String replaceUnpairedSurrogates(String value) {
+        if (value == null || value.isEmpty()) {
+            return value;
+        }
+        StringBuilder result = new StringBuilder(value.length());
+        for (int i = 0; i < value.length(); i++) {
+            char ch = value.charAt(i);
+            if (Character.isHighSurrogate(ch)) {
+                if (i + 1 < value.length() && Character.isLowSurrogate(value.charAt(i + 1))) {
+                    result.append(ch).append(value.charAt(++i));
+                } else {
+                    result.append('\uFFFD');
+                }
+            } else if (Character.isLowSurrogate(ch)) {
+                result.append('\uFFFD');
+            } else {
+                result.append(ch);
+            }
+        }
+        return result.toString();
     }
 
     private RestClient restClient(int timeoutSeconds) {

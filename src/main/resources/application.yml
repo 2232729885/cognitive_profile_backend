@@ -103,6 +103,10 @@ agent-proxy:
 pipeline:
   thread-pool-size: 64
 
+entity-dedup:
+  exact-name-enabled: true
+  t3-assisted-enabled: false
+
 search:
   hybrid:
     route-timeout-seconds: 30

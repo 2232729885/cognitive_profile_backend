@@ -15,6 +15,7 @@ import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.util.UUID;
 
 /**
  * Unified retry handling for pipeline step failures.
@@ -68,6 +69,7 @@ public class RetryHandler {
                                       short attemptNo, boolean willRetry) {
         try {
             PipelineTaskFailure failure = new PipelineTaskFailure();
+            failure.setId(UUID.randomUUID());
             failure.setTaskId(task.getId());
             failure.setRawRecordId(task.getRawRecordId());
             failure.setContentId(task.getContentId());

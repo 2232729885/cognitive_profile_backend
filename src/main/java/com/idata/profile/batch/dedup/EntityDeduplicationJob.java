@@ -26,6 +26,7 @@ import com.idata.profile.mapper.graph.PersonMapper;
 import com.idata.profile.service.EntityCandidateRetrievalService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -63,6 +64,12 @@ public class EntityDeduplicationJob {
     private final MilvusVectorService milvusVectorService;
     private final ApplicationContext applicationContext;
     private final AtomicBoolean running = new AtomicBoolean(false);
+
+    @Value("${entity-dedup.exact-name-enabled:true}")
+    private boolean exactNameEnabled;
+
+    @Value("${entity-dedup.t3-assisted-enabled:false}")
+    private boolean t3AssistedEnabled;
 
     @Scheduled(fixedDelay = 60 * 60 * 1000)
     public void run() {
@@ -103,14 +110,23 @@ public class EntityDeduplicationJob {
         log.info("[EntityDeduplicationJob] start, jobRunId={}", jobRunId);
 
         int exactMerged = 0;
-        exactMerged += deduplicateEntities("person", jobRunId);
-        exactMerged += deduplicateEntities("organization", jobRunId);
-        exactMerged += deduplicateEntities("event", jobRunId);
-        exactMerged += deduplicateEntities("narrative", jobRunId);
-        log.info("[EntityDeduplicationJob] exact-name stage done, merged={}", exactMerged);
+        if (exactNameEnabled) {
+            exactMerged += deduplicateEntities("person", jobRunId);
+            exactMerged += deduplicateEntities("organization", jobRunId);
+            exactMerged += deduplicateEntities("event", jobRunId);
+            exactMerged += deduplicateEntities("narrative", jobRunId);
+            log.info("[EntityDeduplicationJob] exact-name stage done, merged={}", exactMerged);
+        } else {
+            log.info("[EntityDeduplicationJob] exact-name stage disabled");
+        }
 
-        int t3Merged = deduplicateWithT3(jobRunId);
-        log.info("[EntityDeduplicationJob] T3-assisted stage done, merged={}", t3Merged);
+        int t3Merged = 0;
+        if (t3AssistedEnabled) {
+            t3Merged = deduplicateWithT3(jobRunId);
+            log.info("[EntityDeduplicationJob] T3-assisted stage done, merged={}", t3Merged);
+        } else {
+            log.info("[EntityDeduplicationJob] T3-assisted stage disabled");
+        }
 
         log.info("[EntityDeduplicationJob] done, jobRunId={}, totalMerged={}", jobRunId, exactMerged + t3Merged);
         logPendingStats();
@@ -355,7 +371,8 @@ public class EntityDeduplicationJob {
         item.setMention(mention);
         item.setCandidates(candidates);
         T3ResolveBatchRequest.Context context = new T3ResolveBatchRequest.Context();
-        context.setContentId(candidate.getId());
+        context.setContentId(firstText(candidate.getId(),
+                stableUuid("entity_dedup_job:" + candidate.getEntityType() + ":" + candidate.getCanonicalName())));
         context.setPlatform("entity_dedup_job");
         context.setLanguage("zh");
         context.setTextWindow(candidate.getCanonicalName());
@@ -737,6 +754,18 @@ public class EntityDeduplicationJob {
 
     private String stringValue(Object value) {
         return value == null ? null : value.toString();
+    }
+
+    private String firstText(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (hasText(value)) {
+                return value.trim();
+            }
+        }
+        return null;
     }
 
     private double scoreOf(Object value) {
