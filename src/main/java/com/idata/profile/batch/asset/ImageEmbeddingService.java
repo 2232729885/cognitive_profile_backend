@@ -150,6 +150,7 @@ public class ImageEmbeddingService {
                     asset.setOcrText(ocrText);
                     changed = true;
                     processed = true;
+                    mediaAssetMapper.updateById(asset);
                     log.info("Image OCR completed, assetId={}, textLength={}",
                             asset.getId(), ocrText.length());
                 }
@@ -163,6 +164,7 @@ public class ImageEmbeddingService {
                         asset.setAsrText(asrText);
                         changed = true;
                         processed = true;
+                        mediaAssetMapper.updateById(asset);
                         log.info("Media ASR completed, assetId={}, textLength={}",
                                 asset.getId(), asrText.length());
                     }
@@ -343,12 +345,16 @@ public class ImageEmbeddingService {
         for (MediaSegmentService.VideoSegmentFrame frame : frames) {
             try {
                 String caption = mediaCaptionService.describeImageFile(frame.frameFile());
+                String ocrText = imageOcrService.extractTextFromImageFile(frame.frameFile());
                 float[] visualEmbedding = embeddingService.generateImageEmbedding(toDataUrl(frame.frameFile()));
+                float[] ocrEmbedding = hasText(ocrText)
+                        ? embeddingService.generateTextEmbedding(ocrText)
+                        : null;
                 float[] captionEmbedding = hasText(caption)
                         ? embeddingService.generateTextEmbedding(caption)
                         : null;
                 SearchQueryTranslationService.TranslatedMediaText translatedCaption =
-                        translateMediaText(null, null, caption, language);
+                        translateMediaText(ocrText, null, caption, language);
                 String vectorId = milvusVectorService.upsertMediaAssetEmbedding(
                         asset.getId().toString(),
                         frame.segmentId(),
@@ -360,7 +366,7 @@ public class ImageEmbeddingService {
                         frame.segmentStart(),
                         frame.segmentEnd(),
                         visualEmbedding,
-                        null,
+                        ocrEmbedding,
                         null,
                         captionEmbedding);
                 upsertMediaAssetPivotEmbedding(
@@ -371,12 +377,12 @@ public class ImageEmbeddingService {
                         frame.segmentStart(),
                         frame.segmentEnd(),
                         language,
-                        null,
+                        ocrText,
                         null,
                         caption,
                         translatedCaption);
                 mediaAssetEsService.indexAssetSegment(asset, frame.segmentId(),
-                        frame.segmentStart(), frame.segmentEnd(), caption,
+                        frame.segmentStart(), frame.segmentEnd(), ocrText, null, caption,
                         translatedCaption.ocrText(), translatedCaption.asrText(), translatedCaption.captionText());
                 if (vectorId != null) {
                     asset.setEmbeddingId(vectorId);

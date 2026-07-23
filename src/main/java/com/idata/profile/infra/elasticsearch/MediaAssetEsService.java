@@ -139,6 +139,19 @@ public class MediaAssetEsService {
                                   String translatedOcrText,
                                   String translatedAsrText,
                                   String translatedCaptionText) {
+        indexAssetSegment(asset, segmentId, segmentStart, segmentEnd,
+                null, null, captionText,
+                translatedOcrText, translatedAsrText, translatedCaptionText);
+    }
+
+    public void indexAssetSegment(MediaAsset asset, String segmentId,
+                                  Float segmentStart, Float segmentEnd,
+                                  String ocrText,
+                                  String asrText,
+                                  String captionText,
+                                  String translatedOcrText,
+                                  String translatedAsrText,
+                                  String translatedCaptionText) {
         if (esClient == null || asset == null || asset.getId() == null) {
             return;
         }
@@ -153,8 +166,8 @@ public class MediaAssetEsService {
             doc.put("source_url", asset.getSourceUrl());
             doc.put("storage_uri", asset.getStorageUri());
             doc.put("mime_type", asset.getMimeType());
-            doc.put("ocr_text", cleanText(asset.getOcrText()));
-            doc.put("asr_text", cleanText(asset.getAsrText()));
+            doc.put("ocr_text", cleanText(firstText(ocrText, asset.getOcrText())));
+            doc.put("asr_text", cleanText(firstText(asrText, asset.getAsrText())));
             doc.put("caption_text", cleanText(captionText));
             doc.put("translated_ocr_text", cleanText(translatedOcrText));
             doc.put("translated_asr_text", cleanText(translatedAsrText));

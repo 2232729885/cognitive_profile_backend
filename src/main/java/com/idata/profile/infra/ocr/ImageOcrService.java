@@ -11,6 +11,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Semaphore;
@@ -99,6 +102,21 @@ public class ImageOcrService {
             if (acquired) {
                 ocrSemaphore().release();
             }
+        }
+    }
+
+    public String extractTextFromImageFile(Path imageFile) {
+        if (imageFile == null || !Files.isRegularFile(imageFile)) {
+            return null;
+        }
+        try {
+            String dataUrl = "data:image/jpeg;base64,"
+                    + Base64.getEncoder().encodeToString(Files.readAllBytes(imageFile));
+            return extractText(dataUrl);
+        } catch (Exception e) {
+            log.warn("[ImageOcrService] failed to read image file for OCR, file={}, reason={}",
+                    imageFile, rootMessage(e));
+            return null;
         }
     }
 

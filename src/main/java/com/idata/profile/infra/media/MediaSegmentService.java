@@ -12,7 +12,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 @Slf4j
@@ -30,6 +32,9 @@ public class MediaSegmentService {
 
     @Value("${media.processing.max-segments:20}")
     private int maxSegments;
+
+    @Value("${media.processing.frames-per-segment:1}")
+    private int framesPerSegment;
 
     @Value("${media.processing.process-timeout-seconds:180}")
     private int processTimeoutSeconds;
@@ -78,16 +83,43 @@ public class MediaSegmentService {
         List<VideoSegmentFrame> frames = new ArrayList<>();
         int safeSegmentSeconds = Math.max(1, segmentSeconds);
         int safeMaxSegments = Math.max(1, maxSegments);
+        int safeFramesPerSegment = Math.max(1, framesPerSegment);
         for (int start = 0, index = 0; start < duration && index < safeMaxSegments;
              start += safeSegmentSeconds, index++) {
             int end = Math.min(start + safeSegmentSeconds, duration);
-            int timestamp = start + Math.max(0, Math.min(2, Math.max(0, end - start - 1)));
-            Path frame = extractFrame(mediaSource, timestamp, index);
-            if (frame != null) {
-                frames.add(new VideoSegmentFrame("seg_" + index, start, end, frame));
+            int segmentLength = Math.max(0, end - start);
+            if (segmentLength <= 0) {
+                continue;
+            }
+            Set<Integer> timestamps = sampleTimestamps(start, segmentLength, duration, safeFramesPerSegment);
+            int frameIndex = 0;
+            for (Integer timestamp : timestamps) {
+                Path frame = extractFrame(mediaSource, timestamp, index);
+                if (frame != null) {
+                    String segmentId = safeFramesPerSegment == 1
+                            ? "seg_" + index
+                            : "seg_" + index + "_frame_" + frameIndex;
+                    frames.add(new VideoSegmentFrame(segmentId, start, end, frame));
+                }
+                frameIndex++;
             }
         }
         return frames;
+    }
+
+    private Set<Integer> sampleTimestamps(int segmentStart, int segmentLength, int duration, int frameCount) {
+        Set<Integer> timestamps = new LinkedHashSet<>();
+        int maxTimestamp = Math.max(0, duration - 1);
+        if (frameCount <= 1 || segmentLength <= 2) {
+            timestamps.add(Math.min(segmentStart + Math.min(2, Math.max(0, segmentLength - 1)), maxTimestamp));
+            return timestamps;
+        }
+        for (int i = 0; i < frameCount; i++) {
+            double ratio = frameCount == 1 ? 0.5D : (double) i / (double) (frameCount - 1);
+            int offset = (int) Math.round(ratio * Math.max(0, segmentLength - 1));
+            timestamps.add(Math.min(segmentStart + offset, maxTimestamp));
+        }
+        return timestamps;
     }
 
     public void deleteQuietly(Path file) {
@@ -123,7 +155,7 @@ public class MediaSegmentService {
     private int resolveDurationSeconds(String mediaSource, Integer fallbackDurationSeconds) {
         Double probed = probeDuration(mediaSource);
         if (probed != null && probed > 0) {
-            return (int) Math.ceil(probed);
+            return probed < 1 ? 1 : (int) Math.floor(probed);
         }
         return fallbackDurationSeconds == null ? 0 : Math.max(0, fallbackDurationSeconds);
     }

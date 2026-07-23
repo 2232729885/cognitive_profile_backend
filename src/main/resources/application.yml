@@ -151,5 +151,6 @@ media:
     ffmpeg-path: D:/ffmpeg-7.0/bin/ffmpeg.exe
     ffprobe-path: D:/ffmpeg-7.0/bin/ffprobe.exe
     segment-seconds: 30
-    max-segments: 20
+    max-segments: 5
+    frames-per-segment: 1
     process-timeout-seconds: 180
