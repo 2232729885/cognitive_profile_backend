@@ -38,6 +38,11 @@ public class MediaSegmentService {
         if (!hasText(mediaSource)) {
             return null;
         }
+        if (!isDirectMediaSource(mediaSource)) {
+            log.info("[MediaSegmentService] audio extraction skipped for non-direct media source, source={}",
+                    mediaSource);
+            return null;
+        }
         try {
             Path audioFile = Files.createTempFile("profile-media-audio-", ".wav");
             int exit = run(List.of(
@@ -58,6 +63,11 @@ public class MediaSegmentService {
 
     public List<VideoSegmentFrame> extractVideoSegmentFrames(String mediaSource, Integer fallbackDurationSeconds) {
         if (!hasText(mediaSource)) {
+            return List.of();
+        }
+        if (!isDirectMediaSource(mediaSource)) {
+            log.info("[MediaSegmentService] video frame extraction skipped for non-direct media source, source={}",
+                    mediaSource);
             return List.of();
         }
         int duration = resolveDurationSeconds(mediaSource, fallbackDurationSeconds);
@@ -177,6 +187,21 @@ public class MediaSegmentService {
 
     private boolean hasText(String value) {
         return value != null && !value.trim().isEmpty();
+    }
+
+    private boolean isDirectMediaSource(String value) {
+        if (!hasText(value)) {
+            return false;
+        }
+        String source = value.trim().toLowerCase(java.util.Locale.ROOT);
+        if (source.contains("youtube.com/watch")
+                || source.contains("youtube.com/shorts/")
+                || source.contains("youtu.be/")
+                || source.contains("m.youtube.com/watch")
+                || source.contains("music.youtube.com/watch")) {
+            return false;
+        }
+        return true;
     }
 
     public record VideoSegmentFrame(String segmentId, float segmentStart, float segmentEnd, Path frameFile) {

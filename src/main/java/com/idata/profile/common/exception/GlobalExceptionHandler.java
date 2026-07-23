@@ -2,9 +2,12 @@ package com.idata.profile.common.exception;
 
 import com.idata.profile.common.response.Result;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 @Slf4j
 @RestControllerAdvice
@@ -18,6 +21,13 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AsyncRequestTimeoutException.class)
     public void handleAsyncRequestTimeout(AsyncRequestTimeoutException e) {
         log.debug("Async request timed out");
+    }
+
+    @ResponseStatus(HttpStatus.PAYLOAD_TOO_LARGE)
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public Result<Void> handleMaxUploadSizeExceeded(MaxUploadSizeExceededException e) {
+        log.warn("Upload file size exceeded multipart limit: {}", e.getMessage());
+        return Result.fail("UPLOAD_TOO_LARGE", "上传文件超过大小限制，请拆分文件或提高后端上传限制");
     }
 
     @ExceptionHandler(Exception.class)

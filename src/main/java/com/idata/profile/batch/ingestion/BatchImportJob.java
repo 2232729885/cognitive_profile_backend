@@ -17,9 +17,10 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.zip.ZipEntry;
@@ -71,9 +72,9 @@ public class BatchImportJob {
         if ("zip".equals(format)) {
             processZip(fileBytes, counters);
         } else if ("jsonl".equals(format)) {
-            processJsonl(new String(fileBytes, StandardCharsets.UTF_8), counters, Set.of());
+            processJsonl(new String(fileBytes, StandardCharsets.UTF_8), counters, Map.of());
         } else if ("json".equals(format)) {
-            processJson(new String(fileBytes, StandardCharsets.UTF_8), counters, Set.of());
+            processJson(new String(fileBytes, StandardCharsets.UTF_8), counters, Map.of());
         } else {
             failTask(task, "不支持的文件格式: " + format);
             return;
@@ -116,39 +117,40 @@ public class BatchImportJob {
             throw new IllegalArgumentException("ZIP 中未找到可导入的 JSON/JSONL 文件");
         }
 
-        Set<String> uploadedMediaPaths = new LinkedHashSet<>();
+        Map<String, String> uploadedMediaKeys = new LinkedHashMap<>();
         for (Map.Entry<String, byte[]> media : mediaFiles.entrySet()) {
             try {
-                minioStorageService.upload(MEDIA_BUCKET, media.getKey(), media.getValue(), null);
-                uploadedMediaPaths.add(media.getKey());
+                String minioKey = normalizeZipMediaKey(media.getKey());
+                minioStorageService.upload(MEDIA_BUCKET, minioKey, media.getValue(), null);
+                addUploadedMediaAliases(uploadedMediaKeys, minioKey, media.getKey());
             } catch (Exception e) {
                 log.warn("[BatchImportJob] media upload failed, path={}", media.getKey(), e);
             }
         }
 
         for (Map.Entry<String, byte[]> jsonl : jsonlFiles.entrySet()) {
-            processJsonl(new String(jsonl.getValue(), StandardCharsets.UTF_8), counters, uploadedMediaPaths);
+            processJsonl(new String(jsonl.getValue(), StandardCharsets.UTF_8), counters, uploadedMediaKeys);
         }
         for (Map.Entry<String, byte[]> json : jsonFiles.entrySet()) {
-            processJson(new String(json.getValue(), StandardCharsets.UTF_8), counters, uploadedMediaPaths);
+            processJson(new String(json.getValue(), StandardCharsets.UTF_8), counters, uploadedMediaKeys);
         }
     }
 
-    private void processJsonl(String content, Counters counters, Set<String> uploadedMediaPaths) {
+    private void processJsonl(String content, Counters counters, Map<String, String> uploadedMediaKeys) {
         for (String line : content.split("\\r?\\n")) {
-            processLine(enrichMediaAssetLine(line, uploadedMediaPaths), counters);
+            processLine(enrichMediaAssetLine(line, uploadedMediaKeys), counters);
         }
     }
 
-    private void processJson(String content, Counters counters, Set<String> uploadedMediaPaths) {
+    private void processJson(String content, Counters counters, Map<String, String> uploadedMediaKeys) {
         try {
             JsonNode root = OBJECT_MAPPER.readTree(content);
             if (root.isArray()) {
                 for (JsonNode item : root) {
-                    processLine(enrichMediaAssetLine(item.toString(), uploadedMediaPaths), counters);
+                    processLine(enrichMediaAssetLine(item.toString(), uploadedMediaKeys), counters);
                 }
             } else {
-                processLine(enrichMediaAssetLine(content, uploadedMediaPaths), counters);
+                processLine(enrichMediaAssetLine(content, uploadedMediaKeys), counters);
             }
         } catch (Exception e) {
             counters.total++;
@@ -157,18 +159,18 @@ public class BatchImportJob {
         }
     }
 
-    private String enrichMediaAssetLine(String line, Set<String> uploadedMediaPaths) {
-        if (line == null || !line.contains("\"media_asset\"") || uploadedMediaPaths.isEmpty()) {
+    private String enrichMediaAssetLine(String line, Map<String, String> uploadedMediaKeys) {
+        if (line == null || !line.contains("\"media_asset\"") || uploadedMediaKeys.isEmpty()) {
             return line;
         }
         try {
             JsonNode root = OBJECT_MAPPER.readTree(line);
             JsonNode dataNode = root.path("data");
-            String storageUri = text(dataNode.path("storage_uri"));
-            if (storageUri != null && uploadedMediaPaths.contains(storageUri) && dataNode.isObject()) {
+            String minioKey = resolveUploadedMediaKey(root, uploadedMediaKeys);
+            if (minioKey != null && dataNode.isObject()) {
                 ObjectNode dataObjectNode = (ObjectNode) dataNode;
                 dataObjectNode.put("minio_bucket", MEDIA_BUCKET);
-                dataObjectNode.put("minio_key", storageUri);
+                dataObjectNode.put("minio_key", minioKey);
                 return root.toString();
             }
         } catch (Exception e) {
@@ -211,6 +213,113 @@ public class BatchImportJob {
             case "collection_task" -> KafkaTopicConstants.COLLECTION_TASK;
             default -> null;
         };
+    }
+
+    private String resolveUploadedMediaKey(JsonNode root, Map<String, String> uploadedMediaKeys) {
+        JsonNode dataNode = root.path("data");
+        List<String> candidates = new ArrayList<>();
+        addCandidate(candidates, text(dataNode.path("storage_uri")));
+        addCandidate(candidates, text(dataNode.path("minio_key")));
+        addCandidate(candidates, text(dataNode.path("asset_id")));
+        addCandidate(candidates, text(root.path("raw_payload").path("storage_uri")));
+        addCandidate(candidates, text(root.path("raw_payload").path("local_path")));
+
+        for (String candidate : candidates) {
+            String key = findUploadedMediaKey(uploadedMediaKeys, candidate);
+            if (key != null) {
+                return key;
+            }
+        }
+        return null;
+    }
+
+    private String findUploadedMediaKey(Map<String, String> uploadedMediaKeys, String candidate) {
+        if (candidate == null) {
+            return null;
+        }
+        for (String alias : mediaAliases(candidate)) {
+            String key = uploadedMediaKeys.get(alias);
+            if (key != null) {
+                return key;
+            }
+        }
+        return null;
+    }
+
+    private void addUploadedMediaAliases(Map<String, String> uploadedMediaKeys, String actualKey, String originalPath) {
+        for (String alias : mediaAliases(actualKey)) {
+            uploadedMediaKeys.putIfAbsent(alias, actualKey);
+        }
+        for (String alias : mediaAliases(originalPath)) {
+            uploadedMediaKeys.putIfAbsent(alias, actualKey);
+        }
+    }
+
+    private List<String> mediaAliases(String value) {
+        List<String> aliases = new ArrayList<>();
+        String normalized = normalizePath(value);
+        addCandidate(aliases, normalized);
+        addCandidate(aliases, stripToMediaPath(normalized));
+        String fileName = fileName(normalized);
+        addCandidate(aliases, fileName);
+        addCandidate(aliases, stripExtension(fileName));
+        return aliases;
+    }
+
+    private String normalizeZipMediaKey(String zipEntryName) {
+        String normalized = normalizePath(zipEntryName);
+        String mediaPath = stripToMediaPath(normalized);
+        return mediaPath == null ? normalized : mediaPath;
+    }
+
+    private String normalizePath(String value) {
+        if (value == null) {
+            return null;
+        }
+        String normalized = value.trim().replace('\\', '/');
+        while (normalized.startsWith("./")) {
+            normalized = normalized.substring(2);
+        }
+        while (normalized.contains("//")) {
+            normalized = normalized.replace("//", "/");
+        }
+        return normalized.isEmpty() ? null : normalized;
+    }
+
+    private String stripToMediaPath(String value) {
+        String normalized = normalizePath(value);
+        if (normalized == null) {
+            return null;
+        }
+        String lower = normalized.toLowerCase(Locale.ROOT);
+        int mediaIndex = lower.indexOf("media/");
+        if (mediaIndex >= 0) {
+            return normalized.substring(mediaIndex);
+        }
+        return normalized;
+    }
+
+    private String fileName(String value) {
+        String normalized = normalizePath(value);
+        if (normalized == null) {
+            return null;
+        }
+        int slash = normalized.lastIndexOf('/');
+        return slash >= 0 ? normalized.substring(slash + 1) : normalized;
+    }
+
+    private String stripExtension(String value) {
+        if (value == null) {
+            return null;
+        }
+        int dot = value.lastIndexOf('.');
+        return dot > 0 ? value.substring(0, dot) : value;
+    }
+
+    private void addCandidate(List<String> candidates, String value) {
+        if (value != null && !value.trim().isEmpty() && !candidates.contains(value.trim())) {
+            candidates.add(value.trim());
+        }
     }
 
     private void failTask(BatchImportTask task, String errorMessage) {
