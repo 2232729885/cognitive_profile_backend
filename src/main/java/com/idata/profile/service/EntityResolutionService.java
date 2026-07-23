@@ -5,6 +5,7 @@ import com.idata.profile.agentproxy.dto.t2.T2ExtractResponse;
 import com.idata.profile.agentproxy.dto.t3.T3ResolveBatchRequest;
 import com.idata.profile.agentproxy.dto.t3.T3ResolveBatchResponse;
 import com.idata.profile.common.constant.AllowedEventTypes;
+import com.idata.profile.common.util.LanguageCodeUtil;
 import com.idata.profile.common.util.StableUuidUtil;
 import com.idata.profile.entity.dedup.EntityFusionRecord;
 import com.idata.profile.infra.elasticsearch.EntityEsService;
@@ -157,10 +158,10 @@ public class EntityResolutionService {
         item.setMention(toT3Mention(mention));
         item.setCandidates(candidateRetrievalService.retrieveCandidates(entityName(mention), mention.getType(), 10));
         T3ResolveBatchRequest.Context context = new T3ResolveBatchRequest.Context();
-        context.setContentId(contentId);
-        context.setPlatform(platform);
-        context.setTextWindow(buildContextWindow(contextText, mention));
-        context.setLanguage(language);
+        context.setContentId(firstText(contentId, mention.getMentionId(), "unknown"));
+        context.setPlatform(firstText(platform, "unknown"));
+        context.setTextWindow(firstText(buildContextWindow(contextText, mention), entityName(mention), ""));
+        context.setLanguage(LanguageCodeUtil.normalizeForT1(language));
         item.setContext(context);
         return item;
     }
@@ -495,6 +496,18 @@ public class EntityResolutionService {
 
     private String stringValue(Object value) {
         return value == null ? null : value.toString();
+    }
+
+    private String firstText(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (hasText(value)) {
+                return value.trim();
+            }
+        }
+        return null;
     }
 
     private boolean hasText(String value) {
