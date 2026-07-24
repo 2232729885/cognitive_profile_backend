@@ -83,6 +83,9 @@ public class SearchService {
     @Value("${search.hybrid.route-timeout-seconds:30}")
     private long hybridRouteTimeoutSeconds;
 
+    @Value("${minio.endpoint:}")
+    private String minioEndpoint;
+
     public SearchResult searchByText(String keyword, String platform,
                                      String language, int page, int size) {
         long startedAt = System.currentTimeMillis();
@@ -425,7 +428,7 @@ public class SearchService {
             SearchResult.AssetHit assetHit = toAssetHit(hit, asset, contentId, entityId, rrfContribution);
             if (assetHit != null) {
                 accumulator.hasStrongMediaMatch = accumulator.hasStrongMediaMatch || isStrongMediaHit(channel, hit);
-                accumulator.assets.merge(assetHit.getEntityId(), assetHit, (left, right) -> {
+                accumulator.assets.merge(assetKey(assetHit), assetHit, (left, right) -> {
                     double leftScore = scoreValue(left.getRrfContribution());
                     double rightScore = scoreValue(right.getRrfContribution());
                     left.setRrfContribution(leftScore + rightScore);
@@ -744,6 +747,9 @@ public class SearchService {
         item.setStorageUri(asset != null ? asset.getStorageUri() : null);
         item.setMinioBucket(asset != null ? asset.getMinioBucket() : null);
         item.setMinioKey(asset != null ? asset.getMinioKey() : null);
+        String mediaUrl = mediaUrl(asset);
+        item.setMediaUrl(mediaUrl);
+        item.setPlayableUrl(mediaUrl);
         item.setFrameUrl(hit.frameUrl());
         item.setFrameMinioBucket(hit.frameMinioBucket());
         item.setFrameMinioKey(hit.frameMinioKey());
@@ -759,6 +765,38 @@ public class SearchService {
                 asset != null ? asset.getStorageUri() : null));
         item.setRrfContribution(rrfContribution);
         return item;
+    }
+
+    private String assetKey(SearchResult.AssetHit assetHit) {
+        return firstText(assetHit.getAssetId(), assetHit.getEntityId());
+    }
+
+    private String mediaUrl(MediaAsset asset) {
+        if (asset == null) {
+            return null;
+        }
+        if (hasText(asset.getMinioBucket()) && hasText(asset.getMinioKey())) {
+            return buildMinioUrl(asset.getMinioBucket(), asset.getMinioKey());
+        }
+        return firstText(asset.getStorageUri(), asset.getSourceUrl());
+    }
+
+    private String buildMinioUrl(String bucket, String key) {
+        if (!hasText(minioEndpoint) || !hasText(bucket) || !hasText(key)) {
+            return null;
+        }
+        return trimTrailingSlash(minioEndpoint) + "/" + bucket + "/" + key;
+    }
+
+    private String trimTrailingSlash(String value) {
+        if (!hasText(value)) {
+            return value;
+        }
+        String trimmed = value.trim();
+        while (trimmed.endsWith("/")) {
+            trimmed = trimmed.substring(0, trimmed.length() - 1);
+        }
+        return trimmed;
     }
 
     private String mediaEntityId(MediaHitSeed hit, MediaAsset asset) {

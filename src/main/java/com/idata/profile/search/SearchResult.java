@@ -74,6 +74,8 @@ public class SearchResult {
         private String assetId;
         private String contentId;
         private String mediaType;
+        private String mediaUrl;
+        private String playableUrl;
         private String previewUrl;
         private String frameUrl;
         private String sourceUrl;
