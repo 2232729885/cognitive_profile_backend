@@ -6,6 +6,7 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
+import java.util.List;
 import java.util.UUID;
 
 @Mapper
@@ -29,4 +30,35 @@ public interface RawRecordMapper extends BaseMapper<RawRecord> {
     @Select("SELECT id, source_record_id, pipeline_status, t1_output, t2_output, t3_output, t4_output " +
             "FROM raw_records WHERE source_record_id = #{sourceRecordId}")
     RawRecord selectFullTraceBySourceRecordId(@Param("sourceRecordId") String sourceRecordId);
+
+    @Select("""
+            SELECT rr.* FROM raw_records rr
+            JOIN pipeline_tasks pt ON pt.id = rr.pipeline_task_id
+            WHERE rr.record_type IN ('social_content', 'news_article')
+              AND rr.pipeline_status NOT IN ('T4_INDEXED', 'FAILED')
+              AND rr.pipeline_task_id IS NOT NULL
+              AND (
+                (
+                  COALESCE(pt.t1_status, 'pending') <> 'running'
+                  AND COALESCE(pt.t2_status, 'pending') <> 'running'
+                  AND COALESCE(pt.t3_status, 'pending') <> 'running'
+                  AND COALESCE(pt.t4_status, 'pending') <> 'running'
+                  AND rr.updated_at < NOW() - (#{stuckMinutes} || ' minutes')::INTERVAL
+                )
+                OR (
+                  (
+                    COALESCE(pt.t1_status, 'pending') = 'running'
+                    OR COALESCE(pt.t2_status, 'pending') = 'running'
+                    OR COALESCE(pt.t3_status, 'pending') = 'running'
+                    OR COALESCE(pt.t4_status, 'pending') = 'running'
+                  )
+                  AND pt.updated_at < NOW() - (#{runningStuckMinutes} || ' minutes')::INTERVAL
+                )
+              )
+            ORDER BY rr.updated_at ASC
+            LIMIT #{limit}
+            """)
+    List<RawRecord> selectStuckPipelineRecords(@Param("stuckMinutes") int stuckMinutes,
+                                               @Param("runningStuckMinutes") int runningStuckMinutes,
+                                               @Param("limit") int limit);
 }

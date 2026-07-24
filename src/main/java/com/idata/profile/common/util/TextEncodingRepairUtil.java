@@ -55,6 +55,8 @@ public final class TextEncodingRepairUtil {
                     || codePoint == 0x00C4 || codePoint == 0x00C5
                     || codePoint == 0x00C6 || codePoint == 0x00C7
                     || codePoint == 0x00C8 || codePoint == 0x00C9
+                    || codePoint == 0x00EA || codePoint == 0x00EB
+                    || codePoint == 0x00EC || codePoint == 0x00ED
                     || codePoint == 0x00E2 || codePoint == 0x00E3
                     || codePoint == 0x00E4 || codePoint == 0x00E5
                     || codePoint == 0x00E6 || codePoint == 0x00E7
@@ -86,6 +88,8 @@ public final class TextEncodingRepairUtil {
                 score += 10;
             }
             if (codePoint == 0x00C2 || codePoint == 0x00C3
+                    || codePoint == 0x00EA || codePoint == 0x00EB
+                    || codePoint == 0x00EC || codePoint == 0x00ED
                     || codePoint == 0x00E2 || codePoint == 0x00E3) {
                 score += 3;
             }

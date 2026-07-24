@@ -108,7 +108,8 @@ public class ImageEmbeddingService {
             if (changed) {
                 mediaAssetMapper.updateById(asset);
             }
-            mediaAssetEsService.indexAssetSegment(asset, null, null, null, asset.getCaptionText(),
+            mediaAssetEsService.indexAssetSegment(asset, null, null, null,
+                    asset.getOcrText(), asset.getAsrText(), asset.getCaptionText(),
                     translatedMediaText.ocrText(), translatedMediaText.asrText(), translatedMediaText.captionText());
         }
         return assets.size();
@@ -256,7 +257,8 @@ public class ImageEmbeddingService {
             if (changed) {
                 mediaAssetMapper.updateById(asset);
             }
-            mediaAssetEsService.indexAssetSegment(asset, null, null, null, captionText,
+            mediaAssetEsService.indexAssetSegment(asset, null, null, null,
+                    asset.getOcrText(), asset.getAsrText(), captionText,
                     translatedMediaText.ocrText(), translatedMediaText.asrText(), translatedMediaText.captionText());
             return processed;
         } catch (Exception e) {
@@ -290,7 +292,8 @@ public class ImageEmbeddingService {
                     resolveTranslatedMediaText(asset, captionText,
                             content != null ? content.getLanguage() : null);
             mediaAssetMapper.updateById(asset);
-            mediaAssetEsService.indexAssetSegment(asset, null, null, null, captionText,
+            mediaAssetEsService.indexAssetSegment(asset, null, null, null,
+                    asset.getOcrText(), asset.getAsrText(), captionText,
                     translatedMediaText.ocrText(), translatedMediaText.asrText(), translatedMediaText.captionText());
             backfillCaptionEmbedding(asset, content, mediaSource, captionText, translatedMediaText);
             log.info("Image caption backfilled, assetId={}, textLength={}",

@@ -102,6 +102,13 @@ agent-proxy:
 
 pipeline:
   thread-pool-size: 64
+  recovery:
+    enabled: true
+    stuck-minutes: 5
+    running-stuck-minutes: 30
+    batch-limit: 200
+    initial-delay-ms: 60000
+    fixed-delay-ms: 300000
   t2:
     min-text-length: 20
     min-effective-token-count: 3
