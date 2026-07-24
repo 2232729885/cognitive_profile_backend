@@ -8,6 +8,7 @@ import com.idata.profile.pipeline.step.T2ExtractionStep;
 import com.idata.profile.pipeline.step.T4IndexingStep;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -25,6 +26,9 @@ public class PipelineExecutor {
     private final T2ExtractionStep t2Step;
     private final T4IndexingStep t4Step;
     private final RetryHandler retryHandler;
+
+    @Value("${pipeline.recovery.running-stuck-minutes:30}")
+    private int runningStuckMinutes;
 
     public void submitAfterCommit(UUID taskId) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
@@ -45,7 +49,21 @@ public class PipelineExecutor {
     }
 
     private void execute(UUID taskId) {
+        if (taskId == null) {
+            return;
+        }
+
+        int claimed = pipelineTaskMapper.claimRunnableTask(taskId, Math.max(1, runningStuckMinutes));
+        if (claimed <= 0) {
+            log.info("[PipelineExecutor] skip duplicate or active task, taskId={}", taskId);
+            return;
+        }
+
         PipelineTask task = pipelineTaskMapper.selectById(taskId);
+        if (task == null) {
+            log.warn("[PipelineExecutor] claimed task not found, taskId={}", taskId);
+            return;
+        }
         String currentStep = "UNKNOWN";
         try {
             if (!"done".equals(task.getT1Status())) {

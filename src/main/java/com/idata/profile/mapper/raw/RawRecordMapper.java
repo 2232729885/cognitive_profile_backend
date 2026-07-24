@@ -37,8 +37,11 @@ public interface RawRecordMapper extends BaseMapper<RawRecord> {
             WHERE rr.record_type IN ('social_content', 'news_article')
               AND rr.pipeline_status NOT IN ('T4_INDEXED', 'FAILED')
               AND rr.pipeline_task_id IS NOT NULL
+              AND COALESCE(pt.status, 'PENDING') <> 'DONE'
               AND (
                 (
+                  COALESCE(pt.status, 'PENDING') <> 'RUNNING'
+                  AND
                   COALESCE(pt.t1_status, 'pending') <> 'running'
                   AND COALESCE(pt.t2_status, 'pending') <> 'running'
                   AND COALESCE(pt.t3_status, 'pending') <> 'running'
@@ -47,7 +50,8 @@ public interface RawRecordMapper extends BaseMapper<RawRecord> {
                 )
                 OR (
                   (
-                    COALESCE(pt.t1_status, 'pending') = 'running'
+                    COALESCE(pt.status, 'PENDING') = 'RUNNING'
+                    OR COALESCE(pt.t1_status, 'pending') = 'running'
                     OR COALESCE(pt.t2_status, 'pending') = 'running'
                     OR COALESCE(pt.t3_status, 'pending') = 'running'
                     OR COALESCE(pt.t4_status, 'pending') = 'running'

@@ -5,8 +5,10 @@ import com.idata.profile.entity.task.PipelineTask;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 import java.util.List;
+import java.util.UUID;
 
 @Mapper
 public interface PipelineTaskMapper extends BaseMapper<PipelineTask> {
@@ -21,4 +23,18 @@ public interface PipelineTaskMapper extends BaseMapper<PipelineTask> {
             "COUNT(*) FILTER (WHERE status = 'FAILED') AS failedCount " +
             "FROM pipeline_tasks WHERE created_at > NOW() - (#{hours} || ' hours')::INTERVAL")
     java.util.Map<String, Object> selectPerformanceStats(@Param("hours") int hours);
+
+    @Update("""
+            UPDATE pipeline_tasks
+            SET status = 'RUNNING',
+                updated_at = NOW()
+            WHERE id = #{taskId}
+              AND COALESCE(status, 'PENDING') <> 'DONE'
+              AND (
+                COALESCE(status, 'PENDING') <> 'RUNNING'
+                OR updated_at < NOW() - (#{runningStuckMinutes} || ' minutes')::INTERVAL
+              )
+            """)
+    int claimRunnableTask(@Param("taskId") UUID taskId,
+                          @Param("runningStuckMinutes") int runningStuckMinutes);
 }

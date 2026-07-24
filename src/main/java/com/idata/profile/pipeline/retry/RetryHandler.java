@@ -46,10 +46,10 @@ public class RetryHandler {
         }
 
         boolean willRetry = newRetryCount < task.getMaxRetries();
+        task.setStatus(willRetry ? "PENDING" : "FAILED");
         recordFailureAttempt(task, failedStep, error, newRetryCount, willRetry);
 
-        if (newRetryCount >= task.getMaxRetries()) {
-            task.setStatus("FAILED");
+        if (!willRetry) {
             pipelineTaskMapper.updateById(task);
 
             RawRecord rawRecord = rawRecordMapper.selectById(task.getRawRecordId());
