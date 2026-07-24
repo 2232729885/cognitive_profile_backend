@@ -9,6 +9,7 @@ import com.idata.profile.infra.embedding.EmbeddingService;
 import com.idata.profile.infra.media.MediaAsrService;
 import com.idata.profile.infra.media.MediaCaptionService;
 import com.idata.profile.infra.media.MediaSegmentService;
+import com.idata.profile.infra.minio.MinioStorageService;
 import com.idata.profile.infra.milvus.MilvusVectorService;
 import com.idata.profile.infra.ocr.ImageOcrService;
 import com.idata.profile.mapper.content.MediaAssetMapper;
@@ -16,6 +17,7 @@ import com.idata.profile.mapper.content.MediaContentMapper;
 import com.idata.profile.search.SearchQueryTranslationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -24,7 +26,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 
@@ -45,6 +49,12 @@ public class ImageEmbeddingService {
     private final ExecutorService pipelineThreadPool;
     private final ImageAnnotationUtil imageAnnotationUtil;
     private final SearchQueryTranslationService translationService;
+    private final MinioStorageService minioStorageService;
+
+    @Value("${minio.endpoint}")
+    private String minioEndpoint;
+
+    private static final String MEDIA_BUCKET = "media-assets";
 
     public void submitAfterCommit(UUID assetId) {
         Runnable task = () -> pipelineThreadPool.submit(() -> processById(assetId));
@@ -342,19 +352,25 @@ public class ImageEmbeddingService {
         boolean processed = false;
         List<MediaSegmentService.VideoSegmentFrame> frames =
                 mediaSegmentService.extractVideoSegmentFrames(mediaSource, asset.getDurationSeconds());
+        Map<String, String> segmentAsrCache = new LinkedHashMap<>();
         for (MediaSegmentService.VideoSegmentFrame frame : frames) {
             try {
                 String caption = mediaCaptionService.describeImageFile(frame.frameFile());
                 String ocrText = imageOcrService.extractTextFromImageFile(frame.frameFile());
+                String asrText = resolveSegmentAsrText(mediaSource, frame, segmentAsrCache);
+                UploadedFrame uploadedFrame = uploadFrame(asset, frame);
                 float[] visualEmbedding = embeddingService.generateImageEmbedding(toDataUrl(frame.frameFile()));
                 float[] ocrEmbedding = hasText(ocrText)
                         ? embeddingService.generateTextEmbedding(ocrText)
+                        : null;
+                float[] asrEmbedding = hasText(asrText)
+                        ? embeddingService.generateTextEmbedding(asrText)
                         : null;
                 float[] captionEmbedding = hasText(caption)
                         ? embeddingService.generateTextEmbedding(caption)
                         : null;
                 SearchQueryTranslationService.TranslatedMediaText translatedCaption =
-                        translateMediaText(ocrText, null, caption, language);
+                        translateMediaText(ocrText, asrText, caption, language);
                 String vectorId = milvusVectorService.upsertMediaAssetEmbedding(
                         asset.getId().toString(),
                         frame.segmentId(),
@@ -367,7 +383,7 @@ public class ImageEmbeddingService {
                         frame.segmentEnd(),
                         visualEmbedding,
                         ocrEmbedding,
-                        null,
+                        asrEmbedding,
                         captionEmbedding);
                 upsertMediaAssetPivotEmbedding(
                         asset,
@@ -378,18 +394,22 @@ public class ImageEmbeddingService {
                         frame.segmentEnd(),
                         language,
                         ocrText,
-                        null,
+                        asrText,
                         caption,
                         translatedCaption);
                 mediaAssetEsService.indexAssetSegment(asset, frame.segmentId(),
-                        frame.segmentStart(), frame.segmentEnd(), ocrText, null, caption,
-                        translatedCaption.ocrText(), translatedCaption.asrText(), translatedCaption.captionText());
+                        frame.segmentStart(), frame.segmentEnd(), ocrText, asrText, caption,
+                        translatedCaption.ocrText(), translatedCaption.asrText(), translatedCaption.captionText(),
+                        uploadedFrame != null ? uploadedFrame.url() : null,
+                        uploadedFrame != null ? uploadedFrame.bucket() : null,
+                        uploadedFrame != null ? uploadedFrame.key() : null);
                 if (vectorId != null) {
                     asset.setEmbeddingId(vectorId);
                     processed = true;
                 }
-                log.info("Video segment indexed, assetId={}, segmentId={}, vectorId={}, hasCaption={}",
-                        asset.getId(), frame.segmentId(), vectorId, hasText(caption));
+                log.info("Video segment indexed, assetId={}, segmentId={}, vectorId={}, hasOcr={}, hasAsr={}, hasCaption={}",
+                        asset.getId(), frame.segmentId(), vectorId,
+                        hasText(ocrText), hasText(asrText), hasText(caption));
             } catch (Exception e) {
                 log.warn("Video segment indexing failed, assetId={}, segmentId={}",
                         asset.getId(), frame.segmentId(), e);
@@ -398,6 +418,61 @@ public class ImageEmbeddingService {
             }
         }
         return processed;
+    }
+
+    private String resolveSegmentAsrText(String mediaSource, MediaSegmentService.VideoSegmentFrame frame,
+                                         Map<String, String> segmentAsrCache) {
+        if (frame == null || segmentAsrCache == null) {
+            return null;
+        }
+        String key = segmentRangeKey(frame);
+        if (segmentAsrCache.containsKey(key)) {
+            return segmentAsrCache.get(key);
+        }
+        Path audioFile = mediaSegmentService.extractAudioSegment(
+                mediaSource, frame.segmentStart(), frame.segmentEnd());
+        try {
+            String asrText = mediaAsrService.transcribe(audioFile);
+            segmentAsrCache.put(key, asrText);
+            return asrText;
+        } finally {
+            mediaSegmentService.deleteQuietly(audioFile);
+        }
+    }
+
+    private String segmentRangeKey(MediaSegmentService.VideoSegmentFrame frame) {
+        return frame.segmentStart() + ":" + frame.segmentEnd();
+    }
+
+    private UploadedFrame uploadFrame(MediaAsset asset, MediaSegmentService.VideoSegmentFrame frame) {
+        if (asset == null || asset.getId() == null || frame == null
+                || frame.frameFile() == null || !Files.isRegularFile(frame.frameFile())) {
+            return null;
+        }
+        String key = "media-derived/video-frames/" + asset.getId() + "/" + frame.segmentId() + ".jpg";
+        try {
+            minioStorageService.upload(MEDIA_BUCKET, key, Files.readAllBytes(frame.frameFile()), "image/jpeg");
+            return new UploadedFrame(MEDIA_BUCKET, key, buildMinioUrl(MEDIA_BUCKET, key));
+        } catch (Exception e) {
+            log.warn("Video segment frame upload failed, assetId={}, segmentId={}, key={}",
+                    asset.getId(), frame.segmentId(), key, e);
+            return null;
+        }
+    }
+
+    private String buildMinioUrl(String bucket, String key) {
+        return trimTrailingSlash(minioEndpoint) + "/" + bucket + "/" + key;
+    }
+
+    private String trimTrailingSlash(String value) {
+        if (value == null) {
+            return "";
+        }
+        String result = value.trim();
+        while (result.endsWith("/")) {
+            result = result.substring(0, result.length() - 1);
+        }
+        return result;
     }
 
     private String upsertMediaAssetPivotEmbedding(MediaAsset asset, String segmentId,
@@ -685,5 +760,8 @@ public class ImageEmbeddingService {
             root = root.getCause();
         }
         return root != null && root.getMessage() != null ? root.getMessage() : String.valueOf(error);
+    }
+
+    private record UploadedFrame(String bucket, String key, String url) {
     }
 }

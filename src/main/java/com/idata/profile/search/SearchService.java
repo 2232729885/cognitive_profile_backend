@@ -329,6 +329,9 @@ public class SearchService {
                         null,
                         result.segmentStart(),
                         result.segmentEnd(),
+                        result.frameUrl(),
+                        result.frameMinioBucket(),
+                        result.frameMinioKey(),
                         result.score(),
                         result.hitField()))
                 .toList();
@@ -341,6 +344,9 @@ public class SearchService {
                         result.mimeType(),
                         result.segmentStart(),
                         result.segmentEnd(),
+                        null,
+                        null,
+                        null,
                         (double) result.score(),
                         result.vectorField()))
                 .toList();
@@ -738,13 +744,17 @@ public class SearchService {
         item.setStorageUri(asset != null ? asset.getStorageUri() : null);
         item.setMinioBucket(asset != null ? asset.getMinioBucket() : null);
         item.setMinioKey(asset != null ? asset.getMinioKey() : null);
+        item.setFrameUrl(hit.frameUrl());
+        item.setFrameMinioBucket(hit.frameMinioBucket());
+        item.setFrameMinioKey(hit.frameMinioKey());
         item.setMimeType(firstText(hit.mimeType(), asset != null ? asset.getMimeType() : null));
         item.setWidth(asset != null ? asset.getWidth() : null);
         item.setHeight(asset != null ? asset.getHeight() : null);
         item.setSegmentStartMs(secondsToMillis(hit.segmentStart()));
         item.setSegmentEndMs(secondsToMillis(hit.segmentEnd()));
         item.setPreviewTimeMs(previewTimeMs(item.getSegmentStartMs(), item.getSegmentEndMs()));
-        item.setPreviewUrl(firstText(asset != null ? asset.getThumbnailUri() : null,
+        item.setPreviewUrl(firstText(hit.frameUrl(),
+                asset != null ? asset.getThumbnailUri() : null,
                 asset != null ? asset.getSourceUrl() : null,
                 asset != null ? asset.getStorageUri() : null));
         item.setRrfContribution(rrfContribution);
@@ -781,6 +791,7 @@ public class SearchService {
     private record MediaHitSeed(String assetId, String segmentId, String contentId,
                                 String mediaType, String mimeType,
                                 Float segmentStart, Float segmentEnd,
+                                String frameUrl, String frameMinioBucket, String frameMinioKey,
                                 Double rawScore, String hitField) {
     }
 

@@ -75,10 +75,13 @@ public class SearchResult {
         private String contentId;
         private String mediaType;
         private String previewUrl;
+        private String frameUrl;
         private String sourceUrl;
         private String storageUri;
         private String minioBucket;
         private String minioKey;
+        private String frameMinioBucket;
+        private String frameMinioKey;
         private String mimeType;
         private Integer width;
         private Integer height;

@@ -17,6 +17,7 @@ import com.idata.profile.mapper.task.PipelineTaskMapper;
 import com.idata.profile.service.EntityResolutionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.ObjectMapper;
 
@@ -26,6 +27,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 @Slf4j
 @Component
@@ -33,6 +35,7 @@ import java.util.UUID;
 public class T2ExtractionStep {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final Pattern URL_PATTERN = Pattern.compile("(?i)\\b(?:https?://|www\\.)\\S+");
 
     private final AgentProxyClient agentProxyClient;
     private final MediaContentMapper mediaContentMapper;
@@ -41,6 +44,12 @@ public class T2ExtractionStep {
     private final Neo4jGraphService neo4jGraphService;
     private final SocialAccountMapper socialAccountMapper;
     private final EntityResolutionService entityResolutionService;
+
+    @Value("${pipeline.t2.min-text-length:20}")
+    private int minTextLength;
+
+    @Value("${pipeline.t2.min-effective-token-count:3}")
+    private int minEffectiveTokenCount;
 
     public void run(PipelineTask task) {
         OffsetDateTime startedAt = OffsetDateTime.now();
@@ -54,15 +63,19 @@ public class T2ExtractionStep {
         }
 
         T2ExtractResponse response;
-        if (hasExtractableText(mc)) {
+        SkipDecision skipDecision = evaluateSkip(mc);
+        if (!skipDecision.skip()) {
             response = agentProxyClient.call(
                     "T2", "extract_entities", buildRequest(mc), T2ExtractResponse.class);
         } else {
-            log.info("[T2] skip extraction: title and text are empty, contentId={}", mc.getId());
-            response = emptyResponse(mc);
+            log.info("[T2] skip extraction: reason={}, contentId={}, effectiveTextLength={}, minTextLength={}, "
+                            + "effectiveTokenCount={}, minEffectiveTokenCount={}",
+                    skipDecision.reason(), mc.getId(), skipDecision.effectiveTextLength(), minTextLength,
+                    skipDecision.effectiveTokenCount(), minEffectiveTokenCount);
+            response = emptyResponse(mc, skipDecision);
         }
         if (response == null) {
-            response = emptyResponse(mc);
+            response = emptyResponse(mc, null);
         }
 
         EntityResolutionService.ResolutionResult resolutionResult = entityResolutionService.resolveMentions(
@@ -118,8 +131,21 @@ public class T2ExtractionStep {
         return request;
     }
 
-    private boolean hasExtractableText(MediaContent mc) {
-        return hasText(mc.getTitle()) || hasText(mc.getBodyText());
+    private SkipDecision evaluateSkip(MediaContent mc) {
+        String text = extractionText(mc);
+        if (!hasText(text)) {
+            return new SkipDecision(true, "EMPTY_TEXT", 0, 0);
+        }
+        String effectiveText = normalizeEffectiveText(text);
+        int effectiveTextLength = effectiveLength(effectiveText);
+        int effectiveTokenCount = effectiveTokenCount(effectiveText);
+        if (effectiveTextLength < Math.max(0, minTextLength)) {
+            return new SkipDecision(true, "TEXT_TOO_SHORT", effectiveTextLength, effectiveTokenCount);
+        }
+        if (effectiveTokenCount < Math.max(0, minEffectiveTokenCount)) {
+            return new SkipDecision(true, "TOO_FEW_EFFECTIVE_TOKENS", effectiveTextLength, effectiveTokenCount);
+        }
+        return new SkipDecision(false, null, effectiveTextLength, effectiveTokenCount);
     }
 
     private String resolutionContextText(MediaContent mc) {
@@ -144,14 +170,73 @@ public class T2ExtractionStep {
         return String.join("\n\n", parts);
     }
 
-    private T2ExtractResponse emptyResponse(MediaContent mc) {
+    private T2ExtractResponse emptyResponse(MediaContent mc, SkipDecision skipDecision) {
         T2ExtractResponse response = new T2ExtractResponse();
         response.setContentId(mc.getId().toString());
         response.setEntities(List.of());
         response.setRelations(List.of());
         response.setResolvedAuthorAccountId(null);
-        response.setModelVersion("backend-empty-input");
+        response.setModelVersion(skipDecision != null ? "backend-t2-skip-policy" : "backend-empty-response");
+        response.setSkipped(skipDecision != null && skipDecision.skip());
+        if (skipDecision != null) {
+            response.setSkipReason(skipDecision.reason());
+            response.setEffectiveTextLength(skipDecision.effectiveTextLength());
+            response.setMinTextLength(Math.max(0, minTextLength));
+            response.setEffectiveTokenCount(skipDecision.effectiveTokenCount());
+            response.setMinEffectiveTokenCount(Math.max(0, minEffectiveTokenCount));
+        }
         return response;
+    }
+
+    private String normalizeEffectiveText(String value) {
+        if (!hasText(value)) {
+            return "";
+        }
+        return URL_PATTERN.matcher(value)
+                .replaceAll(" ")
+                .replaceAll("[\\p{Cntrl}\\p{So}\\p{Sk}]+", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+    }
+
+    private int effectiveLength(String value) {
+        if (!hasText(value)) {
+            return 0;
+        }
+        String compact = value.replaceAll("\\s+", "");
+        return compact.codePointCount(0, compact.length());
+    }
+
+    private int effectiveTokenCount(String value) {
+        if (!hasText(value)) {
+            return 0;
+        }
+        int count = 0;
+        boolean inLatinToken = false;
+        for (int i = 0; i < value.length(); ) {
+            int codePoint = value.codePointAt(i);
+            if (isCjkCodePoint(codePoint)) {
+                count++;
+                inLatinToken = false;
+            } else if (Character.isLetterOrDigit(codePoint)) {
+                if (!inLatinToken) {
+                    count++;
+                    inLatinToken = true;
+                }
+            } else {
+                inLatinToken = false;
+            }
+            i += Character.charCount(codePoint);
+        }
+        return count;
+    }
+
+    private boolean isCjkCodePoint(int codePoint) {
+        Character.UnicodeScript script = Character.UnicodeScript.of(codePoint);
+        return script == Character.UnicodeScript.HAN
+                || script == Character.UnicodeScript.HIRAGANA
+                || script == Character.UnicodeScript.KATAKANA
+                || script == Character.UnicodeScript.HANGUL;
     }
 
     private Object extractT1Annotation(MediaContent mc) {
@@ -172,7 +257,7 @@ public class T2ExtractionStep {
         try {
             writeRelations(response, resolvedMentions);
             writeMediaContentToNeo4j(task, mc);
-            writeContentEntityRelations(mc, resolvedMentions);
+            writeContentEntityRelations(mc, response, resolvedMentions);
         } catch (Exception e) {
             log.error("T2 Neo4j write failed, taskId={}", task.getId(), e);
         }
@@ -221,30 +306,56 @@ public class T2ExtractionStep {
     }
 
     private void writeContentEntityRelations(MediaContent mc,
+                                             T2ExtractResponse response,
                                              Map<String, EntityResolutionService.ResolvedMention> resolvedMentions) {
         if (mc == null || resolvedMentions == null || resolvedMentions.isEmpty()) {
             return;
         }
         String contentNodeId = mc.getId().toString();
-        for (EntityResolutionService.ResolvedMention resolved : resolvedMentions.values()) {
+        Map<String, ContentEntityEvidence> evidences = collectContentEntityEvidences(mc, response, resolvedMentions);
+        if (evidences.isEmpty()) {
+            return;
+        }
+        for (ContentEntityEvidence evidence : evidences.values()) {
+            try {
+                Map<String, Object> props = evidence.toRelationProperties();
+                boolean existed = neo4jGraphService.relationExists(contentNodeId, evidence.nodeId(), evidence.predicate());
+                props.put("evidenceUpsert", existed);
+                neo4jGraphService.mergeRelation(
+                        "MediaContent", contentNodeId,
+                        evidence.label(), evidence.nodeId(),
+                        evidence.predicate(), props);
+            } catch (Exception e) {
+                log.warn("T2 content-entity relation write failed, contentId={}, entityId={}, predicate={}",
+                        contentNodeId, evidence.nodeId(), evidence.predicate(), e);
+            }
+        }
+    }
+
+    private Map<String, ContentEntityEvidence> collectContentEntityEvidences(
+            MediaContent mc,
+            T2ExtractResponse response,
+            Map<String, EntityResolutionService.ResolvedMention> resolvedMentions) {
+        Map<String, ContentEntityEvidence> result = new HashMap<>();
+        if (response == null || response.getEntities() == null || response.getEntities().isEmpty()) {
+            return result;
+        }
+        String contextText = extractionText(mc);
+        for (T2ExtractResponse.ExtractedMention mention : response.getEntities()) {
+            if (mention == null || !hasText(mention.getMentionId())) {
+                continue;
+            }
+            EntityResolutionService.ResolvedMention resolved = resolvedMentions.get(mention.getMentionId());
             if (resolved == null || !hasText(resolved.getNodeId()) || !hasText(resolved.getLabel())) {
                 continue;
             }
             String predicate = "event".equals(resolved.getEntityType()) ? "DESCRIBES" : "MENTIONS";
-            try {
-                Map<String, Object> props = new HashMap<>();
-                props.put("source", "t2_content_entity_link");
-                boolean existed = neo4jGraphService.relationExists(contentNodeId, resolved.getNodeId(), predicate);
-                props.put("evidenceUpsert", existed);
-                neo4jGraphService.mergeRelation(
-                        "MediaContent", contentNodeId,
-                        resolved.getLabel(), resolved.getNodeId(),
-                        predicate, props);
-            } catch (Exception e) {
-                log.warn("T2 content-entity relation write failed, contentId={}, entityId={}, predicate={}",
-                        contentNodeId, resolved.getNodeId(), predicate, e);
-            }
+            String key = predicate + ":" + resolved.getLabel() + ":" + resolved.getNodeId();
+            ContentEntityEvidence evidence = result.computeIfAbsent(key,
+                    ignored -> new ContentEntityEvidence(predicate, resolved.getLabel(), resolved.getNodeId()));
+            evidence.add(mc, mention, resolved, contextText);
         }
+        return result;
     }
 
     private void writeMediaContentToNeo4j(PipelineTask task, MediaContent content) {
@@ -316,6 +427,10 @@ public class T2ExtractionStep {
     private void mergeMediaContentNode(MediaContent content) {
         Map<String, Object> contentProps = new HashMap<>();
         putIfHasText(contentProps, "title", content.getTitle());
+        putIfHasText(contentProps, "bodyText", content.getBodyText());
+        putIfHasText(contentProps, "translatedTitle", content.getTranslatedTitle());
+        putIfHasText(contentProps, "translatedBodyText", content.getTranslatedBodyText());
+        putIfHasText(contentProps, "translatedSummary", content.getTranslatedSummary());
         putIfHasText(contentProps, "platform", content.getPlatform());
         putIfHasText(contentProps, "contentType", content.getContentType());
         putIfHasText(contentProps, "language", content.getLanguage());
@@ -389,5 +504,171 @@ public class T2ExtractionStep {
             log.warn("Failed to serialize T2 response");
             return null;
         }
+    }
+
+    private static class ContentEntityEvidence {
+        private final String predicate;
+        private final String label;
+        private final String nodeId;
+        private final List<String> mentionIds = new ArrayList<>();
+        private final List<String> mentionNames = new ArrayList<>();
+        private final List<String> canonicalNames = new ArrayList<>();
+        private final List<String> evidenceTexts = new ArrayList<>();
+        private final List<String> evidenceWindows = new ArrayList<>();
+        private Integer firstSpanStart;
+        private Integer firstSpanEnd;
+        private Double maxConfidence;
+        private Double maxImportanceScore;
+        private String contentTitle;
+        private String contentUrl;
+        private String platformContentId;
+
+        ContentEntityEvidence(String predicate, String label, String nodeId) {
+            this.predicate = predicate;
+            this.label = label;
+            this.nodeId = nodeId;
+        }
+
+        void add(MediaContent content,
+                 T2ExtractResponse.ExtractedMention mention,
+                 EntityResolutionService.ResolvedMention resolved,
+                 String contextText) {
+            addDistinct(mentionIds, mention.getMentionId());
+            addDistinct(mentionNames, firstText(mention.getName(), resolved.getName()));
+            addDistinct(canonicalNames, firstText(mention.getCanonicalName(), resolved.getName()));
+            EvidenceSpan evidenceSpan = evidenceSpan(contextText, mention);
+            addDistinct(evidenceTexts, evidenceSpan.text());
+            addDistinct(evidenceWindows, evidenceSpan.window());
+            if (firstSpanStart == null && evidenceSpan.start() != null) {
+                firstSpanStart = evidenceSpan.start();
+            }
+            if (firstSpanEnd == null && evidenceSpan.end() != null) {
+                firstSpanEnd = evidenceSpan.end();
+            }
+            maxConfidence = max(maxConfidence, mention.getConfidence());
+            maxImportanceScore = max(maxImportanceScore, mention.getImportanceScore());
+            contentTitle = firstText(contentTitle, content.getTitle());
+            contentUrl = firstText(contentUrl, content.getUrl());
+            platformContentId = firstText(platformContentId, content.getPlatformContentId());
+        }
+
+        Map<String, Object> toRelationProperties() {
+            Map<String, Object> props = new HashMap<>();
+            props.put("source", "t2_content_entity_link");
+            props.put("extraction_method", "t2_entity_mention");
+            props.put("mentionIds", mentionIds.toArray(String[]::new));
+            props.put("mentionNames", mentionNames.toArray(String[]::new));
+            props.put("canonicalNames", canonicalNames.toArray(String[]::new));
+            props.put("evidenceTexts", evidenceTexts.toArray(String[]::new));
+            props.put("evidenceWindows", evidenceWindows.toArray(String[]::new));
+            putIfNotNull(props, "spanStart", firstSpanStart);
+            putIfNotNull(props, "spanEnd", firstSpanEnd);
+            putIfNotNull(props, "confidence", maxConfidence);
+            putIfNotNull(props, "importanceScore", maxImportanceScore);
+            putIfHasText(props, "contentTitle", contentTitle);
+            putIfHasText(props, "contentUrl", contentUrl);
+            putIfHasText(props, "platformContentId", platformContentId);
+            return props;
+        }
+
+        String predicate() {
+            return predicate;
+        }
+
+        String label() {
+            return label;
+        }
+
+        String nodeId() {
+            return nodeId;
+        }
+
+        private static EvidenceSpan evidenceSpan(String contextText, T2ExtractResponse.ExtractedMention mention) {
+            if (!hasText(contextText)) {
+                return new EvidenceSpan(firstText(mention.getCanonicalName(), mention.getName()), null, null, null);
+            }
+            T2ExtractResponse.ExtractedMention.Span span = mention.getSpan();
+            if (span != null && span.getStart() != null && span.getEnd() != null
+                    && span.getStart() >= 0 && span.getEnd() > span.getStart()
+                    && span.getEnd() <= contextText.length()) {
+                int windowStart = Math.max(0, span.getStart() - 120);
+                int windowEnd = Math.min(contextText.length(), span.getEnd() + 120);
+                return new EvidenceSpan(
+                        contextText.substring(span.getStart(), span.getEnd()),
+                        contextText.substring(windowStart, windowEnd),
+                        span.getStart(),
+                        span.getEnd());
+            }
+            String name = firstText(mention.getName(), mention.getCanonicalName());
+            if (!hasText(name)) {
+                return new EvidenceSpan(null, abbreviate(contextText, 240), null, null);
+            }
+            int index = contextText.indexOf(name);
+            if (index >= 0) {
+                int windowStart = Math.max(0, index - 120);
+                int windowEnd = Math.min(contextText.length(), index + name.length() + 120);
+                return new EvidenceSpan(name, contextText.substring(windowStart, windowEnd),
+                        index, index + name.length());
+            }
+            return new EvidenceSpan(name, abbreviate(contextText, 240), null, null);
+        }
+
+        private static Double max(Double current, Double candidate) {
+            if (candidate == null) {
+                return current;
+            }
+            return current == null ? candidate : Math.max(current, candidate);
+        }
+
+        private static void addDistinct(List<String> values, String value) {
+            if (hasText(value) && !values.contains(value.trim())) {
+                values.add(value.trim());
+            }
+        }
+
+        private static String abbreviate(String value, int maxLength) {
+            if (value == null || value.length() <= maxLength) {
+                return value;
+            }
+            return value.substring(0, maxLength);
+        }
+
+        private static String firstText(String... values) {
+            if (values == null) {
+                return null;
+            }
+            for (String value : values) {
+                if (hasText(value)) {
+                    return value.trim();
+                }
+            }
+            return null;
+        }
+
+        private static void putIfHasText(Map<String, Object> target, String key, String value) {
+            if (hasText(value)) {
+                target.put(key, value);
+            }
+        }
+
+        private static void putIfNotNull(Map<String, Object> target, String key, Object value) {
+            if (value != null) {
+                target.put(key, value);
+            }
+        }
+
+        private static boolean hasText(String value) {
+            return value != null && !value.trim().isEmpty();
+        }
+    }
+
+    private record EvidenceSpan(String text, String window, Integer start, Integer end) {
+    }
+
+    private record SkipDecision(
+            boolean skip,
+            String reason,
+            int effectiveTextLength,
+            int effectiveTokenCount) {
     }
 }

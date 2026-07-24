@@ -1,7 +1,6 @@
 package com.idata.profile.infra.media;
 
 import com.idata.profile.common.util.TextEncodingRepairUtil;
-import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
@@ -12,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
+import tools.jackson.databind.JsonNode;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -42,18 +42,107 @@ public class MediaAsrService {
             body.add("model", model);
             body.add("file", new FileSystemResource(audioFile));
 
-            AsrResponse response = restClient().post()
+            JsonNode response = restClient().post()
                     .uri(normalizeBaseUrl(baseUrl) + "/audio/transcriptions")
                     .contentType(MediaType.MULTIPART_FORM_DATA)
                     .header(HttpHeaders.AUTHORIZATION, "Bearer " + apiKey)
                     .body(body)
                     .retrieve()
-                    .body(AsrResponse.class);
-            return sanitize(response == null ? null : response.getText());
+                    .body(JsonNode.class);
+            String errorMessage = extractErrorMessage(response);
+            if (errorMessage != null) {
+                log.warn("[MediaAsrService] ASR returned error body, audioFile={}, error={}",
+                        audioFile, errorMessage);
+                return null;
+            }
+            String text = extractText(response);
+            String result = sanitize(text);
+            if (result == null) {
+                log.warn("[MediaAsrService] ASR returned empty text, audioFile={}, response={}",
+                        audioFile, response);
+            }
+            return result;
         } catch (Exception e) {
             log.warn("[MediaAsrService] ASR failed, audioFile={}, reason={}", audioFile, rootMessage(e));
             return null;
         }
+    }
+
+    private String extractErrorMessage(JsonNode response) {
+        if (response == null || response.isNull()) {
+            return null;
+        }
+        JsonNode error = response.path("error");
+        if (!error.isMissingNode() && !error.isNull()) {
+            String message = text(error.path("message"));
+            return message != null ? message : error.toString();
+        }
+        String code = text(response.path("code"));
+        if (code != null && !"0".equals(code) && !"200".equals(code)) {
+            return firstText(text(response.path("message")), text(response.path("msg")), response.toString());
+        }
+        return null;
+    }
+
+    private String extractText(JsonNode response) {
+        if (response == null || response.isNull()) {
+            return null;
+        }
+        String text = text(response.path("text"));
+        if (text != null) {
+            return text;
+        }
+        text = text(response.path("transcription"));
+        if (text != null) {
+            return text;
+        }
+        text = text(response.path("result"));
+        if (text != null) {
+            return text;
+        }
+        JsonNode data = response.path("data");
+        text = text(data.path("text"));
+        if (text != null) {
+            return text;
+        }
+        text = text(data.path("transcription"));
+        if (text != null) {
+            return text;
+        }
+        text = text(data.path("result"));
+        if (text != null) {
+            return text;
+        }
+        JsonNode choices = response.path("choices");
+        if (choices.isArray() && !choices.isEmpty()) {
+            JsonNode first = choices.get(0);
+            text = text(first.path("text"));
+            if (text != null) {
+                return text;
+            }
+            return text(first.path("message").path("content"));
+        }
+        return null;
+    }
+
+    private String text(JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) {
+            return null;
+        }
+        String value = node.asText();
+        return value == null || value.trim().isEmpty() ? null : value.trim();
+    }
+
+    private String firstText(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (value != null && !value.trim().isEmpty()) {
+                return value.trim();
+            }
+        }
+        return null;
     }
 
     private RestClient restClient() {
@@ -90,10 +179,5 @@ public class MediaAsrService {
             current = current.getCause();
         }
         return current.getMessage();
-    }
-
-    @Data
-    private static class AsrResponse {
-        private String text;
     }
 }

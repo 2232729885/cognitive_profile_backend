@@ -93,6 +93,11 @@ public class ContentPropagationBackfillJob {
 
     private void mergeMediaContentNode(MediaContent content) {
         Map<String, Object> contentProps = new HashMap<>();
+        putIfHasText(contentProps, "title", content.getTitle());
+        putIfHasText(contentProps, "bodyText", content.getBodyText());
+        putIfHasText(contentProps, "translatedTitle", content.getTranslatedTitle());
+        putIfHasText(contentProps, "translatedBodyText", content.getTranslatedBodyText());
+        putIfHasText(contentProps, "translatedSummary", content.getTranslatedSummary());
         putIfHasText(contentProps, "platform", content.getPlatform());
         putIfHasText(contentProps, "contentType", content.getContentType());
         putIfHasText(contentProps, "language", content.getLanguage());

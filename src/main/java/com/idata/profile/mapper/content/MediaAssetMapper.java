@@ -48,7 +48,7 @@ public interface MediaAssetMapper extends BaseMapper<MediaAsset> {
             "((ocr_text IS NOT NULL AND translated_ocr_text IS NULL AND octet_length(ocr_text) <> length(ocr_text)) " +
             "OR (asr_text IS NOT NULL AND translated_asr_text IS NULL AND octet_length(asr_text) <> length(asr_text)) " +
             "OR (caption_text IS NOT NULL AND translated_caption_text IS NULL AND octet_length(caption_text) <> length(caption_text))) " +
-            "AND asset_type IN ('image','video','audio') AND content_id IS NOT NULL " +
+            "AND asset_type IN ('image','video','audio') " +
             "ORDER BY created_at ASC LIMIT #{limit}")
     List<MediaAsset> selectImageAssetsWithOcrText(@Param("limit") int limit);
 

@@ -12,6 +12,12 @@ public class T2ExtractResponse {
     private List<ExtractedRelationMention> relations;
     private String resolvedAuthorAccountId;
     private String modelVersion;
+    private Boolean skipped;
+    private String skipReason;
+    private Integer effectiveTextLength;
+    private Integer minTextLength;
+    private Integer effectiveTokenCount;
+    private Integer minEffectiveTokenCount;
 
     /**
      * @deprecated Use {@link #relations}. Kept only for older internal agent prompt code.

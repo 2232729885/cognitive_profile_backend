@@ -66,6 +66,41 @@ public class MediaSegmentService {
         }
     }
 
+    public Path extractAudioSegment(String mediaSource, float segmentStartSeconds, float segmentEndSeconds) {
+        if (!hasText(mediaSource)) {
+            return null;
+        }
+        if (!isDirectMediaSource(mediaSource)) {
+            log.info("[MediaSegmentService] audio segment extraction skipped for non-direct media source, source={}",
+                    mediaSource);
+            return null;
+        }
+        float safeStart = Math.max(0F, segmentStartSeconds);
+        float duration = Math.max(0F, segmentEndSeconds - safeStart);
+        if (duration <= 0.05F) {
+            return null;
+        }
+        try {
+            Path audioFile = Files.createTempFile("profile-media-audio-segment-", ".wav");
+            int exit = run(List.of(
+                    ffmpegPath,
+                    "-y",
+                    "-ss", formatSeconds(safeStart),
+                    "-t", formatSeconds(duration),
+                    "-i", mediaSource,
+                    "-vn",
+                    "-ac", "1",
+                    "-ar", "16000",
+                    "-f", "wav",
+                    audioFile.toString()));
+            return exit == 0 && Files.isRegularFile(audioFile) ? audioFile : null;
+        } catch (Exception e) {
+            log.warn("[MediaSegmentService] extract audio segment failed, source={}, start={}, end={}",
+                    mediaSource, segmentStartSeconds, segmentEndSeconds, e);
+            return null;
+        }
+    }
+
     public List<VideoSegmentFrame> extractVideoSegmentFrames(String mediaSource, Integer fallbackDurationSeconds) {
         if (!hasText(mediaSource)) {
             return List.of();
@@ -215,6 +250,10 @@ public class MediaSegmentService {
                     exit, command, output);
         }
         return exit;
+    }
+
+    private String formatSeconds(float seconds) {
+        return String.format(java.util.Locale.ROOT, "%.3f", Math.max(0F, seconds));
     }
 
     private boolean hasText(String value) {

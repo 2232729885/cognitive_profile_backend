@@ -89,6 +89,9 @@ public class MediaAssetEsService {
                             .properties("mime_type", p -> p.keyword(k -> k))
                             .properties("minio_bucket", p -> p.keyword(k -> k))
                             .properties("minio_key", p -> p.keyword(k -> k))
+                            .properties("frame_url", p -> p.keyword(k -> k))
+                            .properties("frame_minio_bucket", p -> p.keyword(k -> k))
+                            .properties("frame_minio_key", p -> p.keyword(k -> k))
                             .properties("segment_start", p -> p.float_(f -> f))
                             .properties("segment_end", p -> p.float_(f -> f))
                             .properties("created_at", p -> p
@@ -108,7 +111,10 @@ public class MediaAssetEsService {
                     .properties("translated_asr_text", p -> p
                             .text(t -> t.analyzer("standard").searchAnalyzer("standard")))
                     .properties("translated_caption_text", p -> p
-                            .text(t -> t.analyzer("standard").searchAnalyzer("standard"))));
+                            .text(t -> t.analyzer("standard").searchAnalyzer("standard")))
+                    .properties("frame_url", p -> p.keyword(k -> k))
+                    .properties("frame_minio_bucket", p -> p.keyword(k -> k))
+                    .properties("frame_minio_key", p -> p.keyword(k -> k)));
         } catch (Exception e) {
             log.warn("Failed to ensure ES media asset translation fields, index={}", MEDIA_ASSETS_INDEX, e);
         }
@@ -152,6 +158,23 @@ public class MediaAssetEsService {
                                   String translatedOcrText,
                                   String translatedAsrText,
                                   String translatedCaptionText) {
+        indexAssetSegment(asset, segmentId, segmentStart, segmentEnd,
+                ocrText, asrText, captionText,
+                translatedOcrText, translatedAsrText, translatedCaptionText,
+                null, null, null);
+    }
+
+    public void indexAssetSegment(MediaAsset asset, String segmentId,
+                                  Float segmentStart, Float segmentEnd,
+                                  String ocrText,
+                                  String asrText,
+                                  String captionText,
+                                  String translatedOcrText,
+                                  String translatedAsrText,
+                                  String translatedCaptionText,
+                                  String frameUrl,
+                                  String frameMinioBucket,
+                                  String frameMinioKey) {
         if (esClient == null || asset == null || asset.getId() == null) {
             return;
         }
@@ -174,6 +197,9 @@ public class MediaAssetEsService {
             doc.put("translated_caption_text", cleanText(translatedCaptionText));
             doc.put("minio_bucket", asset.getMinioBucket());
             doc.put("minio_key", asset.getMinioKey());
+            doc.put("frame_url", frameUrl);
+            doc.put("frame_minio_bucket", frameMinioBucket);
+            doc.put("frame_minio_key", frameMinioKey);
             doc.put("width", asset.getWidth());
             doc.put("height", asset.getHeight());
             doc.put("segment_start", segmentStart);
@@ -264,6 +290,7 @@ public class MediaAssetEsService {
                             .source(src -> src.filter(f -> f.includes("asset_id", "segment_id",
                                     "source_asset_id", "media_type", "asset_type", "content_id",
                                     "source_url", "storage_uri", "mime_type", "minio_bucket", "minio_key",
+                                    "frame_url", "frame_minio_bucket", "frame_minio_key",
                                     "segment_start", "segment_end", "caption_text",
                                     "translated_ocr_text", "translated_asr_text", "translated_caption_text")))
                             .highlight(h -> h
@@ -284,6 +311,9 @@ public class MediaAssetEsService {
                                 source.get("media_type"), source.get("asset_type"));
                         Object segmentStart = source == null ? null : source.get("segment_start");
                         Object segmentEnd = source == null ? null : source.get("segment_end");
+                        Object frameUrl = source == null ? null : source.get("frame_url");
+                        Object frameMinioBucket = source == null ? null : source.get("frame_minio_bucket");
+                        Object frameMinioKey = source == null ? null : source.get("frame_minio_key");
                         return new EsImageAssetSearchResult(
                                 assetId == null ? hit.id() : assetId.toString(),
                                 segmentId == null ? null : segmentId.toString(),
@@ -291,6 +321,9 @@ public class MediaAssetEsService {
                                 mediaTypeValue == null ? null : mediaTypeValue.toString(),
                                 toFloat(segmentStart),
                                 toFloat(segmentEnd),
+                                frameUrl == null ? null : frameUrl.toString(),
+                                frameMinioBucket == null ? null : frameMinioBucket.toString(),
+                                frameMinioKey == null ? null : frameMinioKey.toString(),
                                 resolveHitField(hit.matchedQueries(), hit.highlight(), source),
                                 hit.score());
                     })
@@ -476,6 +509,7 @@ public class MediaAssetEsService {
 
     public record EsImageAssetSearchResult(String assetId, String segmentId, String contentId,
                                            String mediaType, Float segmentStart, Float segmentEnd,
+                                           String frameUrl, String frameMinioBucket, String frameMinioKey,
                                            String hitField, Double score) {
     }
 }

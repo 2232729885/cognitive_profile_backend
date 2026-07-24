@@ -5,13 +5,13 @@ jwt:
 spring:
   ai:
     openai:
-      base-url: http://172.16.40.230:18012/v1
+      base-url: http://172.16.40.232:18004/v1
       api-key: idata@123456
       timeout: 10m
       max-retries: 0
       chat:
         options:
-          model: Qwen3-VL-32B-Instruct
+          model: Qwen3-32B
           temperature: 0.7
           max-tokens: 4096
 
@@ -102,6 +102,9 @@ agent-proxy:
 
 pipeline:
   thread-pool-size: 64
+  t2:
+    min-text-length: 20
+    min-effective-token-count: 3
 
 entity-dedup:
   exact-name-enabled: true
