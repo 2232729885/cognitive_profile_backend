@@ -3,6 +3,8 @@ package com.idata.profile.controller;
 import com.idata.profile.common.response.Result;
 import com.idata.profile.infra.minio.MinioStorageService;
 import com.idata.profile.infra.neo4j.Neo4jGraphService;
+import com.idata.profile.search.AlgorithmMediaContentSearchRequest;
+import com.idata.profile.search.AlgorithmMediaContentSearchResponse;
 import com.idata.profile.search.EntityCandidateSearchRequest;
 import com.idata.profile.search.EntityCandidateSearchResponse;
 import com.idata.profile.search.HybridSearchRequest;
@@ -63,6 +65,15 @@ public class SearchController {
     @PostMapping("/hybrid")
     public Result<SearchResult> searchHybrid(@RequestBody HybridSearchRequest request) {
         return Result.ok(searchService.searchHybrid(request));
+    }
+
+    @PostMapping("/media-contents")
+    public Result<AlgorithmMediaContentSearchResponse> searchMediaContents(
+            @RequestBody AlgorithmMediaContentSearchRequest request) {
+        if (request == null || !hasText(request.getQuery())) {
+            return Result.fail("INVALID_PARAM", "query不能为空");
+        }
+        return Result.ok(searchService.searchMediaContentsForAlgorithm(request));
     }
 
     @PostMapping("/accounts")

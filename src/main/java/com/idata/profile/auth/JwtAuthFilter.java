@@ -73,6 +73,12 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         if (HttpMethod.POST.matches(method) && "/api/search/entities/candidates".equals(path)) {
             return true;
         }
+        if (HttpMethod.POST.matches(method) && "/api/search/media-contents".equals(path)) {
+            return true;
+        }
+        if (HttpMethod.POST.matches(method) && "/api/algorithm/media-contents/search".equals(path)) {
+            return true;
+        }
         if (HttpMethod.POST.matches(method) && path.startsWith("/api/jobs/")) {
             return true;
         }

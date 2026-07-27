@@ -119,6 +119,61 @@ public class SearchService {
         return result;
     }
 
+    public AlgorithmMediaContentSearchResponse searchMediaContentsForAlgorithm(
+            AlgorithmMediaContentSearchRequest request) {
+        long startedAt = System.currentTimeMillis();
+        String query = request == null ? null : request.getQuery();
+        int limit = normalizeRecallSize(request == null ? null : firstNonNull(request.getTopK(), request.getSize()), 0, 20);
+        int recallLimit = algorithmRecallLimit(request, limit);
+
+        HybridSearchRequest hybridRequest = toHybridSearchRequest(request, recallLimit);
+        SearchResult searchResult = searchHybrid(hybridRequest);
+        Map<String, Map<String, List<String>>> highlights = searchResult.getHighlights() == null
+                ? Map.of()
+                : searchResult.getHighlights();
+        Map<String, Double> keywordScores = searchResult.getScores() == null
+                ? Map.of()
+                : searchResult.getScores();
+        Map<String, Double> semanticScores = searchResult.getSimilarityScores() == null
+                ? Map.of()
+                : searchResult.getSimilarityScores();
+        Map<String, Double> fusionScores = searchResult.getFusionScores() == null
+                ? Map.of()
+                : searchResult.getFusionScores();
+
+        List<AlgorithmMediaContentSearchResponse.Hit> hits = searchResult.getContentHits() == null
+                ? List.of()
+                : searchResult.getContentHits().stream()
+                .filter(hit -> hit != null && passesAlgorithmFilters(hit.getPost(), request))
+                .map(hit -> toAlgorithmHit(hit, highlights.get(hit.getContentId()),
+                        keywordScores.get(hit.getContentId()), semanticScores.get(hit.getContentId()),
+                        fusionScores.get(hit.getContentId())))
+                .filter(Objects::nonNull)
+                .limit(limit)
+                .toList();
+
+        AlgorithmMediaContentSearchResponse response = new AlgorithmMediaContentSearchResponse();
+        response.setQuery(query);
+        response.setTotal(hits.size());
+        response.setDurationMs(System.currentTimeMillis() - startedAt);
+        response.setHits(hits);
+        return response;
+    }
+
+    private int algorithmRecallLimit(AlgorithmMediaContentSearchRequest request, int limit) {
+        if (request == null || !hasPostSearchFilters(request)) {
+            return limit;
+        }
+        return Math.min(MAX_RECALL_SIZE, Math.max(limit, limit * 5));
+    }
+
+    private boolean hasPostSearchFilters(AlgorithmMediaContentSearchRequest request) {
+        return hasText(request.getContentType())
+                || hasText(request.getAuthorPlatformUserId())
+                || request.getPublishedFrom() != null
+                || request.getPublishedTo() != null;
+    }
+
     public SearchResult searchBySemantic(String queryText, String platform,
                                          String language, Integer topK, int page, int size, Double semanticMinScore) {
         long startedAt = System.currentTimeMillis();
@@ -238,9 +293,31 @@ public class SearchService {
                         MediaContentEsService.EsSearchResult::getHighlights,
                         (left, right) -> left,
                         LinkedHashMap::new));
+        Map<String, Double> keywordScores = esResults.stream()
+                .filter(result -> result.getScore() != null)
+                .collect(Collectors.toMap(
+                        MediaContentEsService.EsSearchResult::getContentId,
+                        MediaContentEsService.EsSearchResult::getScore,
+                        Math::max,
+                        LinkedHashMap::new));
+        Map<String, Double> similarityScores = milvusResults.stream()
+                .collect(Collectors.toMap(
+                        MilvusVectorService.ScoredEntityId::entityId,
+                        result -> (double) result.score(),
+                        Math::max,
+                        LinkedHashMap::new));
+        Map<String, Double> fusionScores = contentHits.stream()
+                .collect(Collectors.toMap(
+                        SearchResult.ContentHit::getContentId,
+                        SearchResult.ContentHit::getRankScore,
+                        Math::max,
+                        LinkedHashMap::new));
 
         SearchResult result = buildResult(null, fusedIds.size(), "hybrid", startedAt);
         result.setHighlights(highlights);
+        result.setScores(keywordScores);
+        result.setSimilarityScores(similarityScores);
+        result.setFusionScores(fusionScores);
         result.setContentHits(pageHits);
         return result;
     }
@@ -2228,6 +2305,87 @@ public class SearchService {
         return result;
     }
 
+    private HybridSearchRequest toHybridSearchRequest(AlgorithmMediaContentSearchRequest request, int limit) {
+        HybridSearchRequest hybridRequest = new HybridSearchRequest();
+        hybridRequest.setQueryText(request.getQuery());
+        hybridRequest.setPlatform(request.getPlatform());
+        hybridRequest.setLanguage(request.getLanguage());
+        hybridRequest.setTopK(limit);
+        hybridRequest.setPage(0);
+        hybridRequest.setSize(limit);
+        hybridRequest.setEnableEs(request.isEnableKeyword());
+        hybridRequest.setEnableMilvus(request.isEnableSemantic());
+        hybridRequest.setEnableNeo4j(request.isEnableGraph());
+        hybridRequest.setTargetModalities(request.isEnableMedia() ? request.getTargetModalities() : "text");
+        hybridRequest.setSemanticMinScore(request.getSemanticMinScore());
+        hybridRequest.setVisualMinScore(request.getVisualMinScore());
+        return hybridRequest;
+    }
+
+    private boolean passesAlgorithmFilters(MediaContent content, AlgorithmMediaContentSearchRequest request) {
+        if (content == null || request == null) {
+            return content != null;
+        }
+        if (hasText(request.getContentType()) && !request.getContentType().equals(content.getContentType())) {
+            return false;
+        }
+        if (hasText(request.getAuthorPlatformUserId())
+                && !request.getAuthorPlatformUserId().equals(content.getAuthorPlatformUserId())) {
+            return false;
+        }
+        if (request.getPublishedFrom() != null
+                && (content.getPublishedAt() == null || content.getPublishedAt().isBefore(request.getPublishedFrom()))) {
+            return false;
+        }
+        return request.getPublishedTo() == null
+                || (content.getPublishedAt() != null && !content.getPublishedAt().isAfter(request.getPublishedTo()));
+    }
+
+    private AlgorithmMediaContentSearchResponse.Hit toAlgorithmHit(
+            SearchResult.ContentHit contentHit,
+            Map<String, List<String>> highlights,
+            Double keywordScore,
+            Double semanticScore,
+            Double fusionScore) {
+        if (contentHit == null || contentHit.getPost() == null || contentHit.getPost().getId() == null) {
+            return null;
+        }
+        MediaContent content = contentHit.getPost();
+        AlgorithmMediaContentSearchResponse.Hit hit = new AlgorithmMediaContentSearchResponse.Hit();
+        hit.setContentId(content.getId().toString());
+        hit.setPlatform(content.getPlatform());
+        hit.setContentType(content.getContentType());
+        hit.setPlatformContentId(content.getPlatformContentId());
+        hit.setAuthorPlatformUserId(content.getAuthorPlatformUserId());
+        hit.setTitle(content.getTitle());
+        hit.setBodyText(content.getBodyText());
+        hit.setLanguage(content.getLanguage());
+        hit.setPublishedAt(content.getPublishedAt());
+        hit.setUrl(content.getUrl());
+        hit.setHashtags(content.getHashtags());
+        hit.setMentions(content.getMentions());
+        hit.setLikeCount(content.getLikeCount());
+        hit.setCommentCount(content.getCommentCount());
+        hit.setShareCount(content.getShareCount());
+        hit.setRepostCount(content.getRepostCount());
+        hit.setQuoteCount(content.getQuoteCount());
+        hit.setViewCount(content.getViewCount());
+        hit.setReactionCount(content.getReactionCount());
+        hit.setRankScore(contentHit.getRankScore());
+        hit.setRrfScore(contentHit.getRrfScore());
+        hit.setMatchLevel(contentHit.getMatchLevel());
+        hit.setDominantHitType(contentHit.getDominantHitType());
+        hit.setDisplaySuggestion(contentHit.getDisplaySuggestion());
+        hit.setKeywordScore(keywordScore);
+        hit.setSemanticScore(semanticScore);
+        hit.setFusionScore(fusionScore);
+        hit.setHighlights(highlights);
+        hit.setMatchedAssets(contentHit.getMatchedAssets());
+        hit.setPrimaryAsset(contentHit.getPrimaryAsset());
+        hit.setEvidences(contentHit.getEvidences());
+        return hit;
+    }
+
     private boolean isEnabled(HybridSearchRequest request, String routeName) {
         if (request == null) {
             return false;
@@ -2498,6 +2656,10 @@ public class SearchService {
             return DEFAULT_PAGE_SIZE;
         }
         return Math.min(size, MAX_PAGE_SIZE);
+    }
+
+    private Integer firstNonNull(Integer first, Integer second) {
+        return first != null ? first : second;
     }
 
     private <T> List<T> pageSlice(List<T> items, int page, int size) {
