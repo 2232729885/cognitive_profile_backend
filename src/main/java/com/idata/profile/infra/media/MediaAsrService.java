@@ -40,10 +40,10 @@ public class MediaAsrService {
     @Value("${llm.asr.concurrency:1}")
     private int concurrency;
 
-    @Value("${llm.asr.queue-timeout-seconds:30}")
+    @Value("${llm.asr.queue-timeout-seconds:60}")
     private int queueTimeoutSeconds;
 
-    @Value("${llm.asr.max-retries:1}")
+    @Value("${llm.asr.max-retries:0}")
     private int maxRetries;
 
     @Value("${llm.asr.retry-backoff-ms:1000}")
