@@ -99,14 +99,22 @@ agent-proxy:
   request-jsonl:
     enabled: true
     dir: logs/agent-requests
+  concurrency:
+    default-limit: 4
+    t1-limit: 1
+    t2-limit: 2
+    t3-limit: 1
+    t4-limit: 4
+    t5-limit: 1
+    t6-limit: 1
 
 pipeline:
-  thread-pool-size: 64
+  thread-pool-size: 16
   recovery:
     enabled: true
     stuck-minutes: 5
-    running-stuck-minutes: 30
-    batch-limit: 200
+    running-stuck-minutes: 90
+    batch-limit: 20
     initial-delay-ms: 60000
     fixed-delay-ms: 300000
   t2:

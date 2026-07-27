@@ -25,6 +25,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Semaphore;
 
 /**
  * 全系统调用T1-T6 Agent的唯一入口。
@@ -49,12 +51,34 @@ public class AgentProxyClient {
 
     private final SubAgentRegistryMapper subAgentRegistryMapper;
     private final ObjectProvider<AgentProxyClient> selfProvider;
+    private final Map<String, Semaphore> agentSemaphores = new ConcurrentHashMap<>();
 
     @Value("${agent-proxy.request-jsonl.enabled:true}")
     private boolean requestJsonlEnabled;
 
     @Value("${agent-proxy.request-jsonl.dir:/tmp/cognitive-profile/agent-requests}")
     private String requestJsonlDir;
+
+    @Value("${agent-proxy.concurrency.default-limit:4}")
+    private int defaultAgentConcurrency;
+
+    @Value("${agent-proxy.concurrency.t1-limit:1}")
+    private int t1Concurrency;
+
+    @Value("${agent-proxy.concurrency.t2-limit:2}")
+    private int t2Concurrency;
+
+    @Value("${agent-proxy.concurrency.t3-limit:1}")
+    private int t3Concurrency;
+
+    @Value("${agent-proxy.concurrency.t4-limit:4}")
+    private int t4Concurrency;
+
+    @Value("${agent-proxy.concurrency.t5-limit:1}")
+    private int t5Concurrency;
+
+    @Value("${agent-proxy.concurrency.t6-limit:1}")
+    private int t6Concurrency;
 
     private volatile boolean requestJsonlFallbackLogged;
     private volatile boolean requestJsonlFailureLogged;
@@ -102,7 +126,11 @@ public class AgentProxyClient {
         recordRequestJsonl(agentCode, action, request);
 
         String rawResponse;
+        Semaphore semaphore = agentSemaphore(agentCode);
+        boolean acquired = false;
         try {
+            semaphore.acquire();
+            acquired = true;
             rawResponse = restClient(timeoutSeconds).post()
                     .uri(url)
                     .contentType(MediaType.APPLICATION_JSON)
@@ -118,10 +146,19 @@ public class AgentProxyClient {
                         }
                         return responseText;
                     });
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(String.format(
+                    "Agent HTTP call interrupted before execution: agentCode=%s, action=%s, url=%s",
+                    agentCode, action, url), e);
         } catch (RestClientException e) {
             throw new IllegalStateException(String.format(
                     "Agent HTTP call failed: agentCode=%s, action=%s, url=%s, timeoutSeconds=%s",
                     agentCode, action, url, timeoutSeconds), e);
+        } finally {
+            if (acquired) {
+                semaphore.release();
+            }
         }
         return parseAgentResponse(agentCode, action, rawResponse, responseType);
     }
@@ -267,6 +304,23 @@ public class AgentProxyClient {
         return RestClient.builder()
                 .requestFactory(requestFactory)
                 .build();
+    }
+
+    private Semaphore agentSemaphore(String agentCode) {
+        return agentSemaphores.computeIfAbsent(agentCode, code ->
+                new Semaphore(Math.max(1, agentConcurrencyLimit(code))));
+    }
+
+    private int agentConcurrencyLimit(String agentCode) {
+        return switch (agentCode) {
+            case "T1" -> t1Concurrency;
+            case "T2" -> t2Concurrency;
+            case "T3" -> t3Concurrency;
+            case "T4" -> t4Concurrency;
+            case "T5" -> t5Concurrency;
+            case "T6" -> t6Concurrency;
+            default -> defaultAgentConcurrency;
+        };
     }
 
     private int timeoutSeconds(String agentCode, Integer configuredTimeoutSeconds) {
