@@ -1,6 +1,7 @@
 package com.idata.profile.pipeline.step;
 
 import com.idata.profile.common.constant.PipelineStatus;
+import com.idata.profile.common.util.ContentTextChunker;
 import com.idata.profile.common.util.T1AnnotationView;
 import com.idata.profile.common.util.TextEncodingRepairUtil;
 import com.idata.profile.entity.content.MediaContent;
@@ -19,6 +20,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -41,6 +43,7 @@ public class T4IndexingStep {
     private final RawRecordMapper rawRecordMapper;
     private final PipelineTaskMapper pipelineTaskMapper;
     private final SearchQueryTranslationService translationService;
+    private final ContentTextChunker contentTextChunker;
 
     public void run(PipelineTask task) {
         OffsetDateTime startedAt = OffsetDateTime.now();
@@ -114,6 +117,7 @@ public class T4IndexingStep {
                     pivotSummaryEmbedding,
                     pivotBodyEmbedding);
         }
+        ContentChunkIndexResult chunkIndexResult = indexContentChunks(mc);
 
         mediaContentEsService.index(mc.getId().toString(), buildEsDocument(mc, t1View, translated));
         entityEsService.indexEntity(
@@ -125,7 +129,12 @@ public class T4IndexingStep {
                 contentEntityFields(mc));
 
         RawRecord rawRecord = rawRecordMapper.selectById(task.getRawRecordId());
-        rawRecord.setT4Output(buildT4Output(vectorId, pivotVectorId, textEmbeddingSkipped, pivotTextEmbeddingSkipped));
+        rawRecord.setT4Output(buildT4Output(
+                vectorId,
+                pivotVectorId,
+                textEmbeddingSkipped,
+                pivotTextEmbeddingSkipped,
+                chunkIndexResult));
         rawRecord.setPipelineStatus(PipelineStatus.T4_INDEXED.name());
         rawRecordMapper.updateById(rawRecord);
 
@@ -140,6 +149,43 @@ public class T4IndexingStep {
             return null;
         }
         return embeddingService.generateTextEmbedding(truncateForEmbedding(text));
+    }
+
+    private ContentChunkIndexResult indexContentChunks(MediaContent mc) {
+        List<ContentTextChunker.Chunk> chunks = contentTextChunker.chunk(mc.getBodyText());
+        long publishedAt = mc.getPublishedAt() != null ? mc.getPublishedAt().toEpochSecond() : 0L;
+        if (chunks.isEmpty()) {
+            // Re-indexing can turn a formerly long document into a short one; clear stale chunks.
+            milvusVectorService.replaceMediaContentChunkEmbeddings(
+                    mc.getId().toString(),
+                    mc.getPlatform(),
+                    mc.getLanguage(),
+                    mc.getContentType(),
+                    publishedAt,
+                    List.of());
+            return new ContentChunkIndexResult(0, false);
+        }
+
+        List<MilvusVectorService.ContentChunkEmbedding> embeddings = new ArrayList<>(chunks.size());
+        for (ContentTextChunker.Chunk chunk : chunks) {
+            float[] embedding = embeddingService.generateTextEmbedding(chunk.text());
+            if (embedding == null) {
+                // Preserve the previous complete index rather than replacing it with a partial one.
+                log.warn("[T4] media content chunk vectorization incomplete, contentId={}, chunkIndex={}",
+                        mc.getId(), chunk.index());
+                return new ContentChunkIndexResult(0, true);
+            }
+            embeddings.add(new MilvusVectorService.ContentChunkEmbedding(
+                    chunk.index(), chunk.text(), embedding));
+        }
+        milvusVectorService.replaceMediaContentChunkEmbeddings(
+                mc.getId().toString(),
+                mc.getPlatform(),
+                mc.getLanguage(),
+                mc.getContentType(),
+                publishedAt,
+                embeddings);
+        return new ContentChunkIndexResult(embeddings.size(), false);
     }
 
     private SearchQueryTranslationService.TranslatedContent resolveTranslatedContent(MediaContent mc, String summaryText) {
@@ -346,7 +392,8 @@ public class T4IndexingStep {
     }
 
     private String buildT4Output(String vectorId, String pivotVectorId,
-                                 boolean textEmbeddingSkipped, boolean pivotTextEmbeddingSkipped) {
+                                 boolean textEmbeddingSkipped, boolean pivotTextEmbeddingSkipped,
+                                 ContentChunkIndexResult chunkIndexResult) {
         String vectorValue = vectorId != null ? "\"" + vectorId + "\"" : "null";
         String pivotVectorValue = pivotVectorId != null ? "\"" + pivotVectorId + "\"" : "null";
         return "{\"textVectorId\":" + vectorValue
@@ -354,7 +401,12 @@ public class T4IndexingStep {
                 + ",\"pivotTextVectorId\":" + pivotVectorValue
                 + ",\"mediaContentPivotVectorId\":" + pivotVectorValue
                 + ",\"textEmbeddingSkipped\":" + textEmbeddingSkipped
-                + ",\"pivotTextEmbeddingSkipped\":" + pivotTextEmbeddingSkipped + "}";
+                + ",\"pivotTextEmbeddingSkipped\":" + pivotTextEmbeddingSkipped
+                + ",\"contentChunkCount\":" + chunkIndexResult.indexedCount()
+                + ",\"contentChunkEmbeddingSkipped\":" + chunkIndexResult.skipped() + "}";
+    }
+
+    private record ContentChunkIndexResult(int indexedCount, boolean skipped) {
     }
 
     private void appendEmbeddingField(StringBuilder text, String field, String value) {

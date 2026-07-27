@@ -27,6 +27,7 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
 
 @Slf4j
 @Component
@@ -41,6 +42,7 @@ public class SocialAccountConsumer {
     private final EntityEsService entityEsService;
     private final MilvusVectorService milvusVectorService;
     private final EmbeddingService embeddingService;
+    private final ExecutorService pipelineThreadPool;
 
     @KafkaListener(topics = KafkaTopicConstants.SOCIAL_ACCOUNT, groupId = "cognitive-profile-ingestion")
     public void onMessage(String rawMessage) {
@@ -72,7 +74,6 @@ public class SocialAccountConsumer {
 
         try {
             SocialAccountNormalizer.NormalizedAccount normalized = normalizer.normalize(kafkaMessage, rawRecord);
-            annotateAccountType(normalized.getAccount());
             UUID accountId = socialAccountMapper.upsertByPlatformAndUserId(normalized.getAccount());
             normalized.getAccount().setId(accountId);
             normalized.getSnapshot().setAccountId(accountId);
@@ -82,12 +83,40 @@ public class SocialAccountConsumer {
             rawRecord.setErrorMessage(null);
             rawRecordMapper.updateById(rawRecord);
 
-            indexAccountToEs(normalized.getAccount());
-            indexAccountEmbedding(normalized.getAccount());
+            submitAccountEnrichment(accountId);
         } catch (Exception e) {
             markFailed(rawRecord, e);
             log.error("[SocialAccountConsumer] social_account processing failed, sourceRecordId={}, platform={}",
                     sourceRecordId, IngestionMessageSupport.text(IngestionMessageSupport.root(kafkaMessage), "platform"), e);
+        }
+    }
+
+    /**
+     * Agent, Elasticsearch and embedding calls must not run on the Kafka consumer thread:
+     * their combined timeout can be longer than max.poll.interval.ms.
+     */
+    private void submitAccountEnrichment(UUID accountId) {
+        if (accountId == null) {
+            return;
+        }
+        pipelineThreadPool.submit(() -> enrichAccount(accountId));
+    }
+
+    private void enrichAccount(UUID accountId) {
+        try {
+            SocialAccount account = socialAccountMapper.selectById(accountId);
+            if (account == null) {
+                log.warn("[SocialAccountConsumer] async enrichment skipped, accountId={} not found", accountId);
+                return;
+            }
+            if (annotateAccountType(account)) {
+                socialAccountMapper.updateAccountType(
+                        accountId, account.getAccountType(), account.getAccountTypeConfidence());
+            }
+            indexAccountToEs(account);
+            indexAccountEmbedding(account);
+        } catch (Exception e) {
+            log.error("[SocialAccountConsumer] async enrichment failed, accountId={}", accountId, e);
         }
     }
 
@@ -218,7 +247,7 @@ public class SocialAccountConsumer {
         text.append(field).append(": ").append(value.trim()).append('\n');
     }
 
-    private void annotateAccountType(SocialAccount account) {
+    private boolean annotateAccountType(SocialAccount account) {
         try {
             T1AnnotateAccountRequest request = new T1AnnotateAccountRequest();
             request.setPlatform(account.getPlatform());
@@ -251,11 +280,13 @@ public class SocialAccountConsumer {
                 if (response.getOverallConfidence() != null) {
                     account.setAccountTypeConfidence(BigDecimal.valueOf(response.getOverallConfidence()));
                 }
+                return true;
             }
         } catch (Exception e) {
             log.warn("[SocialAccountConsumer] T1 annotate_account_type failed, platform={}, platformUserId={}",
                     account.getPlatform(), account.getPlatformUserId(), e);
         }
+        return false;
     }
 
     private void markFailed(RawRecord rawRecord, Exception error) {

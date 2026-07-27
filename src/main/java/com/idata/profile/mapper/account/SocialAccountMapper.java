@@ -91,6 +91,17 @@ public interface SocialAccountMapper extends BaseMapper<SocialAccount> {
     int updateEntityOrgId(@Param("accountId") UUID accountId,
                           @Param("entityOrgId") UUID entityOrgId);
 
+    @Update("""
+            UPDATE social_accounts
+            SET account_type = #{accountType},
+                account_type_confidence = #{confidence},
+                updated_at = NOW()
+            WHERE id = #{accountId}
+            """)
+    int updateAccountType(@Param("accountId") UUID accountId,
+                          @Param("accountType") String accountType,
+                          @Param("confidence") java.math.BigDecimal confidence);
+
     @Update("UPDATE social_accounts SET identity_resolved_at = NOW() WHERE id = #{accountId}")
     int markIdentityResolved(@Param("accountId") UUID accountId);
 

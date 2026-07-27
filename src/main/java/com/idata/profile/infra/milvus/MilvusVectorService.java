@@ -43,6 +43,7 @@ public class MilvusVectorService {
     private static final int EMBEDDING_DIMENSION = 4096;
     private static final String MEDIA_CONTENT_COLLECTION = "media_content_embeddings";
     private static final String MEDIA_CONTENT_PIVOT_COLLECTION = "media_content_pivot_embeddings";
+    private static final String MEDIA_CONTENT_CHUNK_COLLECTION = "media_content_chunk_embeddings";
     private static final String MEDIA_ASSET_COLLECTION = "media_asset_embeddings";
     private static final String MEDIA_ASSET_PIVOT_COLLECTION = "media_asset_pivot_embeddings";
     private static final String ENTITY_COLLECTION = "entity_embeddings";
@@ -51,6 +52,7 @@ public class MilvusVectorService {
     private static final String CONTENT_TITLE_VECTOR_FIELD = "title_embedding";
     private static final String CONTENT_SUMMARY_VECTOR_FIELD = "summary_embedding";
     private static final String CONTENT_BODY_VECTOR_FIELD = "body_embedding";
+    private static final String CONTENT_CHUNK_VECTOR_FIELD = "embedding";
     private static final String ASSET_VISUAL_VECTOR_FIELD = "visual_embedding";
     private static final String ASSET_OCR_VECTOR_FIELD = "ocr_embedding";
     private static final String ASSET_ASR_VECTOR_FIELD = "asr_embedding";
@@ -77,10 +79,14 @@ public class MilvusVectorService {
     private static final int CANONICAL_NAME_MAX_LENGTH = 512;
     private static final int ALIASES_MAX_LENGTH = 2048;
     private static final int DESCRIPTION_MAX_LENGTH = 4096;
+    private static final int CHUNK_TEXT_MAX_LENGTH = 8192;
 
     private final MilvusClientV2 milvusClient;
 
     public record ScoredEntityId(String entityId, float score) {
+    }
+
+    public record ContentChunkEmbedding(int chunkIndex, String chunkText, float[] embedding) {
     }
 
     public record MediaAssetVectorSearchResult(String assetId, String segmentId, String contentId,
@@ -145,6 +151,43 @@ public class MilvusVectorService {
         addVector(row, CONTENT_BODY_VECTOR_FIELD, bodyEmbedding);
         insert(collectionName, row);
         return vectorId;
+    }
+
+    /**
+     * Replaces all searchable chunks for one content item. Embeddings should be generated before this
+     * method is called so transient model failures do not erase a previously complete chunk index.
+     */
+    public void replaceMediaContentChunkEmbeddings(String contentId, String platform, String language,
+                                                   String contentType, long publishedAt,
+                                                   List<ContentChunkEmbedding> chunks) {
+        if (milvusClient == null || !hasText(contentId)) {
+            return;
+        }
+        List<ContentChunkEmbedding> safeChunks = chunks == null ? List.of() : chunks;
+        for (ContentChunkEmbedding chunk : safeChunks) {
+            if (chunk == null || !hasText(chunk.chunkText())) {
+                throw new IllegalArgumentException("Content chunk text must not be blank");
+            }
+            validateEmbedding(chunk.embedding());
+        }
+
+        deleteByFilter(MEDIA_CONTENT_CHUNK_COLLECTION,
+                "content_id == \"" + escapeFilterValue(contentId) + "\"");
+        for (ContentChunkEmbedding chunk : safeChunks) {
+            String chunkId = "media_content_chunk_" + contentId + "_" + chunk.chunkIndex();
+            JsonObject row = new JsonObject();
+            addRequiredText(row, "id", chunkId, VECTOR_ID_MAX_LENGTH);
+            addRequiredText(row, "chunk_id", chunkId, VECTOR_ID_MAX_LENGTH);
+            addRequiredText(row, "content_id", contentId, ID_MAX_LENGTH);
+            row.addProperty("chunk_index", chunk.chunkIndex());
+            addRequiredText(row, "chunk_text", chunk.chunkText(), CHUNK_TEXT_MAX_LENGTH);
+            addText(row, "platform", platform, PLATFORM_MAX_LENGTH);
+            addText(row, "language", language, LANGUAGE_MAX_LENGTH);
+            addText(row, "content_type", contentType, TYPE_MAX_LENGTH);
+            row.addProperty("published_at", publishedAt);
+            addVector(row, CONTENT_CHUNK_VECTOR_FIELD, chunk.embedding());
+            insert(MEDIA_CONTENT_CHUNK_COLLECTION, row);
+        }
     }
 
     public String insertTextEmbedding(String sourceId, String sourceType,
@@ -377,6 +420,16 @@ public class MilvusVectorService {
         }
     }
 
+    private void deleteByFilter(String collectionName, String filter) {
+        if (milvusClient == null || !hasText(filter) || !collectionExists(collectionName)) {
+            return;
+        }
+        milvusClient.delete(io.milvus.v2.service.vector.request.DeleteReq.builder()
+                .collectionName(collectionName)
+                .filter(filter)
+                .build());
+    }
+
     public List<String> searchTextEmbeddings(float[] queryEmbedding, int topK,
                                              String platform, String language) {
         return searchMediaContentEmbeddingsWithScore(queryEmbedding, topK, platform, language).stream()
@@ -395,7 +448,16 @@ public class MilvusVectorService {
                 MEDIA_CONTENT_COLLECTION, queryEmbedding, topK, platform, language);
         List<ScoredEntityId> pivotResults = searchMediaContentCollectionEmbeddingsWithScore(
                 MEDIA_CONTENT_PIVOT_COLLECTION, queryEmbedding, topK, platform, language);
-        return mergeByMaxScore(List.of(originalResults, pivotResults), topK);
+        int chunkRecallK = topK > 250 ? 1000 : Math.min(1000, topK * 4);
+        List<ScoredEntityId> chunkResults = searchEmbeddingsWithScore(
+                MEDIA_CONTENT_CHUNK_COLLECTION,
+                CONTENT_CHUNK_VECTOR_FIELD,
+                queryEmbedding,
+                chunkRecallK,
+                buildContentFilter(platform, language),
+                "content_id");
+        // Max-score aggregation prevents multiple chunks from one document occupying the final topK.
+        return mergeByMaxScore(List.of(originalResults, pivotResults, chunkResults), topK);
     }
 
     private List<ScoredEntityId> searchMediaContentCollectionEmbeddingsWithScore(
@@ -660,6 +722,7 @@ public class MilvusVectorService {
         }
         ensure("media content", this::ensureMediaContentCollection);
         ensure("media content pivot", this::ensureMediaContentPivotCollection);
+        ensure("media content chunk", this::ensureMediaContentChunkCollection);
         ensure("media asset", this::ensureMediaAssetCollection);
         ensure("media asset pivot", this::ensureMediaAssetPivotCollection);
         ensure("entity", this::ensureEntityCollection);
@@ -687,6 +750,27 @@ public class MilvusVectorService {
             return;
         }
         createMediaContentLikeCollection(MEDIA_CONTENT_PIVOT_COLLECTION);
+    }
+
+    private void ensureMediaContentChunkCollection() {
+        if (collectionExists(MEDIA_CONTENT_CHUNK_COLLECTION)) {
+            return;
+        }
+        CreateCollectionReq.CollectionSchema schema = CreateCollectionReq.CollectionSchema.builder()
+                .enableDynamicField(true)
+                .build()
+                .addField(varcharField("id", VECTOR_ID_MAX_LENGTH, false, true))
+                .addField(varcharField("chunk_id", VECTOR_ID_MAX_LENGTH, false, false))
+                .addField(varcharField("content_id", ID_MAX_LENGTH, false, false))
+                .addField(int64Field("chunk_index", false))
+                .addField(varcharField("chunk_text", CHUNK_TEXT_MAX_LENGTH, false, false))
+                .addField(varcharField("platform", PLATFORM_MAX_LENGTH, true, false))
+                .addField(varcharField("language", LANGUAGE_MAX_LENGTH, true, false))
+                .addField(varcharField("content_type", TYPE_MAX_LENGTH, true, false))
+                .addField(int64Field("published_at", true))
+                .addField(vectorField(CONTENT_CHUNK_VECTOR_FIELD));
+        createCollection(MEDIA_CONTENT_CHUNK_COLLECTION, schema,
+                List.of(vectorIndex(CONTENT_CHUNK_VECTOR_FIELD)));
     }
 
     private void createMediaContentLikeCollection(String collectionName) {

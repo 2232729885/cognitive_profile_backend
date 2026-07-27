@@ -54,7 +54,8 @@ spring:
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       properties:
         max.poll.interval.ms: 1800000
-        max.poll.records: 16
+        # Listener methods only persist/dispatch one record at a time; slow enrichment runs off-thread.
+        max.poll.records: 1
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
@@ -110,6 +111,12 @@ agent-proxy:
 
 pipeline:
   thread-pool-size: 16
+  t4:
+    chunking:
+      # Long bodies keep their document vector and additionally get local semantic vectors.
+      threshold-tokens: 800
+      target-tokens: 600
+      overlap-tokens: 75
   recovery:
     enabled: true
     stuck-minutes: 5
@@ -135,7 +142,8 @@ search:
     model: Qwen3-32B
     timeout-seconds: 300
     queue-timeout-seconds: 60
-    max-tokens: 1024
+    # OCR + ASR + caption translations can need substantially more than 1024 output tokens.
+    max-tokens: 4096
     concurrency: 2
 
 llm:

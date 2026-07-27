@@ -185,8 +185,10 @@ public class SearchQueryTranslationService {
         if (!hasText(normalizedOcrText) && !hasText(normalizedAsrText) && !hasText(normalizedCaptionText)) {
             return TranslatedMediaText.empty();
         }
-        if (isEnglish(language)
-                && allPresentTextProbablyEnglish(normalizedOcrText, normalizedAsrText, normalizedCaptionText)) {
+        String ocrToTranslate = nonEnglishText(normalizedOcrText);
+        String asrToTranslate = nonEnglishText(normalizedAsrText);
+        String captionToTranslate = nonEnglishText(normalizedCaptionText);
+        if (!hasText(ocrToTranslate) && !hasText(asrToTranslate) && !hasText(captionToTranslate)) {
             return TranslatedMediaText.empty();
         }
         if (!tryAcquire()) {
@@ -197,7 +199,7 @@ public class SearchQueryTranslationService {
         }
         try {
             String sourceLanguage = resolveMediaSourceLanguage(
-                    normalizedOcrText, normalizedAsrText, normalizedCaptionText, language);
+                    ocrToTranslate, asrToTranslate, captionToTranslate, language);
             String userPrompt = """
                     Source language: %s
 
@@ -211,21 +213,22 @@ public class SearchQueryTranslationService {
                     %s
                     """.formatted(
                     sourceLanguage,
-                    truncate(normalizedOcrText, CONTENT_TEXT_MAX_LENGTH),
-                    truncate(normalizedAsrText, CONTENT_TEXT_MAX_LENGTH),
-                    truncate(normalizedCaptionText, 1_500));
+                    promptText(ocrToTranslate, CONTENT_TEXT_MAX_LENGTH),
+                    promptText(asrToTranslate, CONTENT_TEXT_MAX_LENGTH),
+                    promptText(captionToTranslate, 1_500));
             String raw = callJsonLlm(MEDIA_TEXT_SYSTEM_PROMPT, userPrompt);
             MediaTextTranslationResponse response = parseMediaTextTranslation(raw);
             TranslatedMediaText translated = new TranslatedMediaText(
                     englishPivotText(response.getOcrText(), normalizedOcrText),
                     englishPivotText(response.getAsrText(), normalizedAsrText),
                     englishPivotText(response.getCaptionText(), normalizedCaptionText));
-            if ((hasText(normalizedOcrText) && !isProbablyEnglishText(normalizedOcrText) && !hasText(translated.ocrText()))
-                    || (hasText(normalizedAsrText) && !isProbablyEnglishText(normalizedAsrText) && !hasText(translated.asrText()))
-                    || (hasText(normalizedCaptionText) && !isProbablyEnglishText(normalizedCaptionText) && !hasText(translated.captionText()))) {
-                log.warn("[SearchTranslation] media text translation returned empty/non-English fields, language={}, sourceLanguage={}, hasOcr={}, hasAsr={}, hasCaption={}, rawLength={}, rawPreview={}",
-                        language, sourceLanguage, hasText(normalizedOcrText), hasText(normalizedAsrText),
-                        hasText(normalizedCaptionText), textLength(raw), preview(raw, 200));
+            List<String> incompleteFields = incompleteMediaTranslationFields(
+                    normalizedOcrText, normalizedAsrText, normalizedCaptionText, translated);
+            if (!incompleteFields.isEmpty()) {
+                log.warn("[SearchTranslation] media text translation returned empty/non-English fields, language={}, sourceLanguage={}, incompleteFields={}, ocrOutputLength={}, asrOutputLength={}, captionOutputLength={}, rawLength={}, rawPreview={}",
+                        language, sourceLanguage, incompleteFields,
+                        textLength(translated.ocrText()), textLength(translated.asrText()),
+                        textLength(translated.captionText()), textLength(raw), preview(raw, 200));
             }
             return translated;
         } catch (Exception e) {
@@ -386,6 +389,32 @@ public class SearchQueryTranslationService {
             return null;
         }
         return isProbablyEnglishText(clean) ? clean : null;
+    }
+
+    private String nonEnglishText(String value) {
+        return hasText(value) && !isProbablyEnglishText(value) ? value : null;
+    }
+
+    private String promptText(String value, int maxLength) {
+        String truncated = truncate(value, maxLength);
+        return truncated != null ? truncated : "";
+    }
+
+    private List<String> incompleteMediaTranslationFields(
+            String originalOcr, String originalAsr, String originalCaption,
+            TranslatedMediaText translated) {
+        List<String> fields = new ArrayList<>(3);
+        addIncompleteMediaField(fields, "ocrText", originalOcr, translated.ocrText());
+        addIncompleteMediaField(fields, "asrText", originalAsr, translated.asrText());
+        addIncompleteMediaField(fields, "captionText", originalCaption, translated.captionText());
+        return List.copyOf(fields);
+    }
+
+    private void addIncompleteMediaField(List<String> fields, String fieldName,
+                                         String original, String translated) {
+        if (hasText(original) && !isProbablyEnglishText(original) && !hasText(translated)) {
+            fields.add(fieldName);
+        }
     }
 
     public boolean needsPivotTranslation(String text) {
