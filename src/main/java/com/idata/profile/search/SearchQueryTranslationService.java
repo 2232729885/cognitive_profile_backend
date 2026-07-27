@@ -58,13 +58,13 @@ public class SearchQueryTranslationService {
     private final Semaphore semaphore;
     private final Map<String, List<String>> queryCache = new ConcurrentHashMap<>();
 
-    @Value("${spring.ai.openai.base-url}")
+    @Value("${search.translation.base-url:${spring.ai.openai.base-url}}")
     private String baseUrl;
 
-    @Value("${spring.ai.openai.api-key}")
+    @Value("${search.translation.api-key:${spring.ai.openai.api-key}}")
     private String apiKey;
 
-    @Value("${spring.ai.openai.chat.options.model:Qwen3-VL-32B-Instruct}")
+    @Value("${search.translation.model:${spring.ai.openai.chat.options.model:Qwen3-32B}}")
     private String model;
 
     @Value("${search.translation.enabled:true}")
@@ -75,6 +75,9 @@ public class SearchQueryTranslationService {
 
     @Value("${search.translation.max-tokens:1024}")
     private int maxTokens;
+
+    @Value("${search.translation.queue-timeout-seconds:10}")
+    private int queueTimeoutSeconds;
 
     public SearchQueryTranslationService(@Value("${search.translation.concurrency:4}") int concurrency) {
         this.semaphore = new Semaphore(Math.max(1, concurrency));
@@ -269,7 +272,7 @@ public class SearchQueryTranslationService {
 
     private boolean tryAcquire() {
         try {
-            return semaphore.tryAcquire(1, TimeUnit.SECONDS);
+            return semaphore.tryAcquire(Math.max(1, queueTimeoutSeconds), TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return false;

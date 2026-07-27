@@ -130,9 +130,13 @@ search:
     route-timeout-seconds: 30
   translation:
     enabled: true
-    timeout-seconds: 20
+    base-url: http://172.16.40.232:18004/v1
+    api-key: idata@123456
+    model: Qwen3-32B
+    timeout-seconds: 300
+    queue-timeout-seconds: 60
     max-tokens: 1024
-    concurrency: 4
+    concurrency: 2
 
 llm:
   embedding:
