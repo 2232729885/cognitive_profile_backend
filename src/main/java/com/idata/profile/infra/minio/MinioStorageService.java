@@ -11,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayInputStream;
+import java.io.InputStream;
 
 @Slf4j
 @Service
@@ -20,6 +21,10 @@ public class MinioStorageService {
     private final MinioClient minioClient;
 
     public String upload(String bucket, String key, byte[] content, String contentType) {
+        return upload(bucket, key, new ByteArrayInputStream(content), content.length, contentType);
+    }
+
+    public String upload(String bucket, String key, InputStream inputStream, long contentLength, String contentType) {
         try {
             boolean bucketExists = minioClient.bucketExists(BucketExistsArgs.builder()
                     .bucket(bucket)
@@ -30,15 +35,13 @@ public class MinioStorageService {
                         .build());
             }
 
-            try (ByteArrayInputStream inputStream = new ByteArrayInputStream(content)) {
-                minioClient.putObject(PutObjectArgs.builder()
-                        .bucket(bucket)
-                        .object(key)
-                        .stream(inputStream, (long) content.length, -1L)
-                        .contentType(contentType == null || contentType.isBlank()
-                                ? "application/octet-stream" : contentType)
-                        .build());
-            }
+            minioClient.putObject(PutObjectArgs.builder()
+                    .bucket(bucket)
+                    .object(key)
+                    .stream(inputStream, contentLength, -1L)
+                    .contentType(contentType == null || contentType.isBlank()
+                            ? "application/octet-stream" : contentType)
+                    .build());
             return bucket + "/" + key;
         } catch (Exception e) {
             throw new RuntimeException("Failed to upload object to MinIO: " + bucket + "/" + key, e);

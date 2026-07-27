@@ -28,6 +28,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -66,7 +67,14 @@ public class DataIngestionController {
         }
 
         String key = "uploads/" + userId + "/" + System.currentTimeMillis() + "_" + originalFilename;
-        minioStorageService.upload(BATCH_IMPORT_BUCKET, key, file.getBytes(), file.getContentType());
+        try (InputStream inputStream = file.getInputStream()) {
+            minioStorageService.upload(
+                    BATCH_IMPORT_BUCKET,
+                    key,
+                    inputStream,
+                    file.getSize(),
+                    file.getContentType());
+        }
 
         BatchImportTask task = new BatchImportTask();
         task.setId(UUID.randomUUID());

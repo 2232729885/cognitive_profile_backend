@@ -89,6 +89,8 @@ elasticsearch:
 
 server:
   port: 8080
+  jetty:
+    connection-idle-timeout: 30m
 
 logging:
   level:
