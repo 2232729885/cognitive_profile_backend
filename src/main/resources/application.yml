@@ -158,7 +158,7 @@ llm:
     model: Qwen3-ASR-1.7B
     timeout-seconds: 300
     concurrency: 1
-    queue-timeout-seconds: 30
+    queue-timeout-seconds: 60
     max-retries: 1
     retry-backoff-ms: 1000
 
