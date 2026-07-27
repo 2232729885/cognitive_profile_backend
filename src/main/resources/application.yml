@@ -147,6 +147,9 @@ search:
     # OCR + ASR + caption translations can need substantially more than 1024 output tokens.
     max-tokens: 4096
     concurrency: 2
+    media-chunk-chars: 1500
+    media-max-chunks: 4
+    media-field-retries: 1
 
 llm:
   embedding:
@@ -166,13 +169,20 @@ llm:
     base-url: http://172.16.40.232:18015/v1
     api-key: idata@123456
     model: Qwen3-ASR-1.7B
-    timeout-seconds: 300
+    timeout-seconds: 120
     concurrency: 1
-    queue-timeout-seconds: 60
-    max-retries: 0
-    retry-backoff-ms: 1000
+    queue-timeout-seconds: 10
+    max-retries: 1
+    retry-backoff-ms: 2000
 
 media:
+  asr-job:
+    enabled: true
+    fixed-delay-ms: 5000
+    batch-limit: 1
+    max-attempts: 3
+    retry-delay-seconds: 60
+    stale-running-seconds: 900
   ocr:
     concurrency: 4
     timeout-seconds: 300

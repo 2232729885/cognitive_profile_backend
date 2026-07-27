@@ -102,11 +102,39 @@ public class MediaSegmentService {
     }
 
     public List<VideoSegmentFrame> extractVideoSegmentFrames(String mediaSource, Integer fallbackDurationSeconds) {
+        List<VideoSegmentFrame> frames = new ArrayList<>();
+        int safeFramesPerSegment = Math.max(1, framesPerSegment);
+        List<VideoSegment> segments = resolveVideoSegments(mediaSource, fallbackDurationSeconds);
+        int duration = segments.isEmpty() ? 0 : Math.round(segments.getLast().end());
+        for (VideoSegment segment : segments) {
+            int start = Math.round(segment.start());
+            int end = Math.round(segment.end());
+            int segmentLength = Math.max(0, end - start);
+            if (segmentLength <= 0) {
+                continue;
+            }
+            Set<Integer> timestamps = sampleTimestamps(start, segmentLength, duration, safeFramesPerSegment);
+            int frameIndex = 0;
+            for (Integer timestamp : timestamps) {
+                Path frame = extractFrame(mediaSource, timestamp, segment.index());
+                if (frame != null) {
+                    String segmentId = safeFramesPerSegment == 1
+                            ? segment.segmentId()
+                            : segment.segmentId() + "_frame_" + frameIndex;
+                    frames.add(new VideoSegmentFrame(segmentId, start, end, frame));
+                }
+                frameIndex++;
+            }
+        }
+        return frames;
+    }
+
+    public List<VideoSegment> resolveVideoSegments(String mediaSource, Integer fallbackDurationSeconds) {
         if (!hasText(mediaSource)) {
             return List.of();
         }
         if (!isDirectMediaSource(mediaSource)) {
-            log.info("[MediaSegmentService] video frame extraction skipped for non-direct media source, source={}",
+            log.info("[MediaSegmentService] video segmentation skipped for non-direct media source, source={}",
                     mediaSource);
             return List.of();
         }
@@ -115,31 +143,17 @@ public class MediaSegmentService {
             duration = Math.max(segmentSeconds, segmentSeconds * Math.max(1, maxSegments));
         }
 
-        List<VideoSegmentFrame> frames = new ArrayList<>();
+        List<VideoSegment> segments = new ArrayList<>();
         int safeSegmentSeconds = Math.max(1, segmentSeconds);
         int safeMaxSegments = Math.max(1, maxSegments);
-        int safeFramesPerSegment = Math.max(1, framesPerSegment);
         for (int start = 0, index = 0; start < duration && index < safeMaxSegments;
              start += safeSegmentSeconds, index++) {
             int end = Math.min(start + safeSegmentSeconds, duration);
-            int segmentLength = Math.max(0, end - start);
-            if (segmentLength <= 0) {
-                continue;
-            }
-            Set<Integer> timestamps = sampleTimestamps(start, segmentLength, duration, safeFramesPerSegment);
-            int frameIndex = 0;
-            for (Integer timestamp : timestamps) {
-                Path frame = extractFrame(mediaSource, timestamp, index);
-                if (frame != null) {
-                    String segmentId = safeFramesPerSegment == 1
-                            ? "seg_" + index
-                            : "seg_" + index + "_frame_" + frameIndex;
-                    frames.add(new VideoSegmentFrame(segmentId, start, end, frame));
-                }
-                frameIndex++;
+            if (end > start) {
+                segments.add(new VideoSegment("seg_" + index, index, start, end));
             }
         }
-        return frames;
+        return List.copyOf(segments);
     }
 
     private Set<Integer> sampleTimestamps(int segmentStart, int segmentLength, int duration, int frameCount) {
@@ -276,5 +290,8 @@ public class MediaSegmentService {
     }
 
     public record VideoSegmentFrame(String segmentId, float segmentStart, float segmentEnd, Path frameFile) {
+    }
+
+    public record VideoSegment(String segmentId, int index, float start, float end) {
     }
 }

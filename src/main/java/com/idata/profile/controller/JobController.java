@@ -2,6 +2,7 @@ package com.idata.profile.controller;
 
 import com.idata.profile.batch.asset.ImageEmbeddingJob;
 import com.idata.profile.batch.asset.ImageEmbeddingService;
+import com.idata.profile.batch.asset.MediaAsrJob;
 import com.idata.profile.batch.content.ContentPropagationBackfillJob;
 import com.idata.profile.batch.profile.PersonProfileGenerationJob;
 import com.idata.profile.batch.relation.AccountRelationBackfillJob;
@@ -28,6 +29,7 @@ public class JobController {
 
     private final ImageEmbeddingJob imageEmbeddingJob;
     private final ImageEmbeddingService imageEmbeddingService;
+    private final MediaAsrJob mediaAsrJob;
     private final AccountRelationBackfillJob accountRelationBackfillJob;
     private final ContentPropagationBackfillJob contentPropagationBackfillJob;
     private final PersonProfileGenerationJob personProfileGenerationJob;
@@ -47,6 +49,11 @@ public class JobController {
         return accepted
                 ? Result.ok("reindexed: " + assetId)
                 : Result.fail("REINDEX_FAILED", "media asset reindex failed: " + assetId);
+    }
+
+    @PostMapping("/media-asr/trigger")
+    public Result<String> triggerMediaAsr() {
+        return trigger("media-asr", mediaAsrJob::run);
     }
 
     @PostMapping("/account-relation/trigger")

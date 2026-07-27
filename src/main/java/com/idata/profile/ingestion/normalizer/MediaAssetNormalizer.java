@@ -30,10 +30,19 @@ public class MediaAssetNormalizer {
         asset.setThumbnailUri(IngestionMessageSupport.text(data, "thumbnail_uri"));
         asset.setOcrText(IngestionMessageSupport.text(data, "ocr_text"));
         asset.setAsrText(IngestionMessageSupport.text(data, "asr_text"));
+        asset.setAsrStatus(initialAsrStatus(asset));
+        asset.setAsrAttempts(0);
         asset.setMinioBucket(IngestionMessageSupport.text(data, "minio_bucket"));
         asset.setMinioKey(IngestionMessageSupport.text(data, "minio_key"));
 
         return asset;
+    }
+
+    private String initialAsrStatus(MediaAsset asset) {
+        if (asset == null || (!"audio".equals(asset.getAssetType()) && !"video".equals(asset.getAssetType()))) {
+            return "NOT_APPLICABLE";
+        }
+        return IngestionMessageSupport.hasText(asset.getAsrText()) ? "SUCCESS" : "PENDING";
     }
 
     private String readAssetType(JsonNode data) {

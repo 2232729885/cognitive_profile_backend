@@ -19,6 +19,7 @@ public interface MediaAssetMapper extends BaseMapper<MediaAsset> {
                 id, raw_record_id, content_id, source_asset_id, asset_type,
                 source_url, storage_uri, mime_type, sha256, file_size_bytes,
                 width, height, duration_seconds, thumbnail_uri, ocr_text, asr_text, caption_text,
+                asr_status, asr_attempts,
                 translated_ocr_text, translated_asr_text, translated_caption_text,
                 aigc_score, minio_bucket, minio_key, embedding_id
             )
@@ -26,6 +27,7 @@ public interface MediaAssetMapper extends BaseMapper<MediaAsset> {
                 #{asset.id}, #{asset.rawRecordId}, #{asset.contentId}, #{asset.sourceAssetId}, #{asset.assetType},
                 #{asset.sourceUrl}, #{asset.storageUri}, #{asset.mimeType}, #{asset.sha256}, #{asset.fileSizeBytes},
                 #{asset.width}, #{asset.height}, #{asset.durationSeconds}, #{asset.thumbnailUri}, #{asset.ocrText}, #{asset.asrText}, #{asset.captionText},
+                #{asset.asrStatus}, #{asset.asrAttempts},
                 #{asset.translatedOcrText}, #{asset.translatedAsrText}, #{asset.translatedCaptionText},
                 #{asset.aigcScore}, #{asset.minioBucket}, #{asset.minioKey}, #{asset.embeddingId}
             )
@@ -36,9 +38,66 @@ public interface MediaAssetMapper extends BaseMapper<MediaAsset> {
     @Select("SELECT * FROM media_assets WHERE sha256 = #{sha256} LIMIT 1")
     MediaAsset selectBySha256(@Param("sha256") String sha256);
 
-    @Select("SELECT * FROM media_assets WHERE embedding_id IS NULL " +
-            "AND asset_type IN ('image','video','audio') LIMIT #{limit}")
+    @Select("SELECT * FROM media_assets WHERE embedding_id IS NULL AND (" +
+            "asset_type = 'image' " +
+            "OR (asset_type = 'video' AND asr_status IN ('SUCCESS','EMPTY','GAVE_UP')) " +
+            "OR (asset_type = 'audio' AND asr_status = 'SUCCESS')) " +
+            "ORDER BY created_at ASC LIMIT #{limit}")
     List<MediaAsset> selectPendingEmbedding(@Param("limit") int limit);
+
+    @Select("""
+            SELECT * FROM media_assets
+            WHERE asset_type IN ('audio','video')
+              AND asr_status IN ('PENDING','FAILED')
+              AND COALESCE(asr_attempts, 0) < #{maxAttempts}
+              AND (asr_updated_at IS NULL
+                   OR asr_updated_at < NOW() - make_interval(secs => #{retryDelaySeconds}))
+            ORDER BY created_at ASC
+            LIMIT #{limit}
+            """)
+    List<MediaAsset> selectPendingAsr(@Param("limit") int limit,
+                                      @Param("maxAttempts") int maxAttempts,
+                                      @Param("retryDelaySeconds") int retryDelaySeconds);
+
+    @Update("""
+            UPDATE media_assets
+            SET asr_status = 'RUNNING',
+                asr_attempts = COALESCE(asr_attempts, 0) + 1,
+                asr_last_error = NULL,
+                asr_updated_at = NOW()
+            WHERE id = #{id}
+              AND asr_status IN ('PENDING','FAILED')
+            """)
+    int markAsrRunning(@Param("id") UUID id);
+
+    @Update("""
+            UPDATE media_assets
+            SET asr_status = #{status},
+                asr_text = #{asrText},
+                asr_segments = #{asrSegments,typeHandler=com.idata.profile.infra.mybatis.JsonbStringTypeHandler},
+                asr_last_error = #{lastError},
+                asr_updated_at = NOW()
+            WHERE id = #{id}
+            """)
+    int completeAsr(@Param("id") UUID id,
+                    @Param("status") String status,
+                    @Param("asrText") String asrText,
+                    @Param("asrSegments") String asrSegments,
+                    @Param("lastError") String lastError);
+
+    @Update("""
+            UPDATE media_assets
+            SET asr_status = CASE
+                    WHEN COALESCE(asr_attempts, 0) >= #{maxAttempts} THEN 'GAVE_UP'
+                    ELSE 'FAILED'
+                END,
+                asr_last_error = 'Recovered stale RUNNING ASR task',
+                asr_updated_at = NOW()
+            WHERE asr_status = 'RUNNING'
+              AND asr_updated_at < NOW() - make_interval(secs => #{staleSeconds})
+            """)
+    int recoverStaleAsr(@Param("staleSeconds") int staleSeconds,
+                        @Param("maxAttempts") int maxAttempts);
 
     @Select("SELECT * FROM media_assets WHERE ocr_text IS NULL " +
             "AND asset_type = 'image' ORDER BY created_at ASC LIMIT #{limit}")

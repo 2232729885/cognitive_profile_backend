@@ -1,5 +1,6 @@
 package com.idata.profile.search;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.idata.profile.common.util.TextEncodingRepairUtil;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
@@ -48,15 +49,15 @@ public class SearchQueryTranslationService {
             """;
 
     private static final String MEDIA_TEXT_SYSTEM_PROMPT = """
-            You translate every non-English media search index field to English. Return only one JSON object.
-            The fields may come from image OCR, audio/video ASR, or visual captioning.
+            You translate one media search index text field to English. Return only one JSON object.
+            The text may come from image OCR, audio/video ASR, or visual captioning.
             Preserve named entities, tickers, hashtags, handles, URLs, measurements, dates, and numbers.
-            Keep each field separate.
-            Do not copy source-language text back into output unless it is already English.
+            Preserve text that is already English and translate every non-English span.
+            Do not repeat, expand, summarize, or add information.
             For East Asian proper nouns, provide a concise English translation or romanization.
             Do not add explanations.
             JSON schema:
-            {"ocrText":"...","asrText":"...","captionText":"..."}
+            {"translatedText":"..."}
             """;
 
     private final Semaphore semaphore;
@@ -82,6 +83,15 @@ public class SearchQueryTranslationService {
 
     @Value("${search.translation.queue-timeout-seconds:10}")
     private int queueTimeoutSeconds;
+
+    @Value("${search.translation.media-chunk-chars:1500}")
+    private int mediaChunkChars;
+
+    @Value("${search.translation.media-max-chunks:4}")
+    private int mediaMaxChunks;
+
+    @Value("${search.translation.media-field-retries:1}")
+    private int mediaFieldRetries;
 
     public SearchQueryTranslationService(@Value("${search.translation.concurrency:4}") int concurrency) {
         this.semaphore = new Semaphore(Math.max(1, concurrency));
@@ -200,35 +210,17 @@ public class SearchQueryTranslationService {
         try {
             String sourceLanguage = resolveMediaSourceLanguage(
                     ocrToTranslate, asrToTranslate, captionToTranslate, language);
-            String userPrompt = """
-                    Source language: %s
-
-                    OCR text:
-                    %s
-
-                    ASR text:
-                    %s
-
-                    Caption text:
-                    %s
-                    """.formatted(
-                    sourceLanguage,
-                    promptText(ocrToTranslate, CONTENT_TEXT_MAX_LENGTH),
-                    promptText(asrToTranslate, CONTENT_TEXT_MAX_LENGTH),
-                    promptText(captionToTranslate, 1_500));
-            String raw = callJsonLlm(MEDIA_TEXT_SYSTEM_PROMPT, userPrompt);
-            MediaTextTranslationResponse response = parseMediaTextTranslation(raw);
             TranslatedMediaText translated = new TranslatedMediaText(
-                    englishPivotText(response.getOcrText(), normalizedOcrText),
-                    englishPivotText(response.getAsrText(), normalizedAsrText),
-                    englishPivotText(response.getCaptionText(), normalizedCaptionText));
+                    translateMediaField("ocrText", ocrToTranslate, sourceLanguage),
+                    translateMediaField("asrText", asrToTranslate, sourceLanguage),
+                    translateMediaField("captionText", captionToTranslate, sourceLanguage));
             List<String> incompleteFields = incompleteMediaTranslationFields(
                     normalizedOcrText, normalizedAsrText, normalizedCaptionText, translated);
             if (!incompleteFields.isEmpty()) {
-                log.warn("[SearchTranslation] media text translation returned empty/non-English fields, language={}, sourceLanguage={}, incompleteFields={}, ocrOutputLength={}, asrOutputLength={}, captionOutputLength={}, rawLength={}, rawPreview={}",
+                log.debug("[SearchTranslation] media text translation incomplete, language={}, sourceLanguage={}, incompleteFields={}, ocrOutputLength={}, asrOutputLength={}, captionOutputLength={}",
                         language, sourceLanguage, incompleteFields,
                         textLength(translated.ocrText()), textLength(translated.asrText()),
-                        textLength(translated.captionText()), textLength(raw), preview(raw, 200));
+                        textLength(translated.captionText()));
             }
             return translated;
         } catch (Exception e) {
@@ -241,6 +233,10 @@ public class SearchQueryTranslationService {
     }
 
     private String callJsonLlm(String systemPrompt, String userPrompt) {
+        return callJsonLlmDetailed(systemPrompt, userPrompt).content();
+    }
+
+    private LlmOutput callJsonLlmDetailed(String systemPrompt, String userPrompt) {
         Map<String, Object> requestBody = Map.of(
                 "model", model,
                 "temperature", 0,
@@ -260,33 +256,136 @@ public class SearchQueryTranslationService {
 
         if (response == null || response.getChoices() == null || response.getChoices().isEmpty()
                 || response.getChoices().getFirst().getMessage() == null) {
-            return "{}";
+            return new LlmOutput("{}", null);
         }
-        return response.getChoices().getFirst().getMessage().getContent();
+        ChatCompletionResponse.Choice choice = response.getChoices().getFirst();
+        return new LlmOutput(choice.getMessage().getContent(), choice.getFinishReason());
     }
 
-    private MediaTextTranslationResponse parseMediaTextTranslation(String raw) throws Exception {
+    private String translateMediaField(String fieldName, String sourceText, String sourceLanguage) {
+        if (!hasText(sourceText)) {
+            return null;
+        }
+        List<String> chunks = splitMediaTranslationChunks(sourceText);
+        List<String> translatedChunks = new ArrayList<>(chunks.size());
+        for (int index = 0; index < chunks.size(); index++) {
+            String translated = translateMediaChunk(
+                    fieldName, chunks.get(index), sourceLanguage, index, chunks.size());
+            if (!hasText(translated)) {
+                return null;
+            }
+            translatedChunks.add(translated);
+        }
+        String combined = String.join("\n", translatedChunks).trim();
+        return isProbablyEnglishText(combined) ? combined : null;
+    }
+
+    private String translateMediaChunk(String fieldName, String sourceText, String sourceLanguage,
+                                       int chunkIndex, int chunkCount) {
+        LlmOutput lastOutput = new LlmOutput("{}", null);
+        Exception lastError = null;
+        int attempts = Math.max(0, mediaFieldRetries) + 1;
+        for (int attempt = 1; attempt <= attempts; attempt++) {
+            try {
+                String userPrompt = """
+                        Source language: %s
+                        Field: %s
+                        Chunk: %d of %d
+
+                        Translate the complete text below to English exactly once:
+                        %s
+                        """.formatted(
+                        sourceLanguage,
+                        fieldName,
+                        chunkIndex + 1,
+                        chunkCount,
+                        sourceText);
+                lastOutput = callJsonLlmDetailed(MEDIA_TEXT_SYSTEM_PROMPT, userPrompt);
+                String translated = parseTranslatedText(lastOutput.content(), fieldName);
+                if (isProbablyEnglishText(translated)) {
+                    return translated.trim();
+                }
+            } catch (Exception e) {
+                lastError = e;
+            }
+        }
+
+        String message = "[SearchTranslation] media field translation failed, field={}, sourceLanguage={}, "
+                + "chunk={}/{}, inputLength={}, finishReason={}, rawLength={}, rawPreview={}, reason={}";
+        Object[] arguments = {
+                fieldName, sourceLanguage, chunkIndex + 1, chunkCount, textLength(sourceText),
+                lastOutput.finishReason(), textLength(lastOutput.content()), preview(lastOutput.content(), 200),
+                lastError != null ? rootMessage(lastError) : "empty or non-English output"
+        };
+        if (meaningfulNonLatinLetters(sourceText) >= 2) {
+            log.warn(message, arguments);
+        } else {
+            log.debug(message, arguments);
+        }
+        return null;
+    }
+
+    private String parseTranslatedText(String raw, String fieldName) throws Exception {
         JsonNode root = OBJECT_MAPPER.readTree(cleanJson(raw));
-        MediaTextTranslationResponse response = new MediaTextTranslationResponse();
-        response.setOcrText(firstText(
-                jsonText(root, "ocrText"),
-                jsonText(root, "ocr_text"),
-                jsonText(root, "ocr"),
-                jsonText(root, "OCR text"),
-                jsonText(root, "OCR")));
-        response.setAsrText(firstText(
-                jsonText(root, "asrText"),
-                jsonText(root, "asr_text"),
-                jsonText(root, "asr"),
-                jsonText(root, "ASR text"),
-                jsonText(root, "ASR")));
-        response.setCaptionText(firstText(
-                jsonText(root, "captionText"),
-                jsonText(root, "caption_text"),
-                jsonText(root, "caption"),
-                jsonText(root, "Caption text"),
-                jsonText(root, "Caption")));
-        return response;
+        return firstText(
+                jsonText(root, "translatedText"),
+                jsonText(root, "translated_text"),
+                jsonText(root, fieldName),
+                "ocrText".equals(fieldName) ? jsonText(root, "ocr_text") : null,
+                "asrText".equals(fieldName) ? jsonText(root, "asr_text") : null,
+                "captionText".equals(fieldName) ? jsonText(root, "caption_text") : null);
+    }
+
+    List<String> splitMediaTranslationChunks(String text) {
+        if (!hasText(text)) {
+            return List.of();
+        }
+        int targetLength = Math.max(200, mediaChunkChars);
+        int maxChunks = Math.max(1, mediaMaxChunks);
+        List<String> chunks = new ArrayList<>(maxChunks);
+        int start = 0;
+        while (start < text.length() && chunks.size() < maxChunks) {
+            int hardEnd = Math.min(text.length(), start + targetLength);
+            int end = hardEnd;
+            if (hardEnd < text.length()) {
+                int minimumBoundary = start + targetLength / 2;
+                for (int i = hardEnd; i >= minimumBoundary; i--) {
+                    char value = text.charAt(i - 1);
+                    if (value == '\n' || value == '\r' || value == '.'
+                            || value == '!' || value == '?' || value == '。'
+                            || value == '！' || value == '？' || value == ';' || value == '；') {
+                        end = i;
+                        break;
+                    }
+                }
+            }
+            String chunk = text.substring(start, end).trim();
+            if (hasText(chunk)) {
+                chunks.add(chunk);
+            }
+            start = end;
+        }
+        if (start < text.length()) {
+            log.debug("[SearchTranslation] media field truncated for translation, originalLength={}, translatedLength={}, chunks={}",
+                    text.length(), start, chunks.size());
+        }
+        return List.copyOf(chunks);
+    }
+
+    private int meaningfulNonLatinLetters(String text) {
+        int count = 0;
+        if (text == null) {
+            return count;
+        }
+        for (int i = 0; i < text.length(); ) {
+            int codePoint = text.codePointAt(i);
+            i += Character.charCount(codePoint);
+            if (Character.isLetter(codePoint)
+                    && Character.UnicodeScript.of(codePoint) != Character.UnicodeScript.LATIN) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private String jsonText(JsonNode root, String fieldName) {
@@ -393,11 +492,6 @@ public class SearchQueryTranslationService {
 
     private String nonEnglishText(String value) {
         return hasText(value) && !isProbablyEnglishText(value) ? value : null;
-    }
-
-    private String promptText(String value, int maxLength) {
-        String truncated = truncate(value, maxLength);
-        return truncated != null ? truncated : "";
     }
 
     private List<String> incompleteMediaTranslationFields(
@@ -623,6 +717,9 @@ public class SearchQueryTranslationService {
         }
     }
 
+    private record LlmOutput(String content, String finishReason) {
+    }
+
     @Data
     private static class QueryExpansionResponse {
         private String detectedLanguage;
@@ -637,19 +734,14 @@ public class SearchQueryTranslationService {
     }
 
     @Data
-    private static class MediaTextTranslationResponse {
-        private String ocrText;
-        private String asrText;
-        private String captionText;
-    }
-
-    @Data
     private static class ChatCompletionResponse {
         private List<Choice> choices;
 
         @Data
         private static class Choice {
             private Message message;
+            @JsonProperty("finish_reason")
+            private String finishReason;
         }
 
         @Data

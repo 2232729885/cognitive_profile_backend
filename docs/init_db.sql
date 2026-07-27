@@ -415,6 +415,11 @@ CREATE TABLE IF NOT EXISTS media_assets (
     thumbnail_uri       TEXT,
     ocr_text            TEXT,
     asr_text            TEXT,
+    asr_status          VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+    asr_attempts        INTEGER NOT NULL DEFAULT 0,
+    asr_last_error      TEXT,
+    asr_updated_at      TIMESTAMPTZ,
+    asr_segments        JSONB,
     caption_text        TEXT,
     translated_ocr_text TEXT,
     translated_asr_text TEXT,
@@ -478,6 +483,31 @@ ALTER TABLE media_assets ADD COLUMN IF NOT EXISTS
     scene_label VARCHAR(100);
 ALTER TABLE media_assets ADD COLUMN IF NOT EXISTS
     t1_annotated BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE media_assets ADD COLUMN IF NOT EXISTS
+    asr_status VARCHAR(32) NOT NULL DEFAULT 'PENDING';
+ALTER TABLE media_assets ADD COLUMN IF NOT EXISTS
+    asr_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE media_assets ADD COLUMN IF NOT EXISTS
+    asr_last_error TEXT;
+ALTER TABLE media_assets ADD COLUMN IF NOT EXISTS
+    asr_updated_at TIMESTAMPTZ;
+ALTER TABLE media_assets ADD COLUMN IF NOT EXISTS
+    asr_segments JSONB;
+COMMENT ON COLUMN media_assets.asr_status    IS 'ASR持久任务状态：PENDING/RUNNING/SUCCESS/EMPTY/FAILED/GAVE_UP/NOT_APPLICABLE';
+COMMENT ON COLUMN media_assets.asr_attempts  IS 'ASR处理尝试次数';
+COMMENT ON COLUMN media_assets.asr_last_error IS '最近一次ASR失败原因';
+COMMENT ON COLUMN media_assets.asr_updated_at IS 'ASR状态最近更新时间';
+COMMENT ON COLUMN media_assets.asr_segments  IS '视频分段ASR结果JSON数组';
+UPDATE media_assets
+SET asr_status = CASE
+    WHEN asset_type NOT IN ('audio','video') THEN 'NOT_APPLICABLE'
+    WHEN NULLIF(BTRIM(asr_text), '') IS NOT NULL THEN 'SUCCESS'
+    ELSE 'PENDING'
+END
+WHERE asr_updated_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_ma_pending_asr
+    ON media_assets(created_at)
+    WHERE asset_type IN ('audio','video') AND asr_status IN ('PENDING','FAILED');
 CREATE INDEX IF NOT EXISTS idx_media_assets_t1_annotated
     ON media_assets(t1_annotated) WHERE t1_annotated = FALSE;
 

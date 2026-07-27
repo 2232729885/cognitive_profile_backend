@@ -1,5 +1,6 @@
 package com.idata.profile.batch.asset;
 
+import com.idata.profile.common.constant.MediaAsrStatus;
 import com.idata.profile.entity.content.MediaAsset;
 import com.idata.profile.entity.content.MediaContent;
 import com.idata.profile.common.util.ImageAnnotationUtil;
@@ -21,6 +22,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -55,6 +58,7 @@ public class ImageEmbeddingService {
     private String minioEndpoint;
 
     private static final String MEDIA_BUCKET = "media-assets";
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     public void submitAfterCommit(UUID assetId) {
         Runnable task = () -> pipelineThreadPool.submit(() -> processById(assetId));
@@ -132,11 +136,78 @@ public class ImageEmbeddingService {
             log.warn("Media asset not found for image embedding, assetId={}", assetId);
             return false;
         }
-        return process(asset);
+        return process(asset, parseSegmentTranscripts(asset.getAsrSegments()));
+    }
+
+    public boolean processAsrById(UUID assetId, int maxAttempts) {
+        MediaAsset asset = mediaAssetMapper.selectById(assetId);
+        if (asset == null || !isAudioOrVideo(asset)) {
+            return false;
+        }
+        if (mediaAssetMapper.markAsrRunning(assetId) == 0) {
+            return false;
+        }
+
+        asset = mediaAssetMapper.selectById(assetId);
+        int attempt = asset != null && asset.getAsrAttempts() != null ? asset.getAsrAttempts() : 1;
+        try {
+            AssetAsrResult result = transcribeAsset(asset);
+            MediaAsrStatus finalStatus = result.status();
+            if (finalStatus == MediaAsrStatus.FAILED && attempt >= Math.max(1, maxAttempts)) {
+                finalStatus = MediaAsrStatus.GAVE_UP;
+            }
+            String segmentJson = serializeSegmentTranscripts(result.segments());
+            mediaAssetMapper.completeAsr(
+                    assetId,
+                    finalStatus.name(),
+                    result.text(),
+                    segmentJson,
+                    result.error());
+
+            if (finalStatus == MediaAsrStatus.FAILED) {
+                log.warn("Media ASR scheduled for retry, assetId={}, attempt={}/{}, reason={}",
+                        assetId, attempt, Math.max(1, maxAttempts), result.error());
+                return false;
+            }
+
+            if (finalStatus == MediaAsrStatus.GAVE_UP) {
+                log.warn("Media ASR gave up after retries, assetId={}, attempts={}, reason={}",
+                        assetId, attempt, result.error());
+            } else {
+                log.info("Media ASR completed, assetId={}, status={}, attempts={}, textLength={}, segments={}",
+                        assetId, finalStatus, attempt, textLength(result.text()), result.segments().size());
+            }
+
+            MediaAsset completed = mediaAssetMapper.selectById(assetId);
+            if (completed != null && (isVideo(completed) || finalStatus == MediaAsrStatus.SUCCESS)) {
+                return process(completed, segmentTranscriptMap(result.segments()));
+            }
+            return finalStatus == MediaAsrStatus.EMPTY;
+        } catch (Exception e) {
+            MediaAsrStatus status = attempt >= Math.max(1, maxAttempts)
+                    ? MediaAsrStatus.GAVE_UP : MediaAsrStatus.FAILED;
+            mediaAssetMapper.completeAsr(assetId, status.name(), null, "[]", rootMessage(e));
+            log.warn("Media ASR processing failed, assetId={}, status={}, attempt={}/{}",
+                    assetId, status, attempt, Math.max(1, maxAttempts), e);
+            if (status == MediaAsrStatus.GAVE_UP && asset != null && isVideo(asset)) {
+                MediaAsset completed = mediaAssetMapper.selectById(assetId);
+                return completed != null && process(completed, Map.of());
+            }
+            return false;
+        }
     }
 
     private boolean process(MediaAsset asset) {
+        return process(asset, parseSegmentTranscripts(asset != null ? asset.getAsrSegments() : null));
+    }
+
+    private boolean process(MediaAsset asset, Map<String, String> segmentAsrTexts) {
         try {
+            if (isAudioOrVideo(asset) && !isAsrTerminal(asset)) {
+                log.debug("Media embedding deferred until ASR reaches a terminal state, assetId={}, asrStatus={}",
+                        asset.getId(), asset.getAsrStatus());
+                return false;
+            }
             boolean processed = false;
             boolean changed = false;
             MediaContent content = resolveLinkedContent(asset);
@@ -164,23 +235,6 @@ public class ImageEmbeddingService {
                     mediaAssetMapper.updateById(asset);
                     log.info("Image OCR completed, assetId={}, textLength={}",
                             asset.getId(), ocrText.length());
-                }
-            }
-
-            if (isAudioOrVideo(asset) && !hasText(asset.getAsrText())) {
-                Path audioFile = mediaSegmentService.extractAudio(mediaSource);
-                try {
-                    String asrText = mediaAsrService.transcribe(audioFile);
-                    if (hasText(asrText)) {
-                        asset.setAsrText(asrText);
-                        changed = true;
-                        processed = true;
-                        mediaAssetMapper.updateById(asset);
-                        log.info("Media ASR completed, assetId={}, textLength={}",
-                                asset.getId(), asrText.length());
-                    }
-                } finally {
-                    mediaSegmentService.deleteQuietly(audioFile);
                 }
             }
 
@@ -247,7 +301,7 @@ public class ImageEmbeddingService {
 
             if (isVideo(asset) && hasText(mediaSource)) {
                 boolean segmentProcessed = indexVideoSegments(asset, contentId, platform,
-                        content != null ? content.getLanguage() : null, mediaSource);
+                        content != null ? content.getLanguage() : null, mediaSource, segmentAsrTexts);
                 if (segmentProcessed) {
                     processed = true;
                     changed = true;
@@ -351,16 +405,18 @@ public class ImageEmbeddingService {
     }
 
     private boolean indexVideoSegments(MediaAsset asset, String contentId, String platform,
-                                       String language, String mediaSource) {
+                                       String language, String mediaSource,
+                                       Map<String, String> segmentAsrTexts) {
         boolean processed = false;
         List<MediaSegmentService.VideoSegmentFrame> frames =
                 mediaSegmentService.extractVideoSegmentFrames(mediaSource, asset.getDurationSeconds());
-        Map<String, String> segmentAsrCache = new LinkedHashMap<>();
         for (MediaSegmentService.VideoSegmentFrame frame : frames) {
             try {
                 String caption = mediaCaptionService.describeImageFile(frame.frameFile());
                 String ocrText = imageOcrService.extractTextFromImageFile(frame.frameFile());
-                String asrText = resolveSegmentAsrText(mediaSource, frame, segmentAsrCache);
+                String asrText = segmentAsrTexts != null
+                        ? segmentAsrTexts.get(segmentRangeKey(frame.segmentStart(), frame.segmentEnd()))
+                        : null;
                 UploadedFrame uploadedFrame = uploadFrame(asset, frame);
                 float[] visualEmbedding = embeddingService.generateImageEmbedding(toDataUrl(frame.frameFile()));
                 float[] ocrEmbedding = hasText(ocrText)
@@ -423,28 +479,134 @@ public class ImageEmbeddingService {
         return processed;
     }
 
-    private String resolveSegmentAsrText(String mediaSource, MediaSegmentService.VideoSegmentFrame frame,
-                                         Map<String, String> segmentAsrCache) {
-        if (frame == null || segmentAsrCache == null) {
-            return null;
+    private String segmentRangeKey(float start, float end) {
+        return start + ":" + end;
+    }
+
+    private AssetAsrResult transcribeAsset(MediaAsset asset) {
+        if (asset == null) {
+            return AssetAsrResult.failed("Media asset does not exist", List.of());
         }
-        String key = segmentRangeKey(frame);
-        if (segmentAsrCache.containsKey(key)) {
-            return segmentAsrCache.get(key);
+        String mediaSource = resolveMediaSource(asset);
+        if (!hasText(mediaSource)) {
+            return AssetAsrResult.failed("Media asset has no accessible media source", List.of());
         }
-        Path audioFile = mediaSegmentService.extractAudioSegment(
-                mediaSource, frame.segmentStart(), frame.segmentEnd());
+        if (isVideo(asset)) {
+            return transcribeVideoSegments(asset, mediaSource);
+        }
+
+        Path audioFile = mediaSegmentService.extractAudio(mediaSource);
         try {
-            String asrText = mediaAsrService.transcribe(audioFile);
-            segmentAsrCache.put(key, asrText);
-            return asrText;
+            MediaAsrService.TranscriptionResult result = mediaAsrService.transcribeResult(audioFile);
+            return switch (result.status()) {
+                case SUCCESS -> AssetAsrResult.success(result.text(), List.of());
+                case EMPTY -> AssetAsrResult.empty(List.of());
+                case FAILED -> AssetAsrResult.failed(result.error(), List.of());
+            };
         } finally {
             mediaSegmentService.deleteQuietly(audioFile);
         }
     }
 
-    private String segmentRangeKey(MediaSegmentService.VideoSegmentFrame frame) {
-        return frame.segmentStart() + ":" + frame.segmentEnd();
+    private AssetAsrResult transcribeVideoSegments(MediaAsset asset, String mediaSource) {
+        List<MediaSegmentService.VideoSegment> segments =
+                mediaSegmentService.resolveVideoSegments(mediaSource, asset.getDurationSeconds());
+        if (segments.isEmpty()) {
+            return AssetAsrResult.failed("No video segments could be resolved", List.of());
+        }
+
+        List<SegmentTranscript> transcripts = new java.util.ArrayList<>();
+        for (MediaSegmentService.VideoSegment segment : segments) {
+            Path audioFile = mediaSegmentService.extractAudioSegment(
+                    mediaSource, segment.start(), segment.end());
+            try {
+                MediaAsrService.TranscriptionResult result = mediaAsrService.transcribeResult(audioFile);
+                if (result.status() == MediaAsrService.TranscriptionStatus.FAILED) {
+                    return AssetAsrResult.failed(result.error(), transcripts);
+                }
+                if (result.status() == MediaAsrService.TranscriptionStatus.SUCCESS) {
+                    transcripts.add(new SegmentTranscript(
+                            segment.segmentId(), segment.start(), segment.end(), result.text()));
+                }
+            } finally {
+                mediaSegmentService.deleteQuietly(audioFile);
+            }
+        }
+        if (transcripts.isEmpty()) {
+            return AssetAsrResult.empty(List.of());
+        }
+        return AssetAsrResult.success(aggregateTranscript(transcripts), transcripts);
+    }
+
+    private String aggregateTranscript(List<SegmentTranscript> transcripts) {
+        if (transcripts == null || transcripts.isEmpty()) {
+            return null;
+        }
+        return transcripts.stream()
+                .map(SegmentTranscript::text)
+                .filter(this::hasText)
+                .map(String::trim)
+                .collect(java.util.stream.Collectors.joining("\n"));
+    }
+
+    private String serializeSegmentTranscripts(List<SegmentTranscript> transcripts) {
+        try {
+            return OBJECT_MAPPER.writeValueAsString(transcripts == null ? List.of() : transcripts);
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to serialize ASR segment results", e);
+        }
+    }
+
+    private Map<String, String> parseSegmentTranscripts(String json) {
+        if (!hasText(json)) {
+            return Map.of();
+        }
+        try {
+            JsonNode root = OBJECT_MAPPER.readTree(json);
+            if (root == null || !root.isArray()) {
+                return Map.of();
+            }
+            Map<String, String> result = new LinkedHashMap<>();
+            for (JsonNode item : root) {
+                String text = item.path("text").asText();
+                if (!hasText(text)) {
+                    continue;
+                }
+                float start = (float) item.path("start").asDouble();
+                float end = (float) item.path("end").asDouble();
+                result.put(segmentRangeKey(start, end), text.trim());
+            }
+            return Map.copyOf(result);
+        } catch (Exception e) {
+            log.warn("Failed to parse stored ASR segments, reason={}", rootMessage(e));
+            return Map.of();
+        }
+    }
+
+    private Map<String, String> segmentTranscriptMap(List<SegmentTranscript> transcripts) {
+        if (transcripts == null || transcripts.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, String> result = new LinkedHashMap<>();
+        for (SegmentTranscript transcript : transcripts) {
+            if (transcript != null && hasText(transcript.text())) {
+                result.put(segmentRangeKey(transcript.start(), transcript.end()), transcript.text().trim());
+            }
+        }
+        return Map.copyOf(result);
+    }
+
+    private boolean isAsrTerminal(MediaAsset asset) {
+        if (asset == null || !isAudioOrVideo(asset)) {
+            return true;
+        }
+        if (!hasText(asset.getAsrStatus())) {
+            return hasText(asset.getAsrText());
+        }
+        return switch (asset.getAsrStatus().trim().toUpperCase()) {
+            case "SUCCESS", "EMPTY", "GAVE_UP", "NOT_APPLICABLE" -> true;
+            default -> false;
+        };
     }
 
     private UploadedFrame uploadFrame(MediaAsset asset, MediaSegmentService.VideoSegmentFrame frame) {
@@ -573,7 +735,7 @@ public class ImageEmbeddingService {
             if ((needsOcr && !hasText(generated.ocrText()))
                     || (needsAsr && !hasText(generated.asrText()))
                     || (needsCaption && !hasText(generated.captionText()))) {
-                log.warn("Media asset text translation produced empty result, assetId={}, contentId={}, language={}, needsOcr={}, needsAsr={}, needsCaption={}, ocrLength={}, asrLength={}, captionLength={}",
+                log.debug("Media asset text translation incomplete, assetId={}, contentId={}, language={}, needsOcr={}, needsAsr={}, needsCaption={}, ocrLength={}, asrLength={}, captionLength={}",
                         asset.getId(), asset.getContentId(), language, needsOcr, needsAsr, needsCaption,
                         textLength(asset.getOcrText()), textLength(asset.getAsrText()), textLength(captionText));
             }
@@ -766,5 +928,30 @@ public class ImageEmbeddingService {
     }
 
     private record UploadedFrame(String bucket, String key, String url) {
+    }
+
+    private record SegmentTranscript(String segmentId, float start, float end, String text) {
+    }
+
+    private record AssetAsrResult(MediaAsrStatus status, String text,
+                                  List<SegmentTranscript> segments, String error) {
+        private static AssetAsrResult success(String text, List<SegmentTranscript> segments) {
+            return new AssetAsrResult(MediaAsrStatus.SUCCESS, text, List.copyOf(segments), null);
+        }
+
+        private static AssetAsrResult empty(List<SegmentTranscript> segments) {
+            return new AssetAsrResult(MediaAsrStatus.EMPTY, null, List.copyOf(segments), null);
+        }
+
+        private static AssetAsrResult failed(String error, List<SegmentTranscript> segments) {
+            List<SegmentTranscript> safeSegments = segments == null ? List.of() : List.copyOf(segments);
+            String partialText = safeSegments.isEmpty()
+                    ? null
+                    : safeSegments.stream()
+                    .map(SegmentTranscript::text)
+                    .filter(value -> value != null && !value.isBlank())
+                    .collect(java.util.stream.Collectors.joining("\n"));
+            return new AssetAsrResult(MediaAsrStatus.FAILED, partialText, safeSegments, error);
+        }
     }
 }

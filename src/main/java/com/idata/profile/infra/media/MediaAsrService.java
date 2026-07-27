@@ -50,8 +50,12 @@ public class MediaAsrService {
     private long retryBackoffMs;
 
     public String transcribe(Path audioFile) {
+        return transcribeResult(audioFile).text();
+    }
+
+    public TranscriptionResult transcribeResult(Path audioFile) {
         if (audioFile == null || !Files.isRegularFile(audioFile)) {
-            return null;
+            return TranscriptionResult.empty();
         }
         boolean acquired = false;
         try {
@@ -59,7 +63,7 @@ public class MediaAsrService {
             if (!acquired) {
                 log.warn("[MediaAsrService] ASR skipped because route is busy, audioFile={}, concurrency={}, queueTimeoutSeconds={}",
                         audioFile, Math.max(1, concurrency), Math.max(1, queueTimeoutSeconds));
-                return null;
+                return TranscriptionResult.failed("Local ASR route is busy");
             }
             int attempts = Math.max(0, maxRetries) + 1;
             for (int attempt = 1; attempt <= attempts; attempt++) {
@@ -69,18 +73,18 @@ public class MediaAsrService {
                     if (attempt >= attempts) {
                         log.warn("[MediaAsrService] ASR failed, audioFile={}, attempts={}, reason={}",
                                 audioFile, attempts, rootMessage(e));
-                        return null;
+                        return TranscriptionResult.failed(rootMessage(e));
                     }
                     log.warn("[MediaAsrService] ASR attempt failed, audioFile={}, attempt={}/{}, reason={}",
                             audioFile, attempt, attempts, rootMessage(e));
                     sleepBeforeRetry();
                 }
             }
-            return null;
+            return TranscriptionResult.failed("ASR failed without a response");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             log.warn("[MediaAsrService] ASR interrupted, audioFile={}", audioFile);
-            return null;
+            return TranscriptionResult.failed("ASR interrupted");
         } finally {
             if (acquired) {
                 asrSemaphore().release();
@@ -88,7 +92,7 @@ public class MediaAsrService {
         }
     }
 
-    private String doTranscribe(Path audioFile) {
+    private TranscriptionResult doTranscribe(Path audioFile) {
         MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
         body.add("model", model);
         body.add("file", new FileSystemResource(audioFile));
@@ -102,17 +106,16 @@ public class MediaAsrService {
                 .body(JsonNode.class);
         String errorMessage = extractErrorMessage(response);
         if (errorMessage != null) {
-            log.warn("[MediaAsrService] ASR returned error body, audioFile={}, error={}",
-                    audioFile, errorMessage);
-            return null;
+            throw new IllegalStateException("ASR returned error body: " + errorMessage);
         }
         String text = extractText(response);
         String result = sanitize(text);
         if (result == null) {
-            log.warn("[MediaAsrService] ASR returned empty text, audioFile={}, response={}",
+            log.info("[MediaAsrService] ASR returned empty text, audioFile={}, response={}",
                     audioFile, response);
+            return TranscriptionResult.empty();
         }
-        return result;
+        return TranscriptionResult.success(result);
     }
 
     private void sleepBeforeRetry() {
@@ -238,9 +241,30 @@ public class MediaAsrService {
 
     private String rootMessage(Throwable throwable) {
         Throwable current = throwable;
-        while (current.getCause() != null) {
+        while (current != null && current.getCause() != null) {
             current = current.getCause();
         }
-        return current.getMessage();
+        return current != null && current.getMessage() != null
+                ? current.getMessage() : String.valueOf(throwable);
+    }
+
+    public record TranscriptionResult(TranscriptionStatus status, String text, String error) {
+        public static TranscriptionResult success(String text) {
+            return new TranscriptionResult(TranscriptionStatus.SUCCESS, text, null);
+        }
+
+        public static TranscriptionResult empty() {
+            return new TranscriptionResult(TranscriptionStatus.EMPTY, null, null);
+        }
+
+        public static TranscriptionResult failed(String error) {
+            return new TranscriptionResult(TranscriptionStatus.FAILED, null, error);
+        }
+    }
+
+    public enum TranscriptionStatus {
+        SUCCESS,
+        EMPTY,
+        FAILED
     }
 }

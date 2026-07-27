@@ -1,8 +1,10 @@
 package com.idata.profile.entity.content;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.idata.profile.infra.mybatis.JsonbStringTypeHandler;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -10,7 +12,7 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 @Data
-@TableName("media_assets")
+@TableName(value = "media_assets", autoResultMap = true)
 public class MediaAsset {
 
     @TableId(type = IdType.ASSIGN_UUID)
@@ -35,6 +37,12 @@ public class MediaAsset {
     @Deprecated
     private String ocrText;
     private String asrText;
+    private String asrStatus;
+    private Integer asrAttempts;
+    private String asrLastError;
+    private OffsetDateTime asrUpdatedAt;
+    @TableField(typeHandler = JsonbStringTypeHandler.class)
+    private String asrSegments;
     private String captionText;
     private String translatedOcrText;
     private String translatedAsrText;
