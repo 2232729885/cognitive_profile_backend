@@ -73,6 +73,7 @@ public class MediaContent {
 
     private String humanReviewStatus;
     private Boolean propagationSyncedToNeo4j;
+    private Boolean mentionsSyncedToNeo4j;
 
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;

@@ -14,6 +14,7 @@ import com.idata.profile.mapper.account.SocialAccountMapper;
 import com.idata.profile.mapper.content.MediaContentMapper;
 import com.idata.profile.mapper.raw.RawRecordMapper;
 import com.idata.profile.mapper.task.PipelineTaskMapper;
+import com.idata.profile.service.ContentMentionSyncService;
 import com.idata.profile.service.EntityResolutionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -43,6 +44,7 @@ public class T2ExtractionStep {
     private final PipelineTaskMapper pipelineTaskMapper;
     private final Neo4jGraphService neo4jGraphService;
     private final SocialAccountMapper socialAccountMapper;
+    private final ContentMentionSyncService contentMentionSyncService;
     private final EntityResolutionService entityResolutionService;
 
     @Value("${pipeline.t2.min-text-length:20}")
@@ -349,7 +351,7 @@ public class T2ExtractionStep {
             if (resolved == null || !hasText(resolved.getNodeId()) || !hasText(resolved.getLabel())) {
                 continue;
             }
-            String predicate = "event".equals(resolved.getEntityType()) ? "DESCRIBES" : "MENTIONS";
+            String predicate = "event".equals(resolved.getEntityType()) ? "DESCRIBES" : "REFERENCE";
             String key = predicate + ":" + resolved.getLabel() + ":" + resolved.getNodeId();
             ContentEntityEvidence evidence = result.computeIfAbsent(key,
                     ignored -> new ContentEntityEvidence(predicate, resolved.getLabel(), resolved.getNodeId()));
@@ -376,6 +378,10 @@ public class T2ExtractionStep {
                         "PUBLISHED_BY",
                         Map.of("source", "backend_structural",
                                 "extraction_method", "author_field_lookup"));
+            }
+
+            if (contentMentionSyncService.syncMentionedAccountRelations(content, "mentions_field")) {
+                mediaContentMapper.markMentionsSyncedToNeo4j(content.getId());
             }
 
             boolean allSynced = true;

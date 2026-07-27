@@ -14,6 +14,7 @@ import com.idata.profile.infra.milvus.MilvusVectorService;
 import com.idata.profile.infra.neo4j.Neo4jGraphService;
 import com.idata.profile.mapper.dedup.EntityFusionRecordMapper;
 import com.idata.profile.mapper.graph.EventMapper;
+import com.idata.profile.mapper.graph.LocationMapper;
 import com.idata.profile.mapper.graph.OrganizationMapper;
 import com.idata.profile.mapper.graph.PersonMapper;
 import lombok.Data;
@@ -49,6 +50,7 @@ public class EntityResolutionService {
     private final PersonMapper personMapper;
     private final OrganizationMapper organizationMapper;
     private final EventMapper eventMapper;
+    private final LocationMapper locationMapper;
     private final Neo4jGraphService neo4jGraphService;
     private final EntityEsService entityEsService;
     private final MilvusVectorService milvusVectorService;
@@ -228,11 +230,12 @@ public class EntityResolutionService {
                 ? BigDecimal.valueOf(entity.getImportanceScore()) : BigDecimal.ZERO;
 
         switch (entityType) {
-            case "person" -> personMapper.insertEntity(canonicalName, importanceScore);
-            case "organization" -> organizationMapper.insertEntity(canonicalName, importanceScore);
+            case "person" -> personMapper.insertEntity(canonicalName, aliasesArray(entity), importanceScore);
+            case "organization" -> organizationMapper.insertEntity(canonicalName, aliasesArray(entity), importanceScore);
             case "event" -> eventMapper.insertEntity(parseUuid(nodeId), canonicalName,
                     eventType(entity), importanceScore);
-            case "location" -> log.debug("Location mention is stored in Neo4j only, name={}", canonicalName);
+            case "location" -> locationMapper.insertEntity(parseUuid(nodeId), canonicalName,
+                    aliasesArray(entity), locationType(entity), locationCountry(entity), importanceScore);
             default -> log.warn("Unknown extracted entity type: {}", entity.getType());
         }
     }
@@ -260,15 +263,17 @@ public class EntityResolutionService {
         }
         Map<String, Object> props = new HashMap<>();
         props.put("canonicalName", entityName(entity));
-        if (entity.getAliases() != null && !entity.getAliases().isEmpty()) {
-            props.put("aliases", entity.getAliases().toArray(new String[0]));
-        }
+        props.put("aliases", aliasesArray(entity));
         if (entity.getImportanceScore() != null) {
             props.put("importanceScore", entity.getImportanceScore());
         }
         if ("event".equals(entity.getType())) {
             putIfHasText(props, "eventType", eventType(entity));
             putIfHasText(props, "eventTimeStart", stringValue(entity.getAttributes().get("eventTimeStart")));
+        }
+        if ("location".equals(entity.getType())) {
+            putIfHasText(props, "locationType", locationType(entity));
+            putIfHasText(props, "country", locationCountry(entity));
         }
         props.put("source", source);
         neo4jGraphService.mergeNode(label, nodeId, props);
@@ -347,6 +352,10 @@ public class EntityResolutionService {
             return;
         }
         text.append(field).append(": ").append(value.trim()).append('\n');
+    }
+
+    private String[] aliasesArray(T2ExtractResponse.ExtractedMention entity) {
+        return entity.getAliases() == null ? new String[0] : entity.getAliases().toArray(String[]::new);
     }
 
     private void insertFusionRecord(T2ExtractResponse.ExtractedMention mention,
@@ -481,6 +490,26 @@ public class EntityResolutionService {
         }
         String eventType = AllowedEventTypes.normalize(stringValue(entity.getAttributes().get("eventType")));
         return eventType != null ? eventType : "other";
+    }
+
+    private String locationType(T2ExtractResponse.ExtractedMention entity) {
+        if (entity == null || entity.getAttributes() == null) {
+            return null;
+        }
+        return firstText(
+                stringValue(entity.getAttributes().get("locationType")),
+                stringValue(entity.getAttributes().get("type")),
+                stringValue(entity.getAttributes().get("location_type")));
+    }
+
+    private String locationCountry(T2ExtractResponse.ExtractedMention entity) {
+        if (entity == null || entity.getAttributes() == null) {
+            return null;
+        }
+        return firstText(
+                stringValue(entity.getAttributes().get("country")),
+                stringValue(entity.getAttributes().get("countryOrRegion")),
+                stringValue(entity.getAttributes().get("country_or_region")));
     }
 
     private UUID parseUuid(String value) {

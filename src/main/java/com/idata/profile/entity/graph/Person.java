@@ -1,8 +1,10 @@
 package com.idata.profile.entity.graph;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.idata.profile.infra.mybatis.StringArrayTypeHandler;
 import lombok.Data;
 
 import java.time.OffsetDateTime;
@@ -21,13 +23,15 @@ import java.util.UUID;
  * 对应表：persons
  */
 @Data
-@TableName("persons")
+@TableName(value = "persons", autoResultMap = true)
 public class Person {
 
     @TableId(type = IdType.ASSIGN_UUID)
     private UUID id;   // 与Neo4j Person节点id一致
 
     private String canonicalName;       // 标准化姓名，用于ES检索
+    @TableField(typeHandler = StringArrayTypeHandler.class)
+    private String[] aliases;
     private java.math.BigDecimal importanceScore;  // 0-100，影响画像生成优先级
     private Boolean isHighValue;        // 高价值目标，定时任务优先生成画像
     private Integer contentCount;       // 出现在多少条内容中，T2识别时+1

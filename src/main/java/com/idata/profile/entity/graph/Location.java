@@ -5,33 +5,28 @@ import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.idata.profile.infra.mybatis.StringArrayTypeHandler;
+import com.idata.profile.infra.mybatis.UuidArrayTypeHandler;
 import lombok.Data;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
-/**
- * L2实体层（精简）：组织实体索引表，详细属性存Neo4j。
- * 设计说明同 Person，见该类注释。
- *
- * 对应表：organizations
- */
 @Data
-@TableName(value = "organizations", autoResultMap = true)
-public class Organization {
+@TableName(value = "locations", autoResultMap = true)
+public class Location {
 
-    @TableId(type = IdType.ASSIGN_UUID)
-    private UUID id;   // 与Neo4j Organization节点id一致
+    @TableId(type = IdType.INPUT)
+    private UUID id;
 
     private String canonicalName;
     @TableField(typeHandler = StringArrayTypeHandler.class)
     private String[] aliases;
-    private String orgType;             // government|media|ngo|political_party|military|company|other
+    private String locationType;
     private String country;
     private java.math.BigDecimal importanceScore;
-    private Boolean isHighValue;
     private Integer contentCount;
     private String dedupStatus;
+    @TableField(typeHandler = UuidArrayTypeHandler.class)
     private UUID[] mergeHistory;
 
     private OffsetDateTime createdAt;

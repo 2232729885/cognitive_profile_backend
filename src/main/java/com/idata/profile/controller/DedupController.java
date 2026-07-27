@@ -30,7 +30,7 @@ public class DedupController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         if (!fusionService.isValidEntityType(entityType)) {
-            return Result.fail("INVALID_PARAM", "entityType只能是person/organization/event/narrative");
+            return Result.fail("INVALID_PARAM", "entityType只能是person/organization/event/location/narrative");
         }
         return Result.ok(fusionService.listFusionRecords(entityType, page, size));
     }
@@ -41,7 +41,7 @@ public class DedupController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         if (!fusionService.isValidEntityType(entityType)) {
-            return Result.fail("INVALID_PARAM", "entityType只能是person/organization/event/narrative");
+            return Result.fail("INVALID_PARAM", "entityType只能是person/organization/event/location/narrative");
         }
         return Result.ok(fusionService.listPendingReview(entityType, page, size));
     }

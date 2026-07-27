@@ -26,7 +26,7 @@ T2  action=extract_entities     ← 算法组实现
     │     MERGE(score≥0.9)  → 合并进已有实体节点，写 entity_fusion_records
     │     REVIEW(0.6~0.9)   → 写 entity_fusion_records 待审核（前端 DedupView 人工审核）
     │     CREATE(<0.6或无候选) → 新建实体（PG + Neo4j + ES索引 + Milvus向量）
-    └─④ 关系落图：predicate 校验（必须在16个关系词表内）→ 查重 → 创建/追加证据
+    └─④ 关系落图：predicate 校验（必须在17个关系词表内）→ 查重 → 创建/追加证据
     │
     ▼
 T4 向量化索引（现有不变）
@@ -161,7 +161,7 @@ T1 annotate_account（判断账号类别）
 | `attributes` | 实体扩展属性，`event` 类型时包含 `eventType`/`eventTimeStart`，其他类型可为空对象 `{}` |
 
 `event.attributes.eventType` 取值范围：`politics` / `military` / `economy` / `society` / `culture` / `science_tech` / `security` / `nature` / `other`。
-| `predicate` | 关系类型，必须在 `docs/关系词表与头尾实体类型说明.md` 定义的16个关系类型内取值，不在词表内的会被后端过滤掉，不会写入图谱 |
+| `predicate` | 关系类型，必须在 `docs/关系词表与头尾实体类型说明.md` 定义的17个关系类型内取值，不在词表内的会被后端过滤掉，不会写入图谱 |
 
 ---
 
@@ -244,9 +244,9 @@ T1 annotate_account（判断账号类别）
 
 - **候选召回**（`EntityCandidateRetrievalService`）：ES 名称/别名模糊匹配 + Milvus 向量ANN，合并去重返回 TopK。
 - **实体解析编排**（`EntityResolutionService`）：调 T3、按 action 分层处理、写 PG/Neo4j/ES/Milvus，这套逻辑内容抽取场景和账号身份识别场景共用同一份实现。
-- **关系落图**：`predicate` 校验（对照 `docs/关系词表与头尾实体类型说明.md` 的16个关系类型）→ Neo4j 查重（`relationExists`）→ 不存在则创建，已存在则追加证据。
+- **关系落图**：`predicate` 校验（对照 `docs/关系词表与头尾实体类型说明.md` 的17个关系类型）→ Neo4j 查重（`relationExists`）→ 不存在则创建，已存在则追加证据。
 - **`HAS_ACCOUNT` 关系**：由账号身份识别流程（`SocialAccountIdentityJob`）产出，写 `(Person|Organization)-[HAS_ACCOUNT]->(SocialAccount)`，同时把匹配/新建的实体ID写回 `social_accounts.entity_person_id`/`entity_org_id`。
-- **内容与实体的关系**：T2 每条内容里成功解析（MERGE/REVIEW/CREATE 任意一种）出来的实体，后端会自动补一条内容指向该实体的关系，不需要算法组在 `relations[]` 里额外输出——`event` 类型走 `(MediaContent)-[DESCRIBES]->(Event)`，`person`/`organization`/`location` 类型走 `(MediaContent)-[MENTIONS]->(实体)`。这样图谱上才能查"这个事件被哪些内容描述过""这个人被哪些内容提到过"，算法组不用关心这一步，只要 `entities[]` 抽取完整、`canonicalName` 准确即可。
+- **内容与实体的关系**：T2 每条内容里成功解析（MERGE/REVIEW/CREATE 任意一种）出来的实体，后端会自动补一条内容指向该实体的关系，不需要算法组在 `relations[]` 里额外输出——`event` 类型走 `(MediaContent)-[DESCRIBES]->(Event)`，`person`/`organization`/`location` 类型走 `(MediaContent)-[REFERENCE]->(实体)`。`MENTIONS` 只用于 `media_contents.mentions` 字段提及账号时建立 `(MediaContent)-[MENTIONS]->(SocialAccount)`。算法组不用关心这一步，只要 `entities[]` 抽取完整、`canonicalName` 准确即可。
 
 ---
 
@@ -308,4 +308,4 @@ score < 0.60         → 新建实体（CREATE）
 - ~~`sourceName`/`targetName`/`relationType` 三元组直出~~ → 改成 mention 级 + predicate。
 - ~~`events` 独立数组~~ → event 现在混在 `entities` 里，用 `type=event` + `attributes` 区分。
 - ~~`Narrative` 实体类型~~ → 已从图谱里去掉，不再是基础实体类，T2 不应该再输出 `type=narrative` 的实体。
-- ~~`AMPLIFIES`/`HAS_MEDIA` 关系类型~~ → 已从16个关系词表里移除。
+- ~~`AMPLIFIES`/`HAS_MEDIA` 关系类型~~ → 已从17个关系词表里移除。

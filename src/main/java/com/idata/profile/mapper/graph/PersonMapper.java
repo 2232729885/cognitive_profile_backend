@@ -30,15 +30,18 @@ public interface PersonMapper extends BaseMapper<Person> {
 
     @Insert("""
             INSERT INTO persons (
-                id, canonical_name, importance_score, is_high_value,
+                id, canonical_name, aliases, importance_score, is_high_value,
                 content_count, dedup_status, first_seen_at, last_seen_at
             )
             VALUES (
-                gen_random_uuid(), #{canonicalName}, #{importanceScore},
+                gen_random_uuid(), #{canonicalName},
+                #{aliases,typeHandler=com.idata.profile.infra.mybatis.StringArrayTypeHandler},
+                #{importanceScore},
                 FALSE, 1, 'pending', NOW(), NOW()
             )
             """)
     int insertEntity(@Param("canonicalName") String canonicalName,
+                     @Param("aliases") String[] aliases,
                      @Param("importanceScore") BigDecimal importanceScore);
 
     @Select("SELECT COUNT(*) FROM persons WHERE dedup_status = #{dedupStatus}")

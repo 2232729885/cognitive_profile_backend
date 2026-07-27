@@ -144,7 +144,7 @@ target_languages VARCHAR(16)[] · target_regions VARCHAR(16)[] · collector_vers
 raw_payload JSONB · created_at
 ```
 
-### persons / organizations / events（三表结构高度相似，精简字段）
+### persons / organizations / events / locations（实体表结构高度相似，精简字段）
 ```
 persons:        id · canonical_name VARCHAR(512) NOT NULL · importance_score NUMERIC(5,2) NOT NULL DEFAULT 0
                  is_high_value BOOLEAN NOT NULL DEFAULT FALSE · content_count INTEGER NOT NULL DEFAULT 0 · dedup_status
@@ -342,7 +342,7 @@ function runT2(task):
     response = agentProxyClient.callT2(mc.bodyText, mc.entitiesHint, mc.narrativeHint,
                                          mc.hashtags, mc.mentions, mc.parentContentId, mc.repostOfContentId)
     for each entity in response.entities:
-        insertEntity(entity)  // persons/organizations/events/narratives 精简字段直接 INSERT，dedup_status='pending'
+        insertEntity(entity)  // persons/organizations/events/locations/narratives 精简字段直接 INSERT，dedup_status='pending'
     if mc.authorAccountId is null and response.resolvedAuthorAccountId:
         mediaContentMapper.update(mc.id, {authorAccountId: response.resolvedAuthorAccountId})
     rawRecordMapper.update(task.rawRecordId, {t2Output: response.raw, pipelineStatus: 'T2_DONE'})

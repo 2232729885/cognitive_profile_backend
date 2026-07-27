@@ -7,6 +7,7 @@ import com.idata.profile.batch.dedup.EntityDeduplicationJob;
 import com.idata.profile.entity.dedup.EntityFusionRecord;
 import com.idata.profile.mapper.dedup.EntityFusionRecordMapper;
 import com.idata.profile.mapper.graph.EventMapper;
+import com.idata.profile.mapper.graph.LocationMapper;
 import com.idata.profile.mapper.graph.NarrativeMapper;
 import com.idata.profile.mapper.graph.OrganizationMapper;
 import com.idata.profile.mapper.graph.PersonMapper;
@@ -26,12 +27,13 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class FusionService {
 
-    private static final Set<String> ENTITY_TYPES = Set.of("person", "organization", "event", "narrative");
+    private static final Set<String> ENTITY_TYPES = Set.of("person", "organization", "event", "location", "narrative");
 
     private final EntityFusionRecordMapper entityFusionRecordMapper;
     private final PersonMapper personMapper;
     private final OrganizationMapper organizationMapper;
     private final EventMapper eventMapper;
+    private final LocationMapper locationMapper;
     private final NarrativeMapper narrativeMapper;
     private final EntityDeduplicationJob entityDeduplicationJob;
 
@@ -78,6 +80,7 @@ public class FusionService {
         result.put("person", statusMap(personMapper.selectDedupStatusStats()));
         result.put("organization", statusMap(organizationMapper.selectDedupStatusStats()));
         result.put("event", statusMap(eventMapper.selectDedupStatusStats()));
+        result.put("location", statusMap(locationMapper.selectDedupStatusStats()));
         result.put("narrative", statusMap(narrativeMapper.selectDedupStatusStats()));
         OffsetDateTime lastJobRunAt = entityFusionRecordMapper.selectLastCreatedAt();
         result.put("lastJobRunAt", lastJobRunAt == null ? null : lastJobRunAt.toString());

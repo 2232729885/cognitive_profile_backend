@@ -56,6 +56,14 @@ public interface MediaContentMapper extends BaseMapper<MediaContent> {
     @Update("UPDATE media_contents SET propagation_synced_to_neo4j = TRUE WHERE id = #{id}")
     int markPropagationSyncedToNeo4j(@Param("id") UUID id);
 
+    @Select("SELECT * FROM media_contents WHERE mentions_synced_to_neo4j = FALSE " +
+            "AND mentions IS NOT NULL AND cardinality(mentions) > 0 " +
+            "ORDER BY created_at ASC LIMIT #{limit}")
+    List<MediaContent> selectPendingMentionSync(@Param("limit") int limit);
+
+    @Update("UPDATE media_contents SET mentions_synced_to_neo4j = TRUE WHERE id = #{id}")
+    int markMentionsSyncedToNeo4j(@Param("id") UUID id);
+
     @Update("""
             UPDATE media_contents
             SET translated_title = #{translatedTitle},
@@ -95,4 +103,9 @@ public interface MediaContentMapper extends BaseMapper<MediaContent> {
             "     OR quoted_content_id IS NOT NULL OR root_content_id IS NOT NULL) " +
             "AND created_at < NOW() - (#{days} || ' days')::INTERVAL")
     long countPendingPropagationOlderThan(@Param("days") int days);
+
+    @Select("SELECT COUNT(*) FROM media_contents WHERE mentions_synced_to_neo4j = FALSE " +
+            "AND mentions IS NOT NULL AND cardinality(mentions) > 0 " +
+            "AND created_at < NOW() - (#{days} || ' days')::INTERVAL")
+    long countPendingMentionSyncOlderThan(@Param("days") int days);
 }

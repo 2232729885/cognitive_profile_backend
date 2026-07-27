@@ -214,7 +214,7 @@ public class LlmAgentController {
             Rules:
             - relation subjectMentionId and objectMentionId must refer to entities[].mentionId.
             - predicate must be one of these valid values: HAS_ACCOUNT, BELONGS_TO, PART_OF, PUBLISHED_BY, REPLY_TO,
-              REPOSTS, MENTIONS, DESCRIBES, EVENT_OCCURRED_AT, EVENT_INVOLVES_ENTITY, LOCATED_IN, SUPPORTS,
+              REPOSTS, MENTIONS, REFERENCE, DESCRIBES, EVENT_OCCURRED_AT, EVENT_INVOLVES_ENTITY, LOCATED_IN, SUPPORTS,
               OPPOSES, QUESTIONS, INCITES, DE_ESCALATES.
             - Events are entities with type="event"; put eventType/eventTimeStart in attributes.
             - Return empty arrays when no entity or relation exists.

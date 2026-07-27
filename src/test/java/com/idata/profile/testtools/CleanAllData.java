@@ -58,6 +58,7 @@ public class CleanAllData {
             "person_profiles",
             "narratives",
             "events",
+            "locations",
             "organizations",
             "persons",
             "media_assets",

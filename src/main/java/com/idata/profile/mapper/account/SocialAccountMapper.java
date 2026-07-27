@@ -17,6 +17,21 @@ public interface SocialAccountMapper extends BaseMapper<SocialAccount> {
     SocialAccount selectByPlatformAndUserId(@Param("platform") String platform,
                                             @Param("platformUserId") String platformUserId);
 
+    @Select("""
+            SELECT * FROM social_accounts
+            WHERE platform = #{platform}
+              AND (
+                lower(platform_user_id) = lower(#{identifier})
+                OR lower(handle) = lower(#{identifier})
+                OR lower(handle) = lower(#{handleWithAt})
+              )
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """)
+    SocialAccount selectMentionedAccount(@Param("platform") String platform,
+                                         @Param("identifier") String identifier,
+                                         @Param("handleWithAt") String handleWithAt);
+
     @Select("SELECT * FROM social_accounts WHERE entity_person_id = #{personId}")
     List<SocialAccount> selectByEntityPersonId(@Param("personId") UUID personId);
 

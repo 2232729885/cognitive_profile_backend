@@ -159,6 +159,7 @@ CREATE TABLE IF NOT EXISTS media_contents (
     t1_annotated_at         TIMESTAMPTZ,
     human_review_status     VARCHAR(32),
     propagation_synced_to_neo4j BOOLEAN NOT NULL DEFAULT FALSE,
+    mentions_synced_to_neo4j BOOLEAN NOT NULL DEFAULT FALSE,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     t1_annotation           JSONB,
@@ -204,6 +205,7 @@ COMMENT ON COLUMN media_contents.news_tags            IS '新闻标签数组，�
 COMMENT ON COLUMN media_contents.t1_annotated_at      IS 'T1标注完成时间';
 COMMENT ON COLUMN media_contents.human_review_status  IS '人工复核状态：pending | confirmed | modified | rejected';
 COMMENT ON COLUMN media_contents.propagation_synced_to_neo4j IS '传播链关系是否已同步到Neo4j。对端内容尚未入库时保持false，由ContentPropagationBackfillJob后续回填';
+COMMENT ON COLUMN media_contents.mentions_synced_to_neo4j IS 'mentions字段提及账号关系是否已同步到Neo4j。账号尚未入库时保持false，由ContentMentionBackfillJob后续回填';
 COMMENT ON COLUMN media_contents.t1_annotation        IS 'T1完整标注结果JSON（当前schema_version见字段内容本身，不体现在列名里）';
 COMMENT ON COLUMN media_contents.source_media_asset_ids IS '社交内容消息里 data.media_asset_ids 原始字符串ID列表，用于反查关联 media_assets.source_asset_id';
 
@@ -218,6 +220,9 @@ CREATE INDEX IF NOT EXISTS idx_mc_hashtags     ON media_contents USING GIN(hasht
 CREATE INDEX IF NOT EXISTS idx_mc_pending_propagation_sync
     ON media_contents(propagation_synced_to_neo4j)
     WHERE propagation_synced_to_neo4j = FALSE;
+CREATE INDEX IF NOT EXISTS idx_mc_pending_mentions_sync
+    ON media_contents(mentions_synced_to_neo4j)
+    WHERE mentions_synced_to_neo4j = FALSE;
 
 CREATE TRIGGER trg_media_contents_updated_at
     BEFORE UPDATE ON media_contents
@@ -529,8 +534,9 @@ CREATE INDEX IF NOT EXISTS idx_ct_languages ON collection_tasks USING GIN(target
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS persons (
-                                       id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     canonical_name      VARCHAR(512) NOT NULL,
+    aliases             TEXT[]      NOT NULL DEFAULT ARRAY[]::TEXT[],
     importance_score    NUMERIC(5,2) NOT NULL DEFAULT 0,
     is_high_value       BOOLEAN     NOT NULL DEFAULT FALSE,
     content_count       INTEGER     NOT NULL DEFAULT 0,
@@ -545,6 +551,7 @@ CREATE TABLE IF NOT EXISTS persons (
 COMMENT ON TABLE  persons                  IS 'L2实体层（精简）：人物实体索引表。详细属性（别名/国籍/职业等）存Neo4j，这里只存统计和检索需要的核心字段';
 COMMENT ON COLUMN persons.id               IS '主键，UUID，与Neo4j Person节点id保持一致';
 COMMENT ON COLUMN persons.canonical_name   IS '标准化姓名，T2识别后写入；允许同名多记录，后台融合任务处理归一';
+COMMENT ON COLUMN persons.aliases          IS '别名/其他表达方式，来自T2抽取结果，用于候选召回和消歧';
 COMMENT ON COLUMN persons.importance_score IS '重要性评分0-100，影响画像补全优先级和检索排序';
 COMMENT ON COLUMN persons.is_high_value    IS '是否为高价值目标，T6识别后置true，触发T5优先补全画像';
 COMMENT ON COLUMN persons.content_count    IS '出现在多少条媒体内容中，每次T2识别到时+1';
@@ -554,6 +561,7 @@ COMMENT ON COLUMN persons.last_seen_at     IS '最近一次被T2识别到的时�
 COMMENT ON COLUMN persons.merge_history    IS 'EntityDeduplicationJob融合时记录被合并掉的旧实体UUID数组，用于ID追溯';
 
 CREATE INDEX IF NOT EXISTS idx_persons_name       ON persons(canonical_name);
+CREATE INDEX IF NOT EXISTS idx_persons_aliases    ON persons USING GIN(aliases);
 CREATE INDEX IF NOT EXISTS idx_persons_high_value ON persons(is_high_value) WHERE is_high_value = TRUE;
 CREATE INDEX IF NOT EXISTS idx_persons_importance ON persons(importance_score DESC);
 CREATE INDEX IF NOT EXISTS idx_persons_dedup      ON persons(dedup_status);
@@ -563,8 +571,9 @@ CREATE TRIGGER trg_persons_updated_at
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE TABLE IF NOT EXISTS organizations (
-                                             id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     canonical_name      VARCHAR(512) NOT NULL,
+    aliases             TEXT[]      NOT NULL DEFAULT ARRAY[]::TEXT[],
     org_type            VARCHAR(64),
     country             VARCHAR(64),
     importance_score    NUMERIC(5,2) NOT NULL DEFAULT 0,
@@ -579,6 +588,7 @@ CREATE TABLE IF NOT EXISTS organizations (
 COMMENT ON TABLE  organizations                IS 'L2实体层（精简）：组织实体索引表。详细属性存Neo4j';
 COMMENT ON COLUMN organizations.id             IS '主键，UUID，与Neo4j Organization节点id保持一致';
 COMMENT ON COLUMN organizations.canonical_name IS '标准化组织名称';
+COMMENT ON COLUMN organizations.aliases        IS '别名/其他表达方式，来自T2抽取结果，用于候选召回和消歧';
 COMMENT ON COLUMN organizations.org_type       IS '组织类型：government | media | ngo | political_party | military | company | other';
 COMMENT ON COLUMN organizations.country        IS '所属国家/地区';
 COMMENT ON COLUMN organizations.importance_score IS '重要性评分0-100';
@@ -588,6 +598,7 @@ COMMENT ON COLUMN organizations.dedup_status   IS '实体去重融合状态：pe
 COMMENT ON COLUMN organizations.merge_history  IS 'EntityDeduplicationJob融合时记录被合并掉的旧实体UUID数组';
 
 CREATE INDEX IF NOT EXISTS idx_orgs_name       ON organizations(canonical_name);
+CREATE INDEX IF NOT EXISTS idx_orgs_aliases    ON organizations USING GIN(aliases);
 CREATE INDEX IF NOT EXISTS idx_orgs_type       ON organizations(org_type);
 CREATE INDEX IF NOT EXISTS idx_orgs_importance ON organizations(importance_score DESC);
 CREATE INDEX IF NOT EXISTS idx_orgs_dedup      ON organizations(dedup_status);
@@ -646,6 +657,42 @@ CREATE TRIGGER trg_events_updated_at
     BEFORE UPDATE ON events
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
+CREATE TABLE IF NOT EXISTS locations (
+    id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    canonical_name      VARCHAR(512) NOT NULL,
+    aliases             TEXT[]      NOT NULL DEFAULT ARRAY[]::TEXT[],
+    location_type       VARCHAR(64),
+    country             VARCHAR(64),
+    importance_score    NUMERIC(5,2) NOT NULL DEFAULT 0,
+    content_count       INTEGER     NOT NULL DEFAULT 0,
+    dedup_status        VARCHAR(20) NOT NULL DEFAULT 'pending',
+    merge_history       UUID[],
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+COMMENT ON TABLE  locations                IS 'L2实体层（精简）：地点实体索引表。详细属性存Neo4j';
+COMMENT ON COLUMN locations.id             IS '主键，UUID，与Neo4j Location节点id保持一致';
+COMMENT ON COLUMN locations.canonical_name IS '标准化地点名称';
+COMMENT ON COLUMN locations.aliases        IS '别名/其他表达方式，来自T2抽取结果，用于候选召回和消歧';
+COMMENT ON COLUMN locations.location_type  IS '地点类型，如 country|region|city|facility|other';
+COMMENT ON COLUMN locations.country        IS '所属国家/地区';
+COMMENT ON COLUMN locations.importance_score IS '重要性评分0-100';
+COMMENT ON COLUMN locations.content_count  IS '出现在多少条媒体内容中';
+COMMENT ON COLUMN locations.dedup_status   IS '实体去重融合状态：pending=待融合；deduplicated=已被融合处理；canonical=融合后保留的主记录';
+COMMENT ON COLUMN locations.merge_history  IS 'EntityDeduplicationJob融合时记录被合并掉的旧实体UUID数组';
+
+CREATE INDEX IF NOT EXISTS idx_locations_name       ON locations(canonical_name);
+CREATE INDEX IF NOT EXISTS idx_locations_aliases    ON locations USING GIN(aliases);
+CREATE INDEX IF NOT EXISTS idx_locations_type       ON locations(location_type);
+CREATE INDEX IF NOT EXISTS idx_locations_country    ON locations(country);
+CREATE INDEX IF NOT EXISTS idx_locations_importance ON locations(importance_score DESC);
+CREATE INDEX IF NOT EXISTS idx_locations_dedup      ON locations(dedup_status);
+
+CREATE TRIGGER trg_locations_updated_at
+    BEFORE UPDATE ON locations
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
 CREATE TABLE IF NOT EXISTS narratives (
                                           id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     canonical_label     VARCHAR(512) NOT NULL,
@@ -693,9 +740,15 @@ CREATE TRIGGER trg_narratives_updated_at
 -- EntityDeduplicationJob performs background consolidation.
 ALTER TABLE persons ADD COLUMN IF NOT EXISTS
     dedup_status VARCHAR(20) NOT NULL DEFAULT 'pending';
+ALTER TABLE persons ADD COLUMN IF NOT EXISTS
+    aliases TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS
     dedup_status VARCHAR(20) NOT NULL DEFAULT 'pending';
+ALTER TABLE organizations ADD COLUMN IF NOT EXISTS
+    aliases TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
 ALTER TABLE events ADD COLUMN IF NOT EXISTS
+    dedup_status VARCHAR(20) NOT NULL DEFAULT 'pending';
+ALTER TABLE locations ADD COLUMN IF NOT EXISTS
     dedup_status VARCHAR(20) NOT NULL DEFAULT 'pending';
 ALTER TABLE narratives ADD COLUMN IF NOT EXISTS
     dedup_status VARCHAR(20) NOT NULL DEFAULT 'pending';
@@ -706,6 +759,7 @@ DROP INDEX IF EXISTS uq_narratives_canonical_label;
 CREATE INDEX IF NOT EXISTS idx_persons_dedup ON persons(dedup_status);
 CREATE INDEX IF NOT EXISTS idx_orgs_dedup ON organizations(dedup_status);
 CREATE INDEX IF NOT EXISTS idx_events_dedup ON events(dedup_status);
+CREATE INDEX IF NOT EXISTS idx_locations_dedup ON locations(dedup_status);
 CREATE INDEX IF NOT EXISTS idx_narratives_dedup ON narratives(dedup_status);
 -- ============================================================
 -- L4：画像应用层

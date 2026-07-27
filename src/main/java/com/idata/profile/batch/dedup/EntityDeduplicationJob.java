@@ -10,6 +10,7 @@ import com.idata.profile.common.util.StableUuidUtil;
 import com.idata.profile.entity.account.SocialAccount;
 import com.idata.profile.entity.dedup.EntityFusionRecord;
 import com.idata.profile.entity.graph.Event;
+import com.idata.profile.entity.graph.Location;
 import com.idata.profile.entity.graph.Narrative;
 import com.idata.profile.entity.graph.Organization;
 import com.idata.profile.entity.graph.Person;
@@ -20,6 +21,7 @@ import com.idata.profile.infra.neo4j.Neo4jGraphService;
 import com.idata.profile.mapper.account.SocialAccountMapper;
 import com.idata.profile.mapper.dedup.EntityFusionRecordMapper;
 import com.idata.profile.mapper.graph.EventMapper;
+import com.idata.profile.mapper.graph.LocationMapper;
 import com.idata.profile.mapper.graph.NarrativeMapper;
 import com.idata.profile.mapper.graph.OrganizationMapper;
 import com.idata.profile.mapper.graph.PersonMapper;
@@ -53,6 +55,7 @@ public class EntityDeduplicationJob {
     private final PersonMapper personMapper;
     private final OrganizationMapper organizationMapper;
     private final EventMapper eventMapper;
+    private final LocationMapper locationMapper;
     private final NarrativeMapper narrativeMapper;
     private final SocialAccountMapper socialAccountMapper;
     private final EntityFusionRecordMapper entityFusionRecordMapper;
@@ -114,6 +117,7 @@ public class EntityDeduplicationJob {
             exactMerged += deduplicateEntities("person", jobRunId);
             exactMerged += deduplicateEntities("organization", jobRunId);
             exactMerged += deduplicateEntities("event", jobRunId);
+            exactMerged += deduplicateEntities("location", jobRunId);
             exactMerged += deduplicateEntities("narrative", jobRunId);
             log.info("[EntityDeduplicationJob] exact-name stage done, merged={}", exactMerged);
         } else {
@@ -137,6 +141,7 @@ public class EntityDeduplicationJob {
             case "person" -> deduplicatePersons(jobRunId);
             case "organization" -> deduplicateOrganizations(jobRunId);
             case "event" -> deduplicateEvents(jobRunId);
+            case "location" -> deduplicateLocations(jobRunId);
             case "narrative" -> deduplicateNarratives(jobRunId);
             default -> 0;
         };
@@ -238,6 +243,38 @@ public class EntityDeduplicationJob {
         return merged;
     }
 
+    private int deduplicateLocations(UUID jobRunId) {
+        int merged = 0;
+        for (String name : locationMapper.selectDuplicateCanonicalNames(BATCH_LIMIT)) {
+            try {
+                List<Location> pending = locationMapper.selectPendingByCanonicalName(name);
+                if (pending.size() < 2) {
+                    continue;
+                }
+                Location survivor = pending.get(0);
+                List<Location> mergedList = pending.subList(1, pending.size());
+                UUID[] mergedIds = mergedList.stream().map(Location::getId).toArray(UUID[]::new);
+                String[] mergedNames = mergedList.stream().map(Location::getCanonicalName).toArray(String[]::new);
+                int totalContentCount = pending.stream().mapToInt(item -> contentCount(item.getContentCount())).sum();
+
+                locationMapper.updateSurvivorAfterMerge(survivor.getId(), totalContentCount, mergedIds);
+                locationMapper.update(null, new UpdateWrapper<Location>()
+                        .in("id", Arrays.asList(mergedIds))
+                        .set("dedup_status", "deduplicated")
+                        .setSql("updated_at = NOW()"));
+
+                boolean neo4jMerged = mergeNeo4jNodes(mergedIds, survivor.getId(), "Location",
+                        locationProperties(survivor), survivor.getCanonicalName(), "location");
+                insertRecord("location", survivor.getId(), survivor.getCanonicalName(), mergedIds, mergedNames,
+                        survivor.getContentCount(), totalContentCount, neo4jMerged, jobRunId, "exact_name");
+                merged += mergedList.size();
+            } catch (Exception e) {
+                log.warn("[EntityDeduplicationJob] location group failed, canonicalName={}", name, e);
+            }
+        }
+        return merged;
+    }
+
     private int deduplicateNarratives(UUID jobRunId) {
         int merged = 0;
         for (String name : narrativeMapper.selectDuplicateCanonicalNames(BATCH_LIMIT)) {
@@ -272,7 +309,7 @@ public class EntityDeduplicationJob {
 
     private int deduplicateWithT3(UUID jobRunId) {
         int merged = 0;
-        for (String entityType : List.of("person", "organization", "event", "narrative")) {
+        for (String entityType : List.of("person", "organization", "event", "location", "narrative")) {
             merged += resolveEntityTypeWithT3(entityType, jobRunId);
         }
         return merged;
@@ -400,6 +437,7 @@ public class EntityDeduplicationJob {
             case "person" -> personMapper.selectCanonicalIdByName(candidate.getCanonicalName());
             case "organization" -> organizationMapper.selectCanonicalIdByName(candidate.getCanonicalName());
             case "event" -> eventMapper.selectCanonicalIdByName(candidate.getCanonicalName());
+            case "location" -> locationMapper.selectCanonicalIdByName(candidate.getCanonicalName());
             case "narrative" -> narrativeMapper.selectCanonicalIdByLabel(candidate.getCanonicalName());
             default -> null;
         };
@@ -512,6 +550,7 @@ public class EntityDeduplicationJob {
             case "person" -> personMapper.selectByDedupStatus("pending", limit);
             case "organization" -> organizationMapper.selectByDedupStatus("pending", limit);
             case "event" -> eventMapper.selectByDedupStatus("pending", limit);
+            case "location" -> locationMapper.selectByDedupStatus("pending", limit);
             case "narrative" -> narrativeMapper.selectByDedupStatus("pending", limit);
             default -> List.of();
         };
@@ -524,16 +563,23 @@ public class EntityDeduplicationJob {
         if (entity instanceof Person person) {
             candidate.setId(person.getId().toString());
             candidate.setCanonicalName(person.getCanonicalName());
+            candidate.setAliases(aliasesList(person.getAliases()));
             candidate.setImportanceScore(score(person.getImportanceScore()));
             fillSourceIdentifiers(candidate, person);
         } else if (entity instanceof Organization organization) {
             candidate.setId(organization.getId().toString());
             candidate.setCanonicalName(organization.getCanonicalName());
+            candidate.setAliases(aliasesList(organization.getAliases()));
             candidate.setImportanceScore(score(organization.getImportanceScore()));
         } else if (entity instanceof Event event) {
             candidate.setId(event.getId().toString());
             candidate.setCanonicalName(event.getCanonicalName());
             candidate.setImportanceScore(score(event.getImportanceScore()));
+        } else if (entity instanceof Location location) {
+            candidate.setId(location.getId().toString());
+            candidate.setCanonicalName(location.getCanonicalName());
+            candidate.setAliases(aliasesList(location.getAliases()));
+            candidate.setImportanceScore(score(location.getImportanceScore()));
         } else if (entity instanceof Narrative narrative) {
             candidate.setId(narrative.getId().toString());
             candidate.setCanonicalName(narrative.getCanonicalLabel());
@@ -567,6 +613,7 @@ public class EntityDeduplicationJob {
             case "person" -> executePersonMergeGroup(group, jobRunId);
             case "organization" -> executeOrganizationMergeGroup(group, jobRunId);
             case "event" -> executeEventMergeGroup(group, jobRunId);
+            case "location" -> executeLocationMergeGroup(group, jobRunId);
             case "narrative" -> executeNarrativeMergeGroup(group, jobRunId);
             default -> 0;
         };
@@ -652,6 +699,34 @@ public class EntityDeduplicationJob {
         boolean neo4jMerged = mergeNeo4jNodes(mergedIds, survivorId, "Event",
                 eventProperties(survivor), survivor.getCanonicalName(), "event");
         insertRecord("event", survivorId, survivor.getCanonicalName(), mergedIds, mergedNames,
+                survivor.getContentCount(), totalContentCount, neo4jMerged, jobRunId, fusionMethod(group));
+        return mergedList.size();
+    }
+
+    private int executeLocationMergeGroup(T3ResolveResponse.MergeGroup group, UUID jobRunId) {
+        UUID survivorId = parseUuid(group.getSurvivorId());
+        List<UUID> mergedUuidIds = mergedUuidIds(group, survivorId);
+        if (survivorId == null || mergedUuidIds.isEmpty()) {
+            return 0;
+        }
+        Location survivor = locationMapper.selectById(survivorId);
+        List<Location> mergedList = locationMapper.selectBatchIds(mergedUuidIds);
+        if (survivor == null || mergedList.isEmpty()) {
+            return 0;
+        }
+        UUID[] mergedIds = mergedList.stream().map(Location::getId).toArray(UUID[]::new);
+        String[] mergedNames = mergedList.stream().map(Location::getCanonicalName).toArray(String[]::new);
+        int totalContentCount = contentCount(survivor.getContentCount())
+                + mergedList.stream().mapToInt(item -> contentCount(item.getContentCount())).sum();
+
+        locationMapper.updateSurvivorAfterMerge(survivorId, totalContentCount, mergedIds);
+        locationMapper.update(null, new UpdateWrapper<Location>()
+                .in("id", Arrays.asList(mergedIds))
+                .set("dedup_status", "deduplicated")
+                .setSql("updated_at = NOW()"));
+        boolean neo4jMerged = mergeNeo4jNodes(mergedIds, survivorId, "Location",
+                locationProperties(survivor), survivor.getCanonicalName(), "location");
+        insertRecord("location", survivorId, survivor.getCanonicalName(), mergedIds, mergedNames,
                 survivor.getContentCount(), totalContentCount, neo4jMerged, jobRunId, fusionMethod(group));
         return mergedList.size();
     }
@@ -806,6 +881,7 @@ public class EntityDeduplicationJob {
     private Map<String, Object> personProperties(Person person) {
         Map<String, Object> props = baseProperties();
         putIfNotNull(props, "canonicalName", person.getCanonicalName());
+        putIfNotNull(props, "aliases", person.getAliases());
         if (person.getImportanceScore() != null) {
             props.put("importanceScore", person.getImportanceScore().doubleValue());
         }
@@ -815,10 +891,23 @@ public class EntityDeduplicationJob {
     private Map<String, Object> organizationProperties(Organization organization) {
         Map<String, Object> props = baseProperties();
         putIfNotNull(props, "canonicalName", organization.getCanonicalName());
+        putIfNotNull(props, "aliases", organization.getAliases());
         putIfNotNull(props, "orgType", organization.getOrgType());
         putIfNotNull(props, "country", organization.getCountry());
         if (organization.getImportanceScore() != null) {
             props.put("importanceScore", organization.getImportanceScore().doubleValue());
+        }
+        return props;
+    }
+
+    private Map<String, Object> locationProperties(Location location) {
+        Map<String, Object> props = baseProperties();
+        putIfNotNull(props, "canonicalName", location.getCanonicalName());
+        putIfNotNull(props, "aliases", location.getAliases());
+        putIfNotNull(props, "locationType", location.getLocationType());
+        putIfNotNull(props, "country", location.getCountry());
+        if (location.getImportanceScore() != null) {
+            props.put("importanceScore", location.getImportanceScore().doubleValue());
         }
         return props;
     }
@@ -882,13 +971,25 @@ public class EntityDeduplicationJob {
         long persons = personMapper.countByDedupStatus("pending");
         long organizations = organizationMapper.countByDedupStatus("pending");
         long events = eventMapper.countByDedupStatus("pending");
+        long locations = locationMapper.countByDedupStatus("pending");
         long narratives = narrativeMapper.countByDedupStatus("pending");
-        log.info("[EntityDeduplicationJob] pending stats: persons={}, organizations={}, events={}, narratives={}",
-                persons, organizations, events, narratives);
+        log.info("[EntityDeduplicationJob] pending stats: persons={}, organizations={}, events={}, locations={}, narratives={}",
+                persons, organizations, events, locations, narratives);
     }
 
     private int contentCount(Integer value) {
         return value == null ? 0 : value;
+    }
+
+    private List<String> aliasesList(String[] aliases) {
+        if (aliases == null || aliases.length == 0) {
+            return List.of();
+        }
+        return Arrays.stream(aliases)
+                .filter(this::hasText)
+                .map(String::trim)
+                .distinct()
+                .toList();
     }
 
     private boolean hasText(String value) {
