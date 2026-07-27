@@ -145,7 +145,7 @@ llm:
     model: Qwen3-VL-Embedding-8B
     text-concurrency: 256
     image-concurrency: 256
-    timeout-seconds: 60
+    timeout-seconds: 120
     max-retries: 2
     retry-backoff-ms: 500
   reranker:
@@ -157,6 +157,10 @@ llm:
     api-key: idata@123456
     model: Qwen3-ASR-1.7B
     timeout-seconds: 300
+    concurrency: 1
+    queue-timeout-seconds: 30
+    max-retries: 1
+    retry-backoff-ms: 1000
 
 media:
   ocr:
