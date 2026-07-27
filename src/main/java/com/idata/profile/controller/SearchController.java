@@ -68,12 +68,9 @@ public class SearchController {
     }
 
     @PostMapping("/media-contents")
-    public Result<AlgorithmMediaContentSearchResponse> searchMediaContents(
+    public AlgorithmMediaContentSearchResponse searchMediaContents(
             @RequestBody AlgorithmMediaContentSearchRequest request) {
-        if (request == null || !hasText(request.getQuery())) {
-            return Result.fail("INVALID_PARAM", "query不能为空");
-        }
-        return Result.ok(searchService.searchMediaContentsForAlgorithm(request));
+        return searchService.searchMediaContentsForAlgorithm(request);
     }
 
     @PostMapping("/accounts")

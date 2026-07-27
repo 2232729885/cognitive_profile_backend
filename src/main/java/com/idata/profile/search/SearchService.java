@@ -123,6 +123,9 @@ public class SearchService {
             AlgorithmMediaContentSearchRequest request) {
         long startedAt = System.currentTimeMillis();
         String query = request == null ? null : request.getQuery();
+        if (!hasText(query)) {
+            return AlgorithmMediaContentSearchResponse.fail("400", "query不能为空");
+        }
         int limit = normalizeRecallSize(request == null ? null : firstNonNull(request.getTopK(), request.getSize()), 0, 20);
         int recallLimit = algorithmRecallLimit(request, limit);
 
@@ -152,12 +155,7 @@ public class SearchService {
                 .limit(limit)
                 .toList();
 
-        AlgorithmMediaContentSearchResponse response = new AlgorithmMediaContentSearchResponse();
-        response.setQuery(query);
-        response.setTotal(hits.size());
-        response.setDurationMs(System.currentTimeMillis() - startedAt);
-        response.setHits(hits);
-        return response;
+        return AlgorithmMediaContentSearchResponse.ok(query, System.currentTimeMillis() - startedAt, hits);
     }
 
     private int algorithmRecallLimit(AlgorithmMediaContentSearchRequest request, int limit) {

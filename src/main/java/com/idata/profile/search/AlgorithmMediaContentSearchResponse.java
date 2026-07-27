@@ -1,19 +1,48 @@
 package com.idata.profile.search;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import lombok.AllArgsConstructor;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 
 @Data
+@NoArgsConstructor
+@AllArgsConstructor
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class AlgorithmMediaContentSearchResponse {
-    private String query;
-    private int total;
-    private long durationMs;
-    private List<Hit> hits;
+    private String code;
+    private String msg;
+    private DataPayload data;
+
+    public static AlgorithmMediaContentSearchResponse ok(String query, long durationMs, List<Hit> hits) {
+        List<Hit> safeHits = hits == null ? List.of() : hits;
+        return new AlgorithmMediaContentSearchResponse(
+                "200",
+                "success",
+                new DataPayload(query, safeHits.size(), durationMs, safeHits));
+    }
+
+    public static AlgorithmMediaContentSearchResponse fail(String code, String msg) {
+        return new AlgorithmMediaContentSearchResponse(
+                code,
+                msg,
+                new DataPayload(null, 0, 0L, List.of()));
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public static class DataPayload {
+        private String query;
+        private int total;
+        private long durationMs;
+        private List<Hit> hits;
+    }
 
     @Data
     @JsonInclude(JsonInclude.Include.NON_NULL)

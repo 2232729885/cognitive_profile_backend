@@ -157,11 +157,11 @@ llm:
 media:
   ocr:
     concurrency: 4
-    timeout-seconds: 180
+    timeout-seconds: 300
     max-tokens: 1024
   caption:
     enabled: true
-    concurrency: 1
+    concurrency: 4
     queue-timeout-seconds: 5
     timeout-seconds: 300
     max-tokens: 256
