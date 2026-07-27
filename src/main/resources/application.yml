@@ -162,7 +162,7 @@ media:
   caption:
     enabled: true
     concurrency: 4
-    queue-timeout-seconds: 5
+    queue-timeout-seconds: 30
     timeout-seconds: 300
     max-tokens: 256
   processing:
