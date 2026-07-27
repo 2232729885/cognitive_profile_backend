@@ -9,6 +9,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
@@ -47,10 +48,13 @@ public class SearchQueryTranslationService {
             """;
 
     private static final String MEDIA_TEXT_SYSTEM_PROMPT = """
-            You translate media search index text to English. Return only one JSON object.
+            You translate every non-English media search index field to English. Return only one JSON object.
             The fields may come from image OCR, audio/video ASR, or visual captioning.
             Preserve named entities, tickers, hashtags, handles, URLs, measurements, dates, and numbers.
-            Keep each field separate. Do not add explanations.
+            Keep each field separate.
+            Do not copy source-language text back into output unless it is already English.
+            For East Asian proper nouns, provide a concise English translation or romanization.
+            Do not add explanations.
             JSON schema:
             {"ocrText":"...","asrText":"...","captionText":"..."}
             """;
@@ -211,8 +215,7 @@ public class SearchQueryTranslationService {
                     truncate(normalizedAsrText, CONTENT_TEXT_MAX_LENGTH),
                     truncate(normalizedCaptionText, 1_500));
             String raw = callJsonLlm(MEDIA_TEXT_SYSTEM_PROMPT, userPrompt);
-            MediaTextTranslationResponse response =
-                    OBJECT_MAPPER.readValue(cleanJson(raw), MediaTextTranslationResponse.class);
+            MediaTextTranslationResponse response = parseMediaTextTranslation(raw);
             TranslatedMediaText translated = new TranslatedMediaText(
                     englishPivotText(response.getOcrText(), normalizedOcrText),
                     englishPivotText(response.getAsrText(), normalizedAsrText),
@@ -220,9 +223,9 @@ public class SearchQueryTranslationService {
             if ((hasText(normalizedOcrText) && !isProbablyEnglishText(normalizedOcrText) && !hasText(translated.ocrText()))
                     || (hasText(normalizedAsrText) && !isProbablyEnglishText(normalizedAsrText) && !hasText(translated.asrText()))
                     || (hasText(normalizedCaptionText) && !isProbablyEnglishText(normalizedCaptionText) && !hasText(translated.captionText()))) {
-                log.warn("[SearchTranslation] media text translation returned empty/non-English fields, language={}, sourceLanguage={}, hasOcr={}, hasAsr={}, hasCaption={}, rawLength={}",
+                log.warn("[SearchTranslation] media text translation returned empty/non-English fields, language={}, sourceLanguage={}, hasOcr={}, hasAsr={}, hasCaption={}, rawLength={}, rawPreview={}",
                         language, sourceLanguage, hasText(normalizedOcrText), hasText(normalizedAsrText),
-                        hasText(normalizedCaptionText), textLength(raw));
+                        hasText(normalizedCaptionText), textLength(raw), preview(raw, 200));
             }
             return translated;
         } catch (Exception e) {
@@ -257,6 +260,37 @@ public class SearchQueryTranslationService {
             return "{}";
         }
         return response.getChoices().getFirst().getMessage().getContent();
+    }
+
+    private MediaTextTranslationResponse parseMediaTextTranslation(String raw) throws Exception {
+        JsonNode root = OBJECT_MAPPER.readTree(cleanJson(raw));
+        MediaTextTranslationResponse response = new MediaTextTranslationResponse();
+        response.setOcrText(firstText(
+                jsonText(root, "ocrText"),
+                jsonText(root, "ocr_text"),
+                jsonText(root, "ocr"),
+                jsonText(root, "OCR text"),
+                jsonText(root, "OCR")));
+        response.setAsrText(firstText(
+                jsonText(root, "asrText"),
+                jsonText(root, "asr_text"),
+                jsonText(root, "asr"),
+                jsonText(root, "ASR text"),
+                jsonText(root, "ASR")));
+        response.setCaptionText(firstText(
+                jsonText(root, "captionText"),
+                jsonText(root, "caption_text"),
+                jsonText(root, "caption"),
+                jsonText(root, "Caption text"),
+                jsonText(root, "Caption")));
+        return response;
+    }
+
+    private String jsonText(JsonNode root, String fieldName) {
+        if (root == null || root.isMissingNode() || root.isNull() || fieldName == null) {
+            return null;
+        }
+        return text(root.path(fieldName));
     }
 
     private RestClient restClient() {
@@ -335,6 +369,14 @@ public class SearchQueryTranslationService {
     }
 
     private String blankToNull(String value) {
+        return hasText(value) ? value.trim() : null;
+    }
+
+    private String text(JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) {
+            return null;
+        }
+        String value = node.asText();
         return hasText(value) ? value.trim() : null;
     }
 
@@ -482,7 +524,7 @@ public class SearchQueryTranslationService {
             return "Japanese";
         }
         if (han / (double) totalLetters >= 0.2D) {
-            return "Chinese";
+            return "Chinese or Japanese";
         }
         if (arabic / (double) totalLetters >= 0.2D) {
             return "Arabic";
@@ -519,6 +561,17 @@ public class SearchQueryTranslationService {
 
     private int textLength(String value) {
         return value == null ? 0 : value.length();
+    }
+
+    private String preview(String value, int maxLength) {
+        if (!hasText(value)) {
+            return null;
+        }
+        String normalized = normalizeWhitespace(value);
+        int safeMaxLength = Math.max(1, maxLength);
+        return normalized.length() <= safeMaxLength
+                ? normalized
+                : normalized.substring(0, safeMaxLength);
     }
 
     private String rootMessage(Throwable error) {

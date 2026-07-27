@@ -157,8 +157,8 @@ llm:
     api-key: idata@123456
     model: Qwen3-ASR-1.7B
     timeout-seconds: 300
-    concurrency: 1
-    queue-timeout-seconds: 60
+    concurrency: 2
+    queue-timeout-seconds: 300
     max-retries: 1
     retry-backoff-ms: 1000
 
