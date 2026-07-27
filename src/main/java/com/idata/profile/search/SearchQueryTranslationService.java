@@ -192,10 +192,8 @@ public class SearchQueryTranslationService {
             return TranslatedMediaText.empty();
         }
         try {
-            String sourceLanguage = isEnglish(language)
-                    && !allPresentTextProbablyEnglish(normalizedOcrText, normalizedAsrText, normalizedCaptionText)
-                    ? "unknown"
-                    : firstText(language, "unknown");
+            String sourceLanguage = resolveMediaSourceLanguage(
+                    normalizedOcrText, normalizedAsrText, normalizedCaptionText, language);
             String userPrompt = """
                     Source language: %s
 
@@ -215,10 +213,18 @@ public class SearchQueryTranslationService {
             String raw = callJsonLlm(MEDIA_TEXT_SYSTEM_PROMPT, userPrompt);
             MediaTextTranslationResponse response =
                     OBJECT_MAPPER.readValue(cleanJson(raw), MediaTextTranslationResponse.class);
-            return new TranslatedMediaText(
+            TranslatedMediaText translated = new TranslatedMediaText(
                     englishPivotText(response.getOcrText(), normalizedOcrText),
                     englishPivotText(response.getAsrText(), normalizedAsrText),
                     englishPivotText(response.getCaptionText(), normalizedCaptionText));
+            if ((hasText(normalizedOcrText) && !isProbablyEnglishText(normalizedOcrText) && !hasText(translated.ocrText()))
+                    || (hasText(normalizedAsrText) && !isProbablyEnglishText(normalizedAsrText) && !hasText(translated.asrText()))
+                    || (hasText(normalizedCaptionText) && !isProbablyEnglishText(normalizedCaptionText) && !hasText(translated.captionText()))) {
+                log.warn("[SearchTranslation] media text translation returned empty/non-English fields, language={}, sourceLanguage={}, hasOcr={}, hasAsr={}, hasCaption={}, rawLength={}",
+                        language, sourceLanguage, hasText(normalizedOcrText), hasText(normalizedAsrText),
+                        hasText(normalizedCaptionText), textLength(raw));
+            }
+            return translated;
         } catch (Exception e) {
             log.warn("[SearchTranslation] media text translation failed, language={}, reason={}",
                     language, rootMessage(e));
@@ -363,6 +369,9 @@ public class SearchQueryTranslationService {
         if (!hasText(text)) {
             return false;
         }
+        if (isAsciiDominantIndexText(text)) {
+            return true;
+        }
         if (TextEncodingRepairUtil.looksLikeUtf8Mojibake(text)) {
             return false;
         }
@@ -386,6 +395,102 @@ public class SearchQueryTranslationService {
             return true;
         }
         return asciiLetters / (double) totalLetters >= 0.85D;
+    }
+
+    private boolean isAsciiDominantIndexText(String text) {
+        int usefulChars = 0;
+        int asciiUsefulChars = 0;
+        int latinLetters = 0;
+        int totalLetters = 0;
+        for (int i = 0; i < text.length(); ) {
+            int codePoint = text.codePointAt(i);
+            i += Character.charCount(codePoint);
+            if (Character.isWhitespace(codePoint) || Character.isISOControl(codePoint)) {
+                continue;
+            }
+            if (Character.isLetter(codePoint)) {
+                totalLetters++;
+                Character.UnicodeScript script = Character.UnicodeScript.of(codePoint);
+                if (script == Character.UnicodeScript.LATIN) {
+                    latinLetters++;
+                }
+            }
+            usefulChars++;
+            if (codePoint >= 0x20 && codePoint <= 0x7E) {
+                asciiUsefulChars++;
+            }
+        }
+        if (usefulChars == 0) {
+            return true;
+        }
+        double asciiRatio = asciiUsefulChars / (double) usefulChars;
+        double latinLetterRatio = totalLetters == 0 ? 1D : latinLetters / (double) totalLetters;
+        return asciiRatio >= 0.92D && latinLetterRatio >= 0.95D;
+    }
+
+    private String resolveMediaSourceLanguage(String ocrText, String asrText, String captionText, String language) {
+        if (hasText(language) && !isEnglish(language)) {
+            return language.trim();
+        }
+        String scriptLanguage = detectDominantScriptLanguage(ocrText, asrText, captionText);
+        return hasText(scriptLanguage) ? scriptLanguage : firstText(language, "unknown");
+    }
+
+    private String detectDominantScriptLanguage(String... values) {
+        int han = 0;
+        int hangul = 0;
+        int hiraganaKatakana = 0;
+        int arabic = 0;
+        int cyrillic = 0;
+        int totalLetters = 0;
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (!hasText(value) || isProbablyEnglishText(value)) {
+                continue;
+            }
+            for (int i = 0; i < value.length(); ) {
+                int codePoint = value.codePointAt(i);
+                i += Character.charCount(codePoint);
+                if (!Character.isLetter(codePoint)) {
+                    continue;
+                }
+                totalLetters++;
+                Character.UnicodeScript script = Character.UnicodeScript.of(codePoint);
+                if (script == Character.UnicodeScript.HANGUL) {
+                    hangul++;
+                } else if (script == Character.UnicodeScript.HAN) {
+                    han++;
+                } else if (script == Character.UnicodeScript.HIRAGANA
+                        || script == Character.UnicodeScript.KATAKANA) {
+                    hiraganaKatakana++;
+                } else if (script == Character.UnicodeScript.ARABIC) {
+                    arabic++;
+                } else if (script == Character.UnicodeScript.CYRILLIC) {
+                    cyrillic++;
+                }
+            }
+        }
+        if (totalLetters == 0) {
+            return null;
+        }
+        if (hangul / (double) totalLetters >= 0.2D) {
+            return "Korean";
+        }
+        if (hiraganaKatakana / (double) totalLetters >= 0.1D) {
+            return "Japanese";
+        }
+        if (han / (double) totalLetters >= 0.2D) {
+            return "Chinese";
+        }
+        if (arabic / (double) totalLetters >= 0.2D) {
+            return "Arabic";
+        }
+        if (cyrillic / (double) totalLetters >= 0.2D) {
+            return "Russian";
+        }
+        return null;
     }
 
     private String firstText(String... values) {
