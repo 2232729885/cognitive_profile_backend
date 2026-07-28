@@ -24,7 +24,8 @@ public class PipelineTask {
 
     private UUID rawRecordId;
     private UUID contentId;
-    private String status;              // PENDING|RUNNING|DONE|FAILED
+    private String status;              // PENDING|QUEUED|RUNNING|DONE|FAILED
+    private OffsetDateTime queuedAt;
 
     private String t1Status;            // pending|running|done|failed
     private OffsetDateTime t1StartedAt;

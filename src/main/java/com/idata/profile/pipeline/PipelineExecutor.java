@@ -14,6 +14,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
 
 @Slf4j
 @Component
@@ -30,6 +31,9 @@ public class PipelineExecutor {
     @Value("${pipeline.recovery.running-stuck-minutes:30}")
     private int runningStuckMinutes;
 
+    @Value("${pipeline.recovery.queued-stuck-minutes:30}")
+    private int queuedStuckMinutes;
+
     public void submitAfterCommit(UUID taskId) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(
@@ -45,7 +49,23 @@ public class PipelineExecutor {
     }
 
     public void submit(UUID taskId) {
-        pipelineThreadPool.submit(() -> execute(taskId));
+        if (taskId == null) {
+            return;
+        }
+        int queued = pipelineTaskMapper.queueTask(
+                taskId,
+                Math.max(1, queuedStuckMinutes),
+                Math.max(1, runningStuckMinutes));
+        if (queued <= 0) {
+            log.info("[PipelineExecutor] skip duplicate, completed, or active task, taskId={}", taskId);
+            return;
+        }
+        try {
+            pipelineThreadPool.submit(() -> execute(taskId));
+        } catch (RejectedExecutionException e) {
+            pipelineTaskMapper.releaseQueuedTask(taskId);
+            throw e;
+        }
     }
 
     private void execute(UUID taskId) {
@@ -53,9 +73,9 @@ public class PipelineExecutor {
             return;
         }
 
-        int claimed = pipelineTaskMapper.claimRunnableTask(taskId, Math.max(1, runningStuckMinutes));
+        int claimed = pipelineTaskMapper.claimQueuedTask(taskId);
         if (claimed <= 0) {
-            log.info("[PipelineExecutor] skip duplicate or active task, taskId={}", taskId);
+            log.info("[PipelineExecutor] skip duplicate or already claimed task, taskId={}", taskId);
             return;
         }
 

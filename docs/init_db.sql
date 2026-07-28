@@ -891,6 +891,7 @@ CREATE TABLE IF NOT EXISTS pipeline_tasks (
     raw_record_id       UUID        NOT NULL REFERENCES raw_records(id),
     content_id          UUID        REFERENCES media_contents(id),
     status              VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+    queued_at           TIMESTAMPTZ,
     t1_status           VARCHAR(16) NOT NULL DEFAULT 'pending',
     t1_started_at       TIMESTAMPTZ,
     t1_done_at          TIMESTAMPTZ,
@@ -919,7 +920,8 @@ COMMENT ON TABLE  pipeline_tasks               IS '入库流水线调度表。�
 COMMENT ON COLUMN pipeline_tasks.id            IS '主键，UUID';
 COMMENT ON COLUMN pipeline_tasks.raw_record_id IS '关联 raw_records.id，一条原始记录对应一条任务';
 COMMENT ON COLUMN pipeline_tasks.content_id    IS '关联 media_contents.id，Step3标准化映射后填入';
-COMMENT ON COLUMN pipeline_tasks.status        IS '任务整体状态：PENDING | RUNNING | DONE | FAILED';
+COMMENT ON COLUMN pipeline_tasks.status        IS '任务整体状态：PENDING | QUEUED | RUNNING | DONE | FAILED';
+COMMENT ON COLUMN pipeline_tasks.queued_at     IS '任务进入进程内流水线队列的时间';
 COMMENT ON COLUMN pipeline_tasks.t1_status     IS 'T1步骤状态：pending | running | done | failed | skipped';
 COMMENT ON COLUMN pipeline_tasks.t1_started_at IS 'T1开始时间';
 COMMENT ON COLUMN pipeline_tasks.t1_done_at    IS 'T1完成时间';

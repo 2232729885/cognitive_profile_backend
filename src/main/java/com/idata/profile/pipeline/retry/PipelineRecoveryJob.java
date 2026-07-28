@@ -30,6 +30,9 @@ public class PipelineRecoveryJob {
     @Value("${pipeline.recovery.running-stuck-minutes:30}")
     private int runningStuckMinutes;
 
+    @Value("${pipeline.recovery.queued-stuck-minutes:30}")
+    private int queuedStuckMinutes;
+
     @Value("${pipeline.recovery.batch-limit:200}")
     private int batchLimit;
 
@@ -50,10 +53,11 @@ public class PipelineRecoveryJob {
             return 0;
         }
         int safeStuckMinutes = Math.max(1, stuckMinutes);
+        int safeQueuedStuckMinutes = Math.max(safeStuckMinutes, queuedStuckMinutes);
         int safeRunningStuckMinutes = Math.max(safeStuckMinutes, runningStuckMinutes);
         int safeBatchLimit = Math.max(1, batchLimit);
         List<RawRecord> stuckRecords = rawRecordMapper.selectStuckPipelineRecords(
-                safeStuckMinutes, safeRunningStuckMinutes, safeBatchLimit);
+                safeStuckMinutes, safeQueuedStuckMinutes, safeRunningStuckMinutes, safeBatchLimit);
         for (RawRecord record : stuckRecords) {
             log.info("[PipelineRecoveryJob] resubmit stuck pipeline task, trigger={}, rawRecordId={}, taskId={}, pipelineStatus={}",
                     trigger, record.getId(), record.getPipelineTaskId(), record.getPipelineStatus());

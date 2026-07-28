@@ -204,13 +204,14 @@ created_at · updated_at
 ```
 id UUID PK · raw_record_id UUID NOT NULL FK→raw_records · content_id UUID FK→media_contents
 status VARCHAR(32) NOT NULL DEFAULT'PENDING'
+queued_at TIMESTAMPTZ
 t1_status/t2_status/t3_status/t4_status VARCHAR(16) NOT NULL DEFAULT'pending'
 t1_started_at/t1_done_at TIMESTAMPTZ · t1_duration_ms INTEGER（t2/t3/t4 同结构）
 retry_count SMALLINT NOT NULL DEFAULT 0 · max_retries SMALLINT NOT NULL DEFAULT 3
 error_step VARCHAR(4) · error_message TEXT · created_at · updated_at
 ```
 **枚举值：**
-- `status`: `PENDING` | `RUNNING` | `DONE` | `FAILED`
+- `status`: `PENDING` | `QUEUED` | `RUNNING` | `DONE` | `FAILED`
 - `tN_status`: `pending` | `running` | `done` | `failed`
 
 ### workflow_tasks / sessions / session_messages

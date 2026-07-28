@@ -26,15 +26,42 @@ public interface PipelineTaskMapper extends BaseMapper<PipelineTask> {
 
     @Update("""
             UPDATE pipeline_tasks
-            SET status = 'RUNNING',
+            SET status = 'QUEUED',
+                queued_at = NOW(),
                 updated_at = NOW()
             WHERE id = #{taskId}
               AND COALESCE(status, 'PENDING') <> 'DONE'
               AND (
-                COALESCE(status, 'PENDING') <> 'RUNNING'
-                OR updated_at < NOW() - (#{runningStuckMinutes} || ' minutes')::INTERVAL
+                COALESCE(status, 'PENDING') IN ('PENDING', 'FAILED')
+                OR (
+                  COALESCE(status, 'PENDING') = 'QUEUED'
+                  AND updated_at < NOW() - (#{queuedStuckMinutes} || ' minutes')::INTERVAL
+                )
+                OR (
+                  COALESCE(status, 'PENDING') = 'RUNNING'
+                  AND updated_at < NOW() - (#{runningStuckMinutes} || ' minutes')::INTERVAL
+                )
               )
             """)
-    int claimRunnableTask(@Param("taskId") UUID taskId,
-                          @Param("runningStuckMinutes") int runningStuckMinutes);
+    int queueTask(@Param("taskId") UUID taskId,
+                  @Param("queuedStuckMinutes") int queuedStuckMinutes,
+                  @Param("runningStuckMinutes") int runningStuckMinutes);
+
+    @Update("""
+            UPDATE pipeline_tasks
+            SET status = 'RUNNING',
+                updated_at = NOW()
+            WHERE id = #{taskId}
+              AND status = 'QUEUED'
+            """)
+    int claimQueuedTask(@Param("taskId") UUID taskId);
+
+    @Update("""
+            UPDATE pipeline_tasks
+            SET status = 'PENDING',
+                updated_at = NOW()
+            WHERE id = #{taskId}
+              AND status = 'QUEUED'
+            """)
+    int releaseQueuedTask(@Param("taskId") UUID taskId);
 }

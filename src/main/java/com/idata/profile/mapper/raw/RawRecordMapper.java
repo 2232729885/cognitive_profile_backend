@@ -37,25 +37,18 @@ public interface RawRecordMapper extends BaseMapper<RawRecord> {
             WHERE rr.record_type IN ('social_content', 'news_article')
               AND rr.pipeline_status NOT IN ('T4_INDEXED', 'FAILED')
               AND rr.pipeline_task_id IS NOT NULL
-              AND COALESCE(pt.status, 'PENDING') <> 'DONE'
               AND (
                 (
-                  COALESCE(pt.status, 'PENDING') <> 'RUNNING'
-                  AND
-                  COALESCE(pt.t1_status, 'pending') <> 'running'
-                  AND COALESCE(pt.t2_status, 'pending') <> 'running'
-                  AND COALESCE(pt.t3_status, 'pending') <> 'running'
-                  AND COALESCE(pt.t4_status, 'pending') <> 'running'
-                  AND rr.updated_at < NOW() - (#{stuckMinutes} || ' minutes')::INTERVAL
+                  COALESCE(pt.status, 'PENDING') IN ('PENDING', 'QUEUED')
+                  AND pt.updated_at < NOW() - (
+                    CASE WHEN COALESCE(pt.status, 'PENDING') = 'QUEUED'
+                         THEN #{queuedStuckMinutes}
+                         ELSE #{stuckMinutes}
+                    END || ' minutes'
+                  )::INTERVAL
                 )
                 OR (
-                  (
-                    COALESCE(pt.status, 'PENDING') = 'RUNNING'
-                    OR COALESCE(pt.t1_status, 'pending') = 'running'
-                    OR COALESCE(pt.t2_status, 'pending') = 'running'
-                    OR COALESCE(pt.t3_status, 'pending') = 'running'
-                    OR COALESCE(pt.t4_status, 'pending') = 'running'
-                  )
+                  COALESCE(pt.status, 'PENDING') = 'RUNNING'
                   AND pt.updated_at < NOW() - (#{runningStuckMinutes} || ' minutes')::INTERVAL
                 )
               )
@@ -63,6 +56,7 @@ public interface RawRecordMapper extends BaseMapper<RawRecord> {
             LIMIT #{limit}
             """)
     List<RawRecord> selectStuckPipelineRecords(@Param("stuckMinutes") int stuckMinutes,
+                                               @Param("queuedStuckMinutes") int queuedStuckMinutes,
                                                @Param("runningStuckMinutes") int runningStuckMinutes,
                                                @Param("limit") int limit);
 }

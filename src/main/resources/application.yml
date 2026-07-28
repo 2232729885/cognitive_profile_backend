@@ -130,6 +130,8 @@ pipeline:
   recovery:
     enabled: true
     stuck-minutes: 5
+    # 正常排队任务不应被误判为卡住；服务异常时最多延迟 30 分钟自动恢复。
+    queued-stuck-minutes: 30
     running-stuck-minutes: 90
     batch-limit: 20
     initial-delay-ms: 60000
