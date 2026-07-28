@@ -54,8 +54,13 @@ spring:
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       properties:
         max.poll.interval.ms: 1800000
-        # Listener methods only persist/dispatch one record at a time; slow enrichment runs off-thread.
-        max.poll.records: 1
+        # The listener handles a small ingestion batch sequentially. Slow AI enrichment
+        # remains asynchronous and is bounded by pipelineThreadPool backpressure.
+        max.poll.records: 10
+    listener:
+      # Commit offsets after all records returned by one poll have been handled by the
+      # listener. Database writes happen before the listener returns.
+      ack-mode: batch
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
@@ -113,6 +118,9 @@ agent-proxy:
 
 pipeline:
   thread-pool-size: 16
+  # Bound asynchronous enrichment/pipeline backlog. When full, the submitting
+  # Kafka thread runs the task itself, slowing intake instead of growing memory.
+  thread-pool-queue-capacity: 32
   t4:
     chunking:
       # Long bodies keep their document vector and additionally get local semantic vectors.
@@ -169,20 +177,20 @@ llm:
     base-url: http://172.16.40.232:18015/v1
     api-key: idata@123456
     model: Qwen3-ASR-1.7B
-    timeout-seconds: 120
+    timeout-seconds: 300
     concurrency: 1
-    queue-timeout-seconds: 10
-    max-retries: 1
+    queue-timeout-seconds: 30
+    max-retries: 0
     retry-backoff-ms: 2000
 
 media:
   asr-job:
     enabled: true
-    fixed-delay-ms: 5000
+    fixed-delay-ms: 10000
     batch-limit: 1
     max-attempts: 3
-    retry-delay-seconds: 60
-    stale-running-seconds: 900
+    retry-delay-seconds: 120
+    stale-running-seconds: 2400
   ocr:
     concurrency: 4
     timeout-seconds: 300
@@ -196,7 +204,7 @@ media:
   processing:
     ffmpeg-path: D:/ffmpeg-7.0/bin/ffmpeg.exe
     ffprobe-path: D:/ffmpeg-7.0/bin/ffprobe.exe
-    segment-seconds: 30
-    max-segments: 5
+    segment-seconds: 15
+    max-segments: 10
     frames-per-segment: 1
     process-timeout-seconds: 180

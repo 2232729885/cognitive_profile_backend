@@ -7,7 +7,10 @@ import org.springframework.scheduling.TaskScheduler;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.RejectedExecutionHandler;
 
 /**
  * 线程池配置。
@@ -22,10 +25,23 @@ public class ThreadPoolConfig {
 
     @Bean
     public ExecutorService pipelineThreadPool(
-            @Value("${pipeline.thread-pool-size:64}") int threadPoolSize) {
-        // TODO: 按实际吞吐量调整线程数，初期可用固定大小，
-        // 生产环境建议根据T1-T6 Agent的并发承载能力调整
-        return Executors.newFixedThreadPool(Math.max(1, threadPoolSize));
+            @Value("${pipeline.thread-pool-size:16}") int threadPoolSize,
+            @Value("${pipeline.thread-pool-queue-capacity:32}") int queueCapacity) {
+        int poolSize = Math.max(1, threadPoolSize);
+        int capacity = Math.max(1, queueCapacity);
+        RejectedExecutionHandler backpressure = new ThreadPoolExecutor.CallerRunsPolicy();
+        return new ThreadPoolExecutor(
+                poolSize,
+                poolSize,
+                0L,
+                TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(capacity),
+                runnable -> {
+                    Thread thread = new Thread(runnable, "pipeline-worker");
+                    thread.setDaemon(false);
+                    return thread;
+                },
+                backpressure);
     }
 
     @Bean
