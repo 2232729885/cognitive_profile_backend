@@ -327,14 +327,108 @@ public class SearchQueryTranslationService {
     }
 
     private String parseTranslatedText(String raw, String fieldName) throws Exception {
-        JsonNode root = OBJECT_MAPPER.readTree(cleanJson(raw));
+        try {
+            JsonNode root = OBJECT_MAPPER.readTree(cleanJson(raw));
+            String parsed = firstText(
+                    jsonText(root, "translatedText"),
+                    jsonText(root, "translated_text"),
+                    jsonText(root, fieldName),
+                    "ocrText".equals(fieldName) ? jsonText(root, "ocr_text") : null,
+                    "asrText".equals(fieldName) ? jsonText(root, "asr_text") : null,
+                    "captionText".equals(fieldName) ? jsonText(root, "caption_text") : null);
+            if (hasText(parsed)) {
+                return parsed;
+            }
+        } catch (Exception ignored) {
+            // finish_reason=length 时 JSON 往往没有闭合，下面尝试读取已生成的文本。
+        }
         return firstText(
-                jsonText(root, "translatedText"),
-                jsonText(root, "translated_text"),
-                jsonText(root, fieldName),
-                "ocrText".equals(fieldName) ? jsonText(root, "ocr_text") : null,
-                "asrText".equals(fieldName) ? jsonText(root, "asr_text") : null,
-                "captionText".equals(fieldName) ? jsonText(root, "caption_text") : null);
+                extractPossiblyTruncatedJsonText(raw, "translatedText"),
+                extractPossiblyTruncatedJsonText(raw, "translated_text"),
+                extractPossiblyTruncatedJsonText(raw, fieldName));
+    }
+
+    /**
+     * Qwen 在达到 max_tokens 时可能返回未闭合的
+     * {"translatedText":"... 响应。只要字符串本身已经生成，就保留该部分，
+     * 避免因为缺少最后的引号和大括号而把整段翻译判定为空。
+     */
+    private String extractPossiblyTruncatedJsonText(String raw, String fieldName) {
+        if (!hasText(raw) || !hasText(fieldName)) {
+            return null;
+        }
+        String marker = "\"" + fieldName + "\"";
+        int markerIndex = raw.indexOf(marker);
+        if (markerIndex < 0) {
+            return null;
+        }
+        int colon = raw.indexOf(':', markerIndex + marker.length());
+        if (colon < 0) {
+            return null;
+        }
+        int valueStart = colon + 1;
+        while (valueStart < raw.length() && Character.isWhitespace(raw.charAt(valueStart))) {
+            valueStart++;
+        }
+        if (valueStart >= raw.length() || raw.charAt(valueStart) != '\"') {
+            return null;
+        }
+        int contentStart = valueStart + 1;
+        int end = contentStart;
+        boolean escaped = false;
+        for (; end < raw.length(); end++) {
+            char value = raw.charAt(end);
+            if (escaped) {
+                escaped = false;
+            } else if (value == '\\') {
+                escaped = true;
+            } else if (value == '\"') {
+                break;
+            }
+        }
+        String fragment = raw.substring(contentStart, end);
+        if (fragment.endsWith("\\")) {
+            fragment = fragment.substring(0, fragment.length() - 1);
+        }
+        return decodeJsonStringFragment(fragment);
+    }
+
+    private String decodeJsonStringFragment(String fragment) {
+        if (fragment == null) {
+            return null;
+        }
+        StringBuilder result = new StringBuilder(fragment.length());
+        for (int i = 0; i < fragment.length(); i++) {
+            char value = fragment.charAt(i);
+            if (value != '\\' || i + 1 >= fragment.length()) {
+                result.append(value);
+                continue;
+            }
+            char escaped = fragment.charAt(++i);
+            switch (escaped) {
+                case 'n' -> result.append('\n');
+                case 'r' -> result.append('\r');
+                case 't' -> result.append('\t');
+                case 'b' -> result.append('\b');
+                case 'f' -> result.append('\f');
+                case '"', '\\', '/' -> result.append(escaped);
+                case 'u' -> {
+                    if (i + 4 < fragment.length()) {
+                        String hex = fragment.substring(i + 1, i + 5);
+                        try {
+                            result.append((char) Integer.parseInt(hex, 16));
+                            i += 4;
+                        } catch (NumberFormatException e) {
+                            result.append('u');
+                        }
+                    } else {
+                        result.append('u');
+                    }
+                }
+                default -> result.append(escaped);
+            }
+        }
+        return blankToNull(result.toString());
     }
 
     List<String> splitMediaTranslationChunks(String text) {

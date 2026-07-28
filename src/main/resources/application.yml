@@ -151,12 +151,13 @@ search:
     api-key: idata@123456
     model: Qwen3-32B
     timeout-seconds: 300
-    queue-timeout-seconds: 60
-    # OCR + ASR + caption translations can need substantially more than 1024 output tokens.
-    max-tokens: 4096
-    concurrency: 2
-    media-chunk-chars: 1500
-    media-max-chunks: 4
+    # 32B 翻译模型单路串行更稳定，避免多个长媒体翻译互相挤占推理资源。
+    queue-timeout-seconds: 300
+    # 媒体字段按较小块翻译，避免 JSON 输出达到上限后被截断。
+    max-tokens: 2048
+    concurrency: 1
+    media-chunk-chars: 1000
+    media-max-chunks: 6
     media-field-retries: 1
 
 llm:

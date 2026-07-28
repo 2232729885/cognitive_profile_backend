@@ -11,6 +11,7 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.RejectedExecutionHandler;
+import java.util.concurrent.RejectedExecutionException;
 
 /**
  * 线程池配置。
@@ -29,7 +30,20 @@ public class ThreadPoolConfig {
             @Value("${pipeline.thread-pool-queue-capacity:32}") int queueCapacity) {
         int poolSize = Math.max(1, threadPoolSize);
         int capacity = Math.max(1, queueCapacity);
-        RejectedExecutionHandler backpressure = new ThreadPoolExecutor.CallerRunsPolicy();
+        // 不使用 CallerRunsPolicy：Kafka afterCommit 回调可能在消费者线程中执行，
+        // 让消费者线程直接跑流水线会把 Neo4j 写入带入已提交的事务上下文。
+        // 队列满时阻塞提交者，直到 pipeline-worker 有空位，但始终由工作线程执行任务。
+        RejectedExecutionHandler backpressure = (runnable, executor) -> {
+            if (executor.isShutdown()) {
+                throw new RejectedExecutionException("Pipeline executor is shutting down");
+            }
+            try {
+                executor.getQueue().put(runnable);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RejectedExecutionException("Interrupted while enqueueing pipeline task", e);
+            }
+        };
         return new ThreadPoolExecutor(
                 poolSize,
                 poolSize,
