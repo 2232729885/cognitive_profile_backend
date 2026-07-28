@@ -31,13 +31,13 @@ public class SearchQueryTranslationService {
     private static final int CONTENT_TEXT_MAX_LENGTH = 4_000;
 
     private static final String QUERY_SYSTEM_PROMPT = """
-            You expand multilingual search queries. Return only one JSON object.
-            Detect the query language and create concise search variants in English, Chinese, Japanese, Korean,
-            Arabic, Russian, and the original language when useful.
+            You translate multilingual search queries into English. Return only one JSON object.
+            Detect the query language and create exactly one concise English search query.
             Keep named entities, tickers, hashtags, handles, and URLs unchanged.
+            Do not return Chinese, Japanese, Korean, Arabic, Russian, or other non-English variants.
             Do not add explanations.
             JSON schema:
-            {"detectedLanguage":"en|zh|ja|ko|ar|ru|other","queries":["..."]}
+            {"detectedLanguage":"en|zh|ja|ko|ar|ru|other","queries":["one English query"]}
             """;
 
     private static final String CONTENT_SYSTEM_PROMPT = """
@@ -123,6 +123,7 @@ public class SearchQueryTranslationService {
                         .map(this::normalizeWhitespace)
                         .filter(this::hasText)
                         .filter(value -> value.length() <= 300)
+                        .limit(1)
                         .forEach(variants::add);
             }
         } catch (Exception e) {

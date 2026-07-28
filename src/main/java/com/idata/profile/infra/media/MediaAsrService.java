@@ -1,6 +1,7 @@
 package com.idata.profile.infra.media;
 
 import com.idata.profile.common.util.TextEncodingRepairUtil;
+import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
@@ -16,14 +17,23 @@ import tools.jackson.databind.JsonNode;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.concurrent.Semaphore;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Slf4j
 @Service
 public class MediaAsrService {
 
-    private Semaphore asrSemaphore;
+    /**
+     * ASR 服务端当前按单并发运行。使用独立的有界单线程队列，避免多个
+     * pipeline 线程直接同时访问 ASR，或在 Semaphore 上超时后丢弃任务。
+     */
+    private ThreadPoolExecutor asrExecutor;
 
     @Value("${llm.asr.base-url:http://172.16.40.232:18014/v1}")
     private String baseUrl;
@@ -40,8 +50,8 @@ public class MediaAsrService {
     @Value("${llm.asr.concurrency:1}")
     private int concurrency;
 
-    @Value("${llm.asr.queue-timeout-seconds:60}")
-    private int queueTimeoutSeconds;
+    @Value("${llm.asr.queue-capacity:16}")
+    private int queueCapacity;
 
     @Value("${llm.asr.max-retries:0}")
     private int maxRetries;
@@ -57,39 +67,51 @@ public class MediaAsrService {
         if (audioFile == null || !Files.isRegularFile(audioFile)) {
             return TranscriptionResult.empty();
         }
-        boolean acquired = false;
+
+        ThreadPoolExecutor executor = asrExecutor();
         try {
-            acquired = asrSemaphore().tryAcquire(Math.max(1, queueTimeoutSeconds), TimeUnit.SECONDS);
-            if (!acquired) {
-                log.warn("[MediaAsrService] ASR skipped because route is busy, audioFile={}, concurrency={}, queueTimeoutSeconds={}",
-                        audioFile, Math.max(1, concurrency), Math.max(1, queueTimeoutSeconds));
+            // queueCapacity 同时限制运行中和排队中的任务数量，防止请求无限堆积。
+            if (executor.getQueue().remainingCapacity() == 0 && executor.getActiveCount() > 0) {
+                log.warn("[MediaAsrService] ASR queue is full, audioFile={}, queueCapacity={}",
+                        audioFile, Math.max(1, queueCapacity));
                 return TranscriptionResult.failed("Local ASR route is busy");
             }
-            int attempts = Math.max(0, maxRetries) + 1;
-            for (int attempt = 1; attempt <= attempts; attempt++) {
-                try {
-                    return doTranscribe(audioFile);
-                } catch (Exception e) {
-                    if (attempt >= attempts) {
-                        log.warn("[MediaAsrService] ASR failed, audioFile={}, attempts={}, reason={}",
-                                audioFile, attempts, rootMessage(e));
-                        return TranscriptionResult.failed(rootMessage(e));
-                    }
-                    log.warn("[MediaAsrService] ASR attempt failed, audioFile={}, attempt={}/{}, reason={}",
-                            audioFile, attempt, attempts, rootMessage(e));
-                    sleepBeforeRetry();
-                }
-            }
-            return TranscriptionResult.failed("ASR failed without a response");
+
+            Future<TranscriptionResult> future = executor.submit(() -> transcribeWithRetries(audioFile));
+            // 调用方等待当前任务完成，后续任务由 asr-worker 串行处理。
+            return future.get();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             log.warn("[MediaAsrService] ASR interrupted, audioFile={}", audioFile);
             return TranscriptionResult.failed("ASR interrupted");
-        } finally {
-            if (acquired) {
-                asrSemaphore().release();
+        } catch (ExecutionException e) {
+            log.warn("[MediaAsrService] ASR worker failed, audioFile={}, reason={}",
+                    audioFile, rootMessage(e));
+            return TranscriptionResult.failed(rootMessage(e));
+        } catch (RejectedExecutionException e) {
+            log.warn("[MediaAsrService] ASR queue rejected task, audioFile={}, queueCapacity={}",
+                    audioFile, Math.max(1, queueCapacity));
+            return TranscriptionResult.failed("Local ASR route is busy");
+        }
+    }
+
+    private TranscriptionResult transcribeWithRetries(Path audioFile) {
+        int attempts = Math.max(0, maxRetries) + 1;
+        for (int attempt = 1; attempt <= attempts; attempt++) {
+            try {
+                return doTranscribe(audioFile);
+            } catch (Exception e) {
+                if (attempt >= attempts) {
+                    log.warn("[MediaAsrService] ASR failed, audioFile={}, attempts={}, reason={}",
+                            audioFile, attempts, rootMessage(e));
+                    return TranscriptionResult.failed(rootMessage(e));
+                }
+                log.warn("[MediaAsrService] ASR attempt failed, audioFile={}, attempt={}/{}, reason={}",
+                        audioFile, attempt, attempts, rootMessage(e));
+                sleepBeforeRetry();
             }
         }
+        return TranscriptionResult.failed("ASR failed without a response");
     }
 
     private TranscriptionResult doTranscribe(Path audioFile) {
@@ -126,12 +148,35 @@ public class MediaAsrService {
         }
     }
 
-    private synchronized Semaphore asrSemaphore() {
-        int permits = Math.max(1, concurrency);
-        if (asrSemaphore == null) {
-            asrSemaphore = new Semaphore(permits);
+    private synchronized ThreadPoolExecutor asrExecutor() {
+        if (asrExecutor == null) {
+            int capacity = Math.max(1, queueCapacity);
+            asrExecutor = new ThreadPoolExecutor(
+                    1,
+                    1,
+                    0L,
+                    TimeUnit.MILLISECONDS,
+                    new ArrayBlockingQueue<>(capacity),
+                    runnable -> {
+                        Thread thread = new Thread(runnable,
+                                "asr-worker-" + ASR_THREAD_ID.incrementAndGet());
+                        thread.setDaemon(false);
+                        return thread;
+                    },
+                    new ThreadPoolExecutor.AbortPolicy());
+            log.info("[MediaAsrService] ASR serial queue initialized, concurrency=1, queueCapacity={}, configuredConcurrency={}",
+                    capacity, Math.max(1, concurrency));
         }
-        return asrSemaphore;
+        return asrExecutor;
+    }
+
+    private static final AtomicInteger ASR_THREAD_ID = new AtomicInteger();
+
+    @PreDestroy
+    public synchronized void shutdown() {
+        if (asrExecutor != null) {
+            asrExecutor.shutdownNow();
+        }
     }
 
     private String extractErrorMessage(JsonNode response) {

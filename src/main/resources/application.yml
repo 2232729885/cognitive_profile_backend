@@ -100,8 +100,8 @@ server:
 logging:
   level:
     com.idata.profile: info
-#  file:
-#    name: logs/cognitive-profile-backend.log
+  file:
+    name: logs/cognitive-profile-backend.log
 
 agent-proxy:
   request-jsonl:
@@ -179,7 +179,8 @@ llm:
     model: Qwen3-ASR-1.7B
     timeout-seconds: 300
     concurrency: 1
-    queue-timeout-seconds: 30
+    # ASR 在本机内由单线程队列串行执行；队列满后任务失败并由媒体任务重试。
+    queue-capacity: 16
     max-retries: 0
     retry-backoff-ms: 2000
 
